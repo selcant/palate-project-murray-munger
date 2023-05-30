@@ -1,0 +1,15 @@
+---
+title: "Palate Project Murray-Munger Collaboration"
+author: "Selcan Aydin"
+format: html
+---
+
+rnaseq analysis pipeline:
+* describe data processing + scripts used + what is needed for reproducibility.
+* what is next in line to wrap up rnaseq analysis.
+
+current status:
+* Load in data
+* add sample details
+* resequenced samples --> clustering, does it improve?
+* do I need to remove batch effects?
