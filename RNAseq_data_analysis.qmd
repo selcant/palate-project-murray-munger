@@ -1,15 +1,918 @@
 ---
 title: "Palate Project Murray-Munger Collaboration"
 author: "Selcan Aydin"
-format: html
+date: "`r Sys.Date()`"
+format: 
+  html:
+      self-contained: true
+      embed-resources: true
+code-fold: true
+toc: true
 ---
 
-rnaseq analysis pipeline:
-* describe data processing + scripts used + what is needed for reproducibility.
-* what is next in line to wrap up rnaseq analysis.
+# RNAseq data processing
 
-current status:
-* Load in data
-* add sample details
-* resequenced samples --> clustering, does it improve?
-* do I need to remove batch effects?
+This file walks through the details of the RNAseq processing and performs the preliminary quality control of the processed data.
+
+-   The raw RNAseq files are at: `/projects/murray-lab/welshi/nextflow/DO_DIF`
+
+-   The sample details are at: `/projects/murray-lab/welshi/nextflow/DO_DIF/samplesheet.csv`
+
+-   There are 224(x2) sequence files, 150bp paired end RNA sequencing, from B6, CAST and 98 unique DO strain backgrounds.
+
+-   For B6 and CAST, samples from three AP domains (MAX, PM and POST) are collected and for DO strains only the MAX domains are collected.
+
+-   Some samples were re-processed and re-sequenced due to suspected contamination at the library prep stage together with other anchoring samples to remove batch effects.
+
+## Nextflow pipeline using STAR + Salmon
+
+The data was initially processed using the NGS nextflow pipeline where STAR is used for read alignment and SALMON is used for quantification of gene expression.
+
+-   Details of the pipeline can be found at: https://github.com/TheJacksonLaboratory/cs-nf-pipelines/wiki/RNA-Pipeline-ReadMe.
+
+-   The output files are at `/projects/murray-lab/welshi/nextflow/DO_DIF/batch1_RNAseq/nf_output/star_salmon`.
+
+-   **Next: The second set of samples will be run with the same pipeline to be compared to the quantities we get from EMASE.**
+
+## Quantifying gene expression using EMASE and obtaining DO genotypes using GBRS
+
+In order to get strain specific alignment and quantification, as well as obtaining genotypes for the DO samples we utilized EMASE/GBRS.
+
+-   I used bowtie followed by EMASE to align B6 and CAST background samples to strain specific genomes and quantify gene expression counts (script: `run_ONE_sample_trim_pseudo_bowtie_emase.slurm`).
+
+-   The DO samples were aligned to the 8-way transcriptome using bowtie followed by GBRS for gene expression quantification, genome reconstruction and interpolation onto the 69k grid for genetic mapping (script: `run_ONE_DO_sample_trim_pseudo_bowtie_gbrs.slurm`).
+
+-   An important drawback of this method is that bowtie can not handle long reads (\>75bp) therefore the 150bp RNAseq reads are trimmed to 75bp final length using trimgalore before alignment.
+
+-   The output files from EMASE/GBRS can be found at `/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/gbrs_emase/`.
+
+-   Both gene expression counts and DO genotypes are collated and processed (scripts: `collate_emase_gbrs.R` and `gbrs_genoprobs_to_RData.R`).
+
+
+## Contaminated samples
+
+From Ian: "The samples that showed contamination in the first round were:
+
+-   B6_12.5_PM_1
+
+-   B6_13.5_POST_3
+
+-   CAST_14.5_MAX_7
+
+-   DO_13.5_MAX_6
+
+-   DO_13.5_MAX_14
+
+These are the samples have been resequenced to address contamination or correct for batch effect.
+
+-   B6_12.5_MAX_5 B6_12.5_MAX_5\_2
+
+-   B6_12.5_PM_5 B6_12.5_PM_5\_2
+
+-   B6_12.5_POST_5 B6_12.5_POST_5\_2
+
+-   B6_12.5_MAX_1 B6_12.5_MAX_1\_2
+
+-   **B6_13.5_POST_3 B6_13.5_POST_3\_2**
+
+-   DO_13.5_MAX_45 DO_13.5_MAX_45_2
+
+-   **DO_13.5_MAX_6 DO_13.5_MAX_6\_2**
+
+-   **DO_13.5_MAX_14 DO_13.5_MAX_14_2**
+
+-   CAST_14.5_MAX_2 CAST_14.5_MAX_2\_2
+
+-   **CAST_14.5_MAX_7 CAST_14.5_MAX_7\_2**
+
+Unfortunately B6_12.5_PM_1 did not have sufficient RNA left over to repeat the library prep & sequencing. So ultimately that likely means dropping all tissue samples from that embryo (B6_12.5_PM_1, B6_12.5_MAX_1, B6_12.5_POST_1). Let's hope the contamination for the remaining samples is resolved by the repeats."
+
+# Gene Expression Counts
+
+```{r setup}
+#| message: false
+#| warning: false
+
+
+# load packages
+library(tidyverse)
+
+library(pheatmap)
+library(heatmaply) # for interactive heatmaps
+library(GGally)
+library(ggpubr)
+library(ggplot2)
+
+library(gprofiler2)
+set_base_url("https://biit.cs.ut.ee/gprofiler_archive3/e108_eg55_p17/")
+
+library(DT)
+
+library(here)
+
+# functions
+create_dt <- function(x){
+  DT::datatable(x,
+                extensions = 'Buttons',
+                rownames = FALSE, 
+                filter="top",
+                options = list(dom = 'Blfrtip',
+                               buttons = c('copy', 'csv', 'excel'),
+                               pageLength = 5, 
+                               scrollX= TRUE
+                               ))
+  
+}
+
+# reading in the sample details
+sample_details <- read_csv("/projects/munger-lab/projects/palate-project-murray-munger/samplesheet.csv") 
+
+```
+
+
+## Counts from STAR+SALMON
+
+```{r load_data_star}
+#| message: false
+#| warning: false
+
+# salmon_expr <- readRDS("/projects/murray-lab/welshi/nextflow/DO_DIF/batch1_RNAseq/nf_output/star_salmon/salmon.merged.gene_counts.rds")
+
+# load what was used in DESEQ2
+load("/projects/murray-lab/welshi/nextflow/DO_DIF/batch1_RNAseq/nf_output/star_salmon/deseq2_qc/deseq2.dds.RData") #dds
+
+#  This is the data used in plotting multiQC: 
+# data <- readRDS("/projects/murray-lab/welshi/nextflow/DO_DIF/batch1_RNAseq/nf_output/star_salmon/salmon.merged.gene_counts_length_scaled.rds")
+# rld <- DESeq2::rlog(dds)
+# SummarizedExperiment::assay(dds, "rld") <- rld
+
+# Gene annotation
+
+
+```
+
+### Sample similarity matrix
+
+Sample similarity to check for contaminated samples.
+
+```{r deseq2_heatmap_prep_ss}
+#| output: false
+
+sample_dist_ss <- dist(t(SummarizedExperiment::assay(dds,"vst"))) # 1- counts, 2-vst
+
+sample_annot <- sample_details %>%
+  filter( sample %in% ( dds$sample) ) %>% 
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>%
+  select(sample, AP_domain,Gest_stage, strain, Harvest_date) %>%
+  column_to_rownames("sample")
+
+
+
+ss_phtmp <- pheatmap(mat = as.matrix(sample_dist_ss),
+         annotation_col = sample_annot[,"strain",drop=F],
+         clustering_distance_rows = sample_dist_ss,
+         clustering_distance_cols = sample_dist_ss,
+         color = colorRampPalette((RColorBrewer::brewer.pal(n = 9, name =
+  "RdYlBu")))(255),
+  legend_breaks = c(0,50,100,150,200),
+         fontsize = 4)
+
+```
+
+```{r deseq2_heatmap_ss}
+#| fig-width: 20
+#| fig-height: 20
+heatmaply(x = as.matrix(sample_dist_ss),
+          dist_method = "euclidean",
+          scale = "none",
+          Rowv = ss_phtmp[[1]],
+          Colv = ss_phtmp[[2]],
+          revC = T,
+          show_dendrogram = FALSE,
+          plot_method = "plotly",
+          # row_side_colors = sample_annot[(ss_phtmp[[2]]$labels[ss_phtmp[[2]]$order]),"strain",drop=F], # I can't seem to get this to work! 
+          fontsize_col = 8,
+          fontsize_row = 8,
+          colors = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name =
+  "RdYlBu")))(100),
+          limits = c(0,200), 
+          main ="STAR+SALMON normalized values (DESeq2::vst)",
+            )
+
+```
+
+
+### Principal component analysis
+
+
+```{r pca_ss}
+#| message: false
+#| warning: false
+
+# running with uq normalized values
+pca <- prcomp( t(SummarizedExperiment::assay(dds,"vst")), center = T, scale. = F)
+
+# running with DESeq2 transformed values
+#pca <- prcomp(t(SummarizedExperiment::assay(rlog_expr_mat)), center = T, scale. = T)
+
+# running pca only using top 500 variable genes
+# rv <- matrixStats::rowVars(expr_mat)
+# select <- order(rv, decreasing = TRUE)[seq_len(500)]
+# pca <- prcomp(t(expr_mat[select, ]), center=TRUE, scale=FALSE)
+ 
+
+
+sample_annot <- sample_details %>%
+  filter( sample %in% colnames( SummarizedExperiment::assay(dds,2)) )%>% 
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% 
+  select(sample, AP_domain,Gest_stage, strain,batch) 
+
+pca_df <- as_tibble(pca$x, rownames = "sample") %>% 
+  left_join(sample_annot)
+
+var_explained <- (pca$sdev^2 / sum(pca$sdev^2))
+
+```
+
+
+```{r first_five_pcs_ss}
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 10
+
+pca$x %>%
+  as_tibble(rownames = "sample") %>% 
+  left_join(sample_annot) %>%
+  ggpairs(.,
+    columns = 2:6, progress = FALSE, ggplot2::aes(color = strain, shape =Gest_stage),
+    upper = list(continuous = "density", combo = "box_no_facet"),
+    lower = list(continuous = "points", combo = "dot_no_facet")
+  ) + 
+  theme_pubclean(base_size = 14) +
+  color_palette("npg")+
+  fill_palette("npg")+
+  theme(legend.position = "right")
+
+```
+
+```{r scree_plot_ss}
+#| message: false
+#| warning: false
+#| fig-width: 5
+#| fig-height: 4
+
+tibble(var =  var_explained[1:10]* 100, PC = paste0("PC", seq(1:10))) %>%
+  arrange(desc(var)) %>%
+  mutate(label = factor(PC, levels = PC)) %>%
+  ggplot(aes(x = label, y = var)) +
+  geom_col() +
+  xlab("Principal Component") +
+  ylab("% Variation explained") +
+  theme_pubclean(base_size = 14)+
+  ylim(0,25)
+
+
+```
+
+
+```{r pc1_pc2_ss}
+#| message: false
+#| warning: false
+#| fig-width: 8
+#| fig-height: 6
+
+pca_plot <- pca_df %>% 
+  ggplot()+
+  aes( x = PC1, 
+       y = PC2,
+       col = strain,
+       shape = Gest_stage,
+       label = sample,
+       )+
+  geom_point(size = 4, alpha = 0.7)+
+  theme_pubclean()+
+  color_palette("npg")+
+  xlab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
+  ylab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+
+  theme(legend.position = "right")
+
+
+ggplotly(pca_plot, tooltip = c("label"))
+
+```
+
+```{r pc1_pc3_ss}
+#| message: false
+#| warning: false
+#| fig-width: 8
+#| fig-height: 6
+
+pca_plot <- pca_df %>% 
+  ggplot()+
+  aes( x = PC1, 
+       y = PC3,
+       col = strain,
+       shape = Gest_stage,
+       label = sample
+       )+
+  geom_point(size = 4, alpha = 0.7)+
+  theme_pubclean()+
+  color_palette("npg")+
+  xlab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
+  ylab(paste0("PC3 (",100*round(var_explained[3],2),"%)"))+
+  theme(legend.position = "right")
+
+
+ggplotly(pca_plot, tooltip = c("label"))
+
+```
+
+## Counts from EMASE/GBRS 
+
+Gene expression counts from EMASE/GBRS are read in, collated (`raw_expr_mat`). Next, genes with a median transcript per million (TPM) lower than 0.5 were filtered and counts were then upper quartile normalized to obtain the final gene expression matrix (`expr_mat`). Sample details are read in from the sample sheet and gene annotations are retrieved from ensembl v84 which matches the annotations used for EMASE.
+
+```{r load_data_emase}
+#| message: false
+#| warning: false
+
+# loading the count data
+load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts.RData") # raw_expr_mat, expr_mat
+
+# Get v84 gene annotations
+# all.genes_v84 <- batchGenes( ids = rownames(expr_mat), species = 'Mm', release = 84)
+# # Let's save these so I don't have to depend on ensimplR every time
+# write_tsv(all.genes_v84, file = here("_data","ENSMUSGid_to_symbol_v84.txt"))
+all.genes_v84 <- read_tsv( here("_data","ENSMUSGid_to_symbol_v84.txt"))
+all.genes_v84 <- all.genes_v84 %>% 
+  mutate( midpoint = (start+end)/2)
+
+
+# UQ wo filtering
+# q75 <- apply(raw_expr_mat, 2, quantile, 0.75)
+# ratio <- mean(q75)/q75
+# uq_expr_mat <- sweep(raw_expr_mat, 2, ratio, FUN="*")
+
+```
+
+
+### Sample similarity matrix
+
+<!-- Sanity check, the non-contaminated replicate samples show the highest correlation to each other. -->
+
+<!-- ```{r sample_cor} -->
+
+<!-- cc <- cor( log1p(expr_mat)) -->
+<!-- diag(cc) <- 0 -->
+<!-- sortedevals <- sort(cc[upper.tri(cc)], decreasing = TRUE) -->
+<!-- which(cc > sortedevals[6], arr.ind = TRUE) -->
+
+<!-- ``` -->
+
+
+Sample similarity (euclidean distances) calculated from log1p transformed raw values: 
+
+```{r sample_corr_heatmap_prep}
+#| output: false
+
+sample_annot <- sample_details %>%
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>%
+  select(sample, AP_domain,Gest_stage, strain, Harvest_date) %>%
+  column_to_rownames("sample")
+
+dds_emase <- DESeq2::DESeqDataSetFromMatrix( round(raw_expr_mat), design = ~1, colData = (sample_details %>%
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>%
+  select(sample, AP_domain,Gest_stage, strain, Harvest_date))
+  )
+
+vst_emase <- DESeq2::varianceStabilizingTransformation(dds_emase)
+SummarizedExperiment::assay(dds_emase,"vst") <- SummarizedExperiment::assay(vst_emase)
+
+sample_dist_vst <- dist( t(SummarizedExperiment::assay(dds_emase,"vst")))
+
+sample_dist <- dist(t(log1p(raw_expr_mat)))
+
+only_b6_cast <- sample_annot %>% filter(strain %in% c("B6","CAST"))
+
+phtmp <- pheatmap(mat = as.matrix(sample_dist),
+         annotation_row = sample_annot["strain",drop =F],
+         #annotation_col = sample_annot[,"strain",drop =F],
+         cluster_rows = T,
+         cluster_cols = T,
+         clustering_distance_rows = sample_dist,
+         clustering_distance_cols = sample_dist,
+         scale ="none",
+         color = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name =
+  "RdYlBu")))(255),
+         fontsize = 4)
+
+phtmp_vst <- pheatmap(mat = as.matrix(sample_dist_vst),
+         annotation_row = sample_annot[,"strain",drop =F],
+         #annotation_col = sample_annot[,"strain",drop =F],
+         cluster_rows = T,
+         cluster_cols = T,
+         clustering_distance_rows = sample_dist_vst,
+         clustering_distance_cols = sample_dist_vst,
+         scale ="none",
+         color = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name =
+  "RdYlBu")))(255),
+         fontsize = 4)
+
+```
+
+```{r sample_corr_heatmap}
+#| fig-width: 20
+#| fig-height: 20
+
+heatmaply(x = as.matrix(sample_dist),
+          dist_method = "euclidean",
+          scale = "none",
+          Rowv = phtmp[[1]],
+          Colv = phtmp[[2]],
+          revC = T,
+          show_dendrogram = FALSE,
+          plot_method = "plotly",
+          fontsize_col = 8,
+          fontsize_row = 8,
+          colors = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name =
+  "RdYlBu")))(255),
+          #limits=c(0,200),
+          main ="EMASE/GBRS raw values",
+            )
+
+```
+
+
+```{r sample_corr_heatmap_vst}
+#| fig-width: 20
+#| fig-height: 20
+
+heatmaply(x = as.matrix(sample_dist_vst),
+          dist_method = "euclidean",
+          scale = "none",
+          Rowv = phtmp_vst[[1]],
+          Colv = phtmp_vst[[2]],
+          revC = T,
+          show_dendrogram = FALSE,
+          plot_method = "plotly",
+          fontsize_col = 8,
+          fontsize_row = 8,
+          colors = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name =
+  "RdYlBu")))(255),
+          limits = c(0,200),
+          main ="EMASE/GBRS normalized values (DESeq2::vst)",
+            )
+
+```
+
+<!-- ```{r deseq2_sampleprocessing} -->
+<!-- #| message: false -->
+<!-- #| warning: false -->
+<!-- #| include: false -->
+<!-- #| cache: true -->
+
+<!-- # let's transform using deseq2 rlog -->
+<!-- sample_annot2 <- sample_details %>% -->
+<!--   separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% -->
+<!--   select(sample, AP_domain,Gest_stage, strain) -->
+
+<!-- emase_dds     <- DESeq2::DESeqDataSetFromMatrix(countData=round(raw_expr_mat), -->
+<!--                                   colData=sample_annot2, design=~ 1) -->
+<!-- emase_dds <- DESeq2::estimateSizeFactors(emase_dds) -->
+<!-- #rlog_expr_mat <- DESeq2::rlog( dds, blind = T) -->
+<!-- vst_expr_mat <- DESeq2::varianceStabilizingTransformation( emase_dds, blind = T) -->
+<!-- SummarizedExperiment::assay( emase_dds, "vst") <- SummarizedExperiment::assay(vst_expr_mat) -->
+
+
+<!-- ``` -->
+
+<!-- ```{r deseq2_heatmap_prep} -->
+<!-- #| output: false -->
+
+<!-- sample_dist_emase_vst <- dist(t(SummarizedExperiment::assay(emase_dds,2))) -->
+
+<!-- phtmp <- pheatmap( as.matrix(sample_dist_emase_vst), -->
+<!--          annotation_row = sample_annot[,"strain",drop=F], -->
+<!--          cluster_rows = T, -->
+<!--          cluster_cols = T, -->
+<!--          clustering_distance_rows = sample_dist_emase_vst, -->
+<!--          clustering_distance_cols = sample_dist_emase_vst, -->
+<!--          scale ="none", -->
+<!--          color = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name = -->
+<!--   "RdYlBu")))(100), -->
+<!--          fontsize = 4 -->
+<!--   ) -->
+
+<!-- ``` -->
+
+<!-- ```{r deseq2_heatmap} -->
+<!-- #| fig-width: 24 -->
+<!-- #| fig-height: 20 -->
+<!-- heatmaply(x = as.matrix(sample_dist_emase_vst), -->
+<!--           dist_method = "euclidean", -->
+<!--           scale = "none", -->
+<!--           Rowv = phtmp[[1]], -->
+<!--           Colv = phtmp[[2]], -->
+<!--           revC = T, -->
+<!--           show_dendrogram = FALSE, -->
+<!--           plot_method = "plotly", -->
+<!--           #col_side_colors = sample_annot[(phtmp[[2]]$order),], # it needs them in the right order! -->
+<!--           fontsize_col = 8, -->
+<!--           fontsize_row = 8, -->
+<!--           colors = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name = -->
+<!--   "RdYlBu")))(100), -->
+<!--           main ="rlog values from DESeq2", -->
+<!--             ) -->
+
+<!-- ``` -->
+
+
+<!-- ````{r} -->
+<!-- #| eval: false -->
+
+<!-- first_batch <- colnames( SummarizedExperiment::assay(dds,1)) -->
+
+<!-- sample_dist_sub <- dist( t(log1p(raw_expr_mat[,first_batch]))) -->
+
+<!-- sample_dist_emase_vst <- dist(t(SummarizedExperiment::assay(emase_dds,2)[,first_batch] )) -->
+
+<!-- pheatmap(mat = as.matrix(sample_dist_emase_vst), -->
+<!--          annotation_row = sample_annot[first_batch,"strain",drop=F], -->
+<!--          #annotation_col = sample_annot[first_batch$sample,"strain",drop=F], -->
+<!--          clustering_distance_rows = sample_dist_emase_vst, -->
+<!--          clustering_distance_cols = sample_dist_emase_vst, -->
+<!--          color = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name = -->
+<!--   "RdYlBu")))(100), -->
+<!--          fontsize = 4) -->
+
+<!-- pheatmap(mat = as.matrix(sample_dist_sub), -->
+<!--          annotation_row = sample_annot[first_batch,"strain",drop=F], -->
+<!--          #annotation_col = sample_annot[first_batch$sample,"strain",drop=F], -->
+<!--          clustering_distance_rows = sample_dist_sub, -->
+<!--          clustering_distance_cols = sample_dist_sub, -->
+<!--          color = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name = -->
+<!--   "RdYlBu")))(100), -->
+<!--          fontsize = 4) -->
+
+<!-- pca <- prcomp( t(SummarizedExperiment::assay(emase_dds,2)[,first_batch$sample] ), center = T, scale. = F) -->
+
+<!-- pca_df <- as_tibble(pca$x, rownames = "sample") %>% -->
+<!--   left_join(sample_annot2) -->
+
+<!-- var_explained <- (pca$sdev^2 / sum(pca$sdev^2)) -->
+
+<!-- pca_df %>% -->
+<!--   ggplot()+ -->
+<!--   aes( x = PC1, -->
+<!--        y = PC2, -->
+<!--        shape = strain, -->
+<!--        col = Gest_stage, -->
+<!--        label = sample, -->
+<!--        )+ -->
+<!--   geom_point(size = 4, alpha = 0.7)+ -->
+<!--   theme_pubclean()+ -->
+<!--   color_palette("npg")+ -->
+<!--   xlab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+ -->
+<!--   ylab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+ -->
+<!--   theme(legend.position = "right") -->
+
+<!-- ``` -->
+
+
+### Principal component analysis
+
+
+```{r pca_emase}
+#| message: false
+#| warning: false
+
+# running with uq normalized values
+pca <- prcomp( t(log1p(raw_expr_mat)), center = T, scale. = F)
+
+pca_vst <- prcomp( t( SummarizedExperiment::assay(dds_emase,"vst")), center = T, scale. = F)
+
+# pca <- pca_vst
+
+sample_annot <- sample_details %>% 
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% 
+  select(sample, AP_domain,Gest_stage, strain,batch) 
+
+pca_df <- as_tibble(pca$x, rownames = "sample") %>% 
+  left_join(sample_annot)
+
+var_explained <- (pca$sdev^2 / sum(pca$sdev^2))
+
+# pc drivers
+pc1_drivers <- pca$rotation[,"PC1", drop = FALSE] %>% 
+  as_tibble( rownames = "id") %>% 
+  left_join( all.genes_v84 %>%  
+               select(id, symbol)
+             ) %>% 
+  filter( abs(PC1) >= quantile(abs(PC1), 0.95))
+
+pc2_drivers <- pca$rotation[,"PC2", drop = FALSE] %>% 
+  as_tibble( rownames = "id") %>% 
+  left_join( all.genes_v84 %>%  
+               select(id, symbol)
+             ) %>% 
+  filter( abs(PC2) >= quantile(abs(PC2), 0.95))
+
+pc3_drivers <- pca$rotation[,"PC3", drop = FALSE] %>% 
+  as_tibble( rownames = "id") %>% 
+  left_join( all.genes_v84 %>%  
+               select(id, symbol)
+             ) %>% 
+  filter( abs(PC3) >= quantile(abs(PC3), 0.95))
+
+pc4_drivers <- pca$rotation[,"PC4", drop = FALSE] %>% 
+  as_tibble( rownames = "id") %>% 
+  left_join( all.genes_v84 %>%  
+               select(id, symbol)
+             ) %>% 
+  filter( abs(PC4) >= quantile(abs(PC4), 0.95))
+
+pc5_drivers <- pca$rotation[,"PC5", drop = FALSE] %>% 
+  as_tibble( rownames = "id") %>% 
+  left_join( all.genes_v84 %>%  
+               select(id, symbol)
+             ) %>% 
+  filter( abs(PC5) >= quantile(abs(PC5), 0.95))
+
+# # ORA with pc drivers 1-5
+# g.pc1 <- gost(
+#   query = pc1_drivers$symbol,
+#   organism = "mmusculus",
+#   domain_scope = "custom",
+#   custom_bg = all.genes_v84$symbol,
+#   evcodes = TRUE,
+#   correction_method = "fdr"
+# )
+# g.pc1$result <- g.pc1$result %>% filter(term_size < 660)
+# 
+# g.pc2 <- gost(
+#   query = pc2_drivers$symbol,
+#   organism = "mmusculus",
+#   domain_scope = "custom",
+#   custom_bg = all.genes_v84$symbol,
+#   evcodes = TRUE,
+#   correction_method = "fdr"
+# )
+# g.pc2$result <- g.pc2$result %>% filter(term_size < 660)
+# 
+# g.pc3 <- gost(
+#   query = pc3_drivers$symbol,
+#   organism = "mmusculus",
+#   domain_scope = "custom",
+#   custom_bg = all.genes_v84$symbol,
+#   evcodes = TRUE,
+#   correction_method = "fdr"
+# )
+# g.pc3$result <- g.pc3$result %>% filter(term_size < 660)
+# 
+# g.pc4 <- gost(
+#   query = pc4_drivers$symbol,
+#   organism = "mmusculus",
+#   domain_scope = "custom",
+#   custom_bg = all.genes_v84$symbol,
+#   evcodes = TRUE,
+#   correction_method = "fdr"
+# )
+# g.pc4$result <- g.pc4$result %>% filter(term_size < 660)
+# 
+# g.pc5 <- gost(
+#   query = pc5_drivers$symbol,
+#   organism = "mmusculus",
+#   domain_scope = "custom",
+#   custom_bg = all.genes_v84$symbol,
+#   evcodes = TRUE,
+#   correction_method = "fdr"
+# )
+# g.pc5$result <- g.pc5$result %>% filter(term_size < 660)
+
+
+```
+
+
+```{r, eval = FALSE}
+
+sub_samples <- sample_details %>%
+  #filter( sample %in% ( dds$sample) ) %>% 
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>%
+  select(sample, AP_domain,Gest_stage, strain, Harvest_date) %>% 
+  filter( Gest_stage =="E13.5") 
+
+#pca <- prcomp( t(log1p(raw_expr_mat)), center = T, scale. = F)
+
+sample_annot <- sample_details %>% 
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% 
+  select(sample, AP_domain,Gest_stage, strain,batch, Harvest_date) 
+
+pca_df <- as_tibble(pca$x, rownames = "sample") %>% 
+  inner_join(sample_annot)
+
+ggplotly(
+  pca_df %>% 
+  filter( sample %in% sub_samples$sample) %>% 
+  ggplot()+
+  aes( x = PC1, 
+       y = PC2,
+       col = AP_domain,
+       #fill = strain,
+       shape = strain,
+       label = sample,
+       )+
+  geom_point(size = 4, alpha = 0.7)+
+  theme_pubclean()+
+  #color_palette("npg")+
+  xlab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
+  ylab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+
+  theme(legend.position = "right")+
+  ggtitle("E13.5")
+)
+
+
+```
+
+```{r first_five_pcs_emase}
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 10
+
+pca$x %>%
+  as_tibble(rownames = "sample") %>% 
+  left_join(sample_annot) %>%
+  ggpairs(.,
+    columns = 2:6, progress = FALSE, ggplot2::aes(color = strain, shape =Gest_stage),
+    upper = list(continuous = "density", combo = "box_no_facet"),
+    lower = list(continuous = "points", combo = "dot_no_facet")
+  ) + 
+  theme_pubclean(base_size = 14) +
+  color_palette("npg")+
+  fill_palette("npg")+
+  theme(legend.position = "right")
+
+```
+
+```{r scree_plot_emase}
+#| message: false
+#| warning: false
+#| fig-width: 5
+#| fig-height: 4
+
+tibble(var =  var_explained[1:10]* 100, PC = paste0("PC", seq(1:10))) %>%
+  arrange(desc(var)) %>%
+  mutate(label = factor(PC, levels = PC)) %>%
+  ggplot(aes(x = label, y = var)) +
+  geom_col() +
+  xlab("Principal Component") +
+  ylab("% Variation explained") +
+  theme_pubclean(base_size = 14)+
+  ylim(0,25)
+
+
+```
+
+
+```{r pc1_pc2_emase}
+#| message: false
+#| warning: false
+#| fig-width: 8
+#| fig-height: 6
+
+pca_plot <- pca_df %>% 
+  ggplot()+
+  aes( x = PC1, 
+       y = PC2,
+       col = strain,
+       shape = Gest_stage,
+       label = sample,
+       )+
+  geom_point(size = 4, alpha = 0.7)+
+  theme_pubclean()+
+  color_palette("npg")+
+  xlab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
+  ylab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+
+  theme(legend.position = "right")
+
+
+ggplotly(pca_plot, tooltip = c("label"))
+
+```
+
+```{r pc1_pc3_emase}
+#| message: false
+#| warning: false
+#| fig-width: 8
+#| fig-height: 6
+
+pca_plot <- pca_df %>% 
+  ggplot()+
+  aes( x = PC1, 
+       y = PC3,
+       col = strain,
+       shape = Gest_stage,
+       label = sample
+       )+
+  geom_point(size = 4, alpha = 0.7)+
+  theme_pubclean()+
+  color_palette("npg")+
+  xlab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
+  ylab(paste0("PC3 (",100*round(var_explained[3],2),"%)"))+
+  theme(legend.position = "right")
+
+
+ggplotly(pca_plot, tooltip = c("label"))
+
+```
+
+
+```{r pc2_pc3_emase}
+#| message: false
+#| warning: false
+#| fig-width: 8
+#| fig-height: 6
+
+pca_plot <- pca_df %>% 
+  ggplot()+
+  aes( x = PC2, 
+       y = PC3,
+       col = strain,
+       shape = Gest_stage,
+       label = sample
+       )+
+  geom_point(size = 4, alpha = 0.7)+
+  theme_pubclean()+
+  color_palette("npg")+
+  xlab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+
+  ylab(paste0("PC3 (",100*round(var_explained[3],2),"%)"))+
+  theme(legend.position = "right")
+
+
+ggplotly(pca_plot, tooltip = c("label"))
+
+```
+
+<!-- #### Drivers of PC1 -->
+
+<!-- ```{r pc1_drivers} -->
+
+<!-- # gostplot(g.pc1) -->
+<!-- g.pc1$result %>%  -->
+<!--   select( term_name, source, FDR = p_value, term_size, intersection_size) %>%  -->
+<!--   filter( FDR <0.01) %>%  -->
+<!--   mutate_if( is.numeric, formatC, digits =2) %>%  -->
+<!--   create_dt() -->
+
+<!-- ``` -->
+
+
+<!-- #### Drivers of PC2 -->
+
+<!-- ```{r pc2_drivers} -->
+
+<!-- g.pc2$result %>%  -->
+<!--   select( term_name, source, FDR = p_value, term_size, intersection_size) %>%  -->
+<!--   filter( FDR <0.01) %>%  -->
+<!--   mutate_if( is.numeric, formatC, digits =2) %>%  -->
+<!--   create_dt() -->
+
+<!-- ``` -->
+
+<!-- #### Drivers of PC3 -->
+
+<!-- ```{r pc3_drivers} -->
+
+<!-- g.pc3$result %>%  -->
+<!--   select( term_name, source, FDR = p_value, term_size, intersection_size) %>%  -->
+<!--   #filter( FDR <0.01) %>%  -->
+<!--   mutate_if( is.numeric, formatC, digits =2) %>%  -->
+<!--   create_dt() -->
+
+<!-- ``` -->
+
+<!-- #### Drivers of PC4 -->
+
+<!-- ```{r pc4_drivers} -->
+
+<!-- g.pc4$result %>%  -->
+<!--   select( term_name, source, FDR = p_value, term_size, intersection_size) %>%  -->
+<!--   filter( FDR <0.01) %>%  -->
+<!--   mutate_if( is.numeric, formatC, digits =2) %>%  -->
+<!--   create_dt() -->
+
+<!-- ``` -->
+
+<!-- #### Drivers of PC5 -->
+
+<!-- ```{r pc5_drivers} -->
+
+<!-- g.pc5$result %>%  -->
+<!--   select( term_name, source, FDR = p_value, term_size, intersection_size) %>%  -->
+<!--   filter( FDR <0.01) %>%  -->
+<!--   mutate_if( is.numeric, formatC, digits =2) %>%  -->
+<!--   create_dt() -->
+
+<!-- ``` -->
+
+
