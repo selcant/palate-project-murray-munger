@@ -997,6 +997,59 @@ for( i in 1:nrow(gsva_highlight_qtl)){
 
 ```
 
+
+Mediation of these three QTL:
+
+```{r gsva_qtl_mediation}
+#| warning: false
+#| message: false
+#| results: hide
+
+# mediate with RNA data
+gsva_highlight_qtl <- gsva_highlight_qtl %>% 
+  left_join( map_dat2 %>% select(pos, marker) %>% mutate(pos = as.numeric(pos)))
+
+gsva_peak_meds <- c()
+for(i in 1:nrow(gsva_highlight_qtl)){
+  qtl_geno <- pull_genoprobpos(genoprobs, gsva_highlight_qtl$marker[i])
+
+  meds <- mediation.scan( target =as.matrix(gsva_results_mat_rankZ[,gsva_highlight_qtl$lodcolumn[i]]),
+                               mediator = exprZ[rownames(gsva_results_mat_rankZ),all_genes_palate$gene_id,drop=F], 
+                               annotation =  all_genes_palate %>%
+                                 mutate(chr=chromosome,pos=abs(end+start)/2),
+                               qtl.geno = qtl_geno[rownames(gsva_results_mat_rankZ),],
+                               covar = covar[rownames(gsva_results_mat_rankZ),"sex",drop=FALSE])
+  
+  meds <- meds %>% 
+      mutate( 
+        TERM = gsva_highlight_qtl$TERM[i],
+        qtl_lod = gsva_highlight_qtl$lod[i],
+              peak_chr = gsva_highlight_qtl$chr[i],
+              interp_bp_peak = gsva_highlight_qtl$interp_bp_peak[i])
+  
+  gsva_peak_meds[[i]] <- meds
+}
+
+gsva_peak_meds_merged <- do.call(rbind, gsva_peak_meds) %>% 
+  filter( peak_chr == chromosome & 
+          interp_bp_peak >=pos-10e06 &
+            interp_bp_peak <= pos+10e06 &
+            LOD < qtl_lod)
+
+```
+
+```{r}
+
+gsva_peak_meds_merged %>% 
+  group_by(TERM, peak_chr, qtl_lod) %>% 
+  slice_min( LOD, n = 5) %>% 
+  ungroup() %>% 
+  select(TERM, mediator = symbol, mediator_chr = chromosome, peak_chr, qtl_lod, mediation_lod = LOD) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  create_dt()
+  
+```
+
 :::
 
 ## Weighted correlation network analysis
@@ -1250,7 +1303,7 @@ wgcna_qtl_peaks <- find_peaks(wgcna_qtl, threshold = 5, gmap)
 #| warning: false
 #| fig-width: 12
 #| fig-height: 6
-corrplot(moduleTraitCor, p.mat = moduleTraitPvalue, insig = "blank",
+corrplot(moduleTraitCor, p.mat = moduleTraitPvalue, insig = "label_sig", pch.cex = 1.1, pch.col = "red",
          rder = 'AOE', cl.pos = 'n', 
          col = COL2('PRGn'))
 colorlegend(xlim=c(6,8), ylim=c(2,12), COL2('PRGn'), c(seq(-1,1,.5)), align="l", vertical=TRUE, addlabels=TRUE)
@@ -1282,6 +1335,116 @@ wgcna_qtl_peaks %>%
   mutate_if(is.numeric, round, 2) %>% 
   create_dt()
 
+```
+
+Here are the QTL plots for the ones with mathcing allele effects to the eQTL hotspots:
+
+```{r wgcna_chr2_13_qtl}
+#| results: asis
+#| echo: false
+#| eval: true
+#| cache: true
+#| message: false
+#| fig-height: 6
+#| fig-width: 12
+
+haps <- LETTERS[1:8]
+
+# blue on 2, brown on 2
+# green on 13, yellow on 13, brown on 13
+
+wgcna_highlight_qtl <- wgcna_qtl_peaks %>% 
+  mutate(peak_chr = chr, peak_cM = pos) %>% 
+  interp_bp() %>% 
+  filter( 
+    (peak_chr == 2 & 
+       between(interp_bp_peak, left = 107870660, right = 115487435)) |
+           (peak_chr == 13 & between(interp_bp_peak, left = 101771192, right = 107092075) )
+          ) %>% 
+  filter(lodcolumn  %in% c("MEblue","MEbrown","MEgreen","MEyellow")) %>% 
+  left_join( map_dat2 %>% 
+               select(pos, marker) %>% 
+               mutate(pos = as.numeric(pos))
+             ) 
+  
+
+
+for( i in 1:nrow(wgcna_highlight_qtl)){
+  peak_chr <- wgcna_highlight_qtl$peak_chr[i]
+  lodcolumn <- wgcna_highlight_qtl$lodcolumn[i]
+  
+  #pQTL scan
+  qtl_scan <- scan1(genoprobs = genoprobs,
+                 pheno = MEs_rankz[,lodcolumn,drop = F],
+                 kinship = kinship_loco,
+                 addcovar = covar[,"sex",drop=F])
+  qtl_effs <- scan1blup(genoprobs =genoprobs[,peak_chr],
+                   pheno = MEs_rankz[,lodcolumn,drop = F],
+                   kinship = kinship_loco[[peak_chr]],
+                   addcovar = covar[,"sex",drop=F])
+  cat('### ',wgcna_highlight_qtl$lodcolumn[i],'peak on', peak_chr ,' \n')
+  plot_coefCC(qtl_effs,
+                            pmap, 
+                            scan1_output = qtl_scan, 
+                            main=paste0(wgcna_highlight_qtl$lodcolumn[i]," plot"),
+              xlim = c(wgcna_highlight_qtl$interp_bp_peak[i]-20e06, 
+                       wgcna_highlight_qtl$interp_bp_peak[i]+20e06) )
+  abline(v=wgcna_highlight_qtl$interp_bp_peak[i],col="red",lwd=2,lty=3)
+  cat(' \n \n')
+}
+
+
+
+```
+
+Mediation results:
+
+```{r wgcna_qtl_mediation}
+#| warning: false
+#| message: false
+#| results: hide
+
+# mediate with RNA data
+
+wgcna_peak_meds <- c()
+for(i in 1:nrow(wgcna_highlight_qtl)){
+  qtl_geno <- pull_genoprobpos(genoprobs, wgcna_highlight_qtl$marker[i])
+
+  meds <- mediation.scan( target =as.matrix(MEs_rankz[,wgcna_highlight_qtl$lodcolumn[i]]),
+                               mediator = exprZ[rownames(MEs_rankz),all_genes_palate$gene_id,drop=F], 
+                               annotation =  all_genes_palate %>%
+                                 mutate(chr=chromosome,pos=abs(end+start)/2),
+                               qtl.geno = qtl_geno[rownames(MEs_rankz),],
+                               covar = covar[rownames(MEs_rankz),"sex",drop=FALSE])
+  
+  meds <- meds %>% 
+      mutate( 
+        module = wgcna_highlight_qtl$lodcolumn[i],
+        qtl_lod = wgcna_highlight_qtl$lod[i],
+              peak_chr = wgcna_highlight_qtl$chr[i],
+              interp_bp_peak = wgcna_highlight_qtl$interp_bp_peak[i])
+  
+  wgcna_peak_meds[[i]] <- meds
+}
+
+wgcna_peak_meds_merged <- do.call(rbind, wgcna_peak_meds) %>% 
+  filter( peak_chr == chromosome & 
+          interp_bp_peak >=pos-10e06 &
+            interp_bp_peak <= pos+10e06 &
+            LOD < qtl_lod)
+
+```
+
+```{r}
+
+wgcna_peak_meds_merged %>% 
+  group_by(module, peak_chr, qtl_lod) %>% 
+  slice_min( LOD, n = 5) %>% 
+  ungroup() %>% 
+  select(module, mediator = symbol, mediator_chr = chromosome, peak_chr, qtl_lod, mediation_lod = LOD) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  create_dt()
+  
 ```
 
 ### ORA results for modules
