@@ -1475,7 +1475,7 @@ b6_lrt_domain_stage_merged <- b6_lrt_post_stage_merged %>%
 
 ```
 
-I am using likelihood ratio test (LRT) to compare a linear model with and without an interaction between AP domain and gestational stage. This test allows us to identify genes that change differently over gestational stages across different domains. There are `r formatC(nrow(b6_lrt_domain_stage_merged %>% select(gene_id) %>% distinct()), big.mark =",")` genes that show domain effects (both in PM vs MAX and POST vs MAX) at one or more time points after E12.5. The LRT will help us identify genes that are showing different trends in expression over gestational stages between domains but NOT genes that behave similarly (e.g. genes that steadily increase in both domains over time). I am plotting some examples below to visualize and also doing an ORA with this gene list.
+I am using likelihood ratio test (LRT) to compare a linear model with and without an interaction between AP domain and gestational stage. This test allows us to identify genes that change differently over gestational stages across different domains. There are `r formatC(nrow(b6_lrt_domain_stage_merged %>% select(gene_id) %>% distinct()), big.mark =",")` genes that show domain effects (both in PM vs MAX and POST vs MAX) at one or more time points after E12.5. I am plotting some examples below to visualize and also doing an ORA with this gene list.
 
 ```{r plot_counts_b6_domain_by_stage}
 #| warning: false
@@ -1539,7 +1539,7 @@ g.b6_domain_stage$result %>%
 
 ```
 
-How about genes that show 
+
 
 :::
 
@@ -1742,6 +1742,7 @@ abline(h=c(-.5,.5), col="dodgerblue", lwd=2)
 ```{r gest_diff_maxilla}
 #| warning: false
 #| message: false
+#| eval: false
 
 gest_effects_s125_135 <- results(strain_dds_coll, contrast = list(c("Gest_stageE13.5")))
 gest_effects_s125_145 <- results(strain_dds_coll, contrast = list(c("Gest_stageE14.5")))
@@ -1766,10 +1767,112 @@ all_gest_genes <- gest_effects_s125_135 %>%
 
 ```
 
-```{r}
+```{r lrt_strain_by_gest_eff}
+#| warning: false
+#| message: false
+
+# the original model + run: 
+# strain_comp_model <- model.matrix(~ sex+strain + Gest_stage + strain:ind + strain:Gest_stage,
+#                                   data = colData(strain_dds_coll))
+# all.zero <- apply(strain_comp_model, 2, function(x) all(x==0))
+# idx <- which(all.zero)
+# strain_comp_model <- strain_comp_model[,-idx]
+# strain_dds_coll <- DESeq(strain_dds_coll, betaPrior = FALSE, full=strain_comp_model)
+
+strain_comp_model_reduced <- model.matrix(~ sex + strain + Gest_stage + strain:ind ,
+                                  data = colData(strain_dds_coll))
+all.zero <- apply(strain_comp_model_reduced, 2, function(x) all(x==0))
+idx <- which(all.zero)
+strain_comp_model_reduced <- strain_comp_model_reduced[,-idx]
+
+strain_dds_coll_lrt <- DESeq(strain_dds_coll, test="LRT", full= strain_comp_model, reduced = strain_comp_model_reduced)
+
+# resultsNames(strain_dds_coll)
+# resultsNames(strain_dds_coll_lrt)
+strain_by_gest_lrt_135vs125 <- results(strain_dds_coll_lrt, contrast = list(c("strainCAST.Gest_stageE13.5")),alpha = 0.05 )
+strain_by_gest_lrt_145vs125 <- results(strain_dds_coll_lrt, contrast = list(c("strainCAST.Gest_stageE14.5")),alpha = 0.05 )
+strain_by_gest_lrt_135vs145 <- results(strain_dds_coll_lrt, contrast = list(c("strainCAST.Gest_stageE13.5","strainCAST.Gest_stageE14.5")),alpha = 0.05 )
+
+strain_by_gest_lrt_merged <- strain_by_gest_lrt_135vs125 %>% 
+  as_tibble( rownames = "gene_id") %>%
+  filter( padj < 0.05) %>% 
+  rbind(
+    strain_by_gest_lrt_145vs125 %>% 
+      as_tibble( rownames = "gene_id") %>% 
+      filter( padj < 0.05)
+  ) %>% 
+  rbind(
+    strain_by_gest_lrt_135vs145 %>% 
+      as_tibble( rownames = "gene_id") %>% 
+      filter( padj < 0.05)
+  ) %>% 
+  left_join(all_genes_palate)
 
 ```
 
+
+I am using likelihood ratio test (LRT) to compare a linear model with and without an interaction between strain and gestational stage. This test allows us to identify genes that change differently between two strains across gestational stages. There are `r formatC(nrow(strain_by_gest_lrt_merged %>% select(gene_id) %>% distinct()), big.mark =",")` genes that show strain effects at one or more time points after E12.5. I am plotting some examples below to visualize and also doing an ORA with this gene list.
+
+```{r plot_counts_strain_by_stage}
+#| warning: false
+#| message: false
+#| fig-width: 12
+#| fig-height: 5
+
+count_data1 <- plotCounts(strain_dds_coll_lrt, (dplyr::slice_min(strain_by_gest_lrt_merged, padj )$gene_id[1]), 
+                   intgroup = c("strain","Gest_stage"), returnData = TRUE)
+plot1 <- ggplot(count_data1,
+  aes(x = Gest_stage, y = count, color = strain, group = strain)) + 
+  geom_point() + 
+  stat_summary(fun.y=mean, geom="line") +
+  scale_color_manual( values = strain_colors[1:2])+
+  theme_pubclean()+
+  ylab("Gene expression (raw counts)")+
+  xlab("Gestational stage")+
+  labs(color = "Strain")+
+  ylim(0, 2000)
+  
+
+
+count_data2 <- plotCounts(strain_dds_coll_lrt, (dplyr::slice_min(strain_by_gest_lrt_merged, padj )$gene_id[2]), 
+                   intgroup = c("strain","Gest_stage"), returnData = TRUE)
+plot2 <- ggplot(count_data2,
+  aes(x = Gest_stage, y = count, color = strain, group = strain)) + 
+  geom_point() + 
+  stat_summary(fun.y=mean, geom="line") +
+  scale_color_manual( values = strain_colors[1:2])+
+  theme_pubclean()+
+  ylab("Gene expression (raw counts)")+
+  xlab("Gestational stage")+
+  labs(color = "Strain")+
+  ylim(0, 3000)
+  
+
+count_plot <- ggarrange( plot1, plot2, nrow = 1, common.legend = T)
+
+count_plot
+
+```
+
+
+```{r ora_strain_by_stage}
+#| message: false
+#| warning: false
+
+g.strain_by_stage <- gost( query = unique(strain_by_gest_lrt_merged$symbol),
+                           organism = "mmusculus",
+                           domain_scope = "custom",
+                           custom_bg = all_genes_palate$symbol,
+                           evcodes = TRUE
+                           )
+g.strain_by_stage$result <- g.strain_by_stage$result %>% filter(term_size < 660)
+
+g.strain_by_stage$result %>% 
+  select( term_name, source, p_value, term_size, intersection_size,intersection) %>%  # intersecion: adding the list of genes identified as overlapping with each category
+  mutate_if( is.numeric, formatC, digits =2) %>% 
+  create_dt()
+
+```
 
 :::
 
