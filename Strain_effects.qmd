@@ -926,7 +926,6 @@ ggplotly(pca_plot, tooltip = c("label"))
 
 # Differential gene expression analysis
 
-
 ## Comparing gene expression in palate domains across gestational stages in B6 mice
 
 ```{r b6_gest_domain}
@@ -945,6 +944,7 @@ b6_coldata <- b6_comp_samples %>%
   select(sample, sex,ind, unique_sampleid, rep, AP_domain, Gest_stage, strain) %>% 
   filter(!is.na(sex) ) %>% 
   mutate_if(is.character, as.factor) %>% 
+  mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>% 
   column_to_rownames("sample") 
 
 b6_cts <- round(raw_expr_mat[all_genes_palate$gene_id,rownames(b6_coldata), drop = F])
@@ -959,20 +959,24 @@ b6_dds_coll <- collapseReplicates(b6_dds, b6_dds$unique_sampleid)
 # colData(b6_dds)
 
 # let's setup the model
-b6_comp_model <- model.matrix(~ sex + AP_domain + Gest_stage + AP_domain:ind + AP_domain:Gest_stage,
+b6_comp_model <- model.matrix(~sex + AP_domain + Gest_stage + AP_domain:ind + AP_domain:Gest_stage,
                                   data = colData(b6_dds_coll))
+
 b6_dds_coll <- DESeq(b6_dds_coll, betaPrior = FALSE, full=b6_comp_model)
 
-# resultsNames(b6_dds_coll)
+#resultsNames(b6_dds_coll)
+
+
+
 ```
 
-I am focusing on the data from only the B6 animals that includes males and females, and contain the three AP domains (PM, MAX and POST) obtained from various gestational stages (E12.5, E13.5, E14.5 and E15.5). Using a linear model that includes a main effect for sex, AP domain and gestational stage and the interaction between domain and stage while using a nesting for the AP domain since they are obtained from the same animal (~ sex + AP_domain + Gest_stage + AP_domain:ind + AP_domain:Gest_stage). I also used the `collapseReplicates()` function from DESeq2 to merge the technical replicates we have from resequencing of several B6 samples. 
+I am focusing on the data from only the B6 animals that includes males and females, and contain the three AP domains (PM, MAX and POST) obtained from various gestational stages (E12.5, E13.5, E14.5 and E15.5). Using a linear model that includes a main effect for sex, AP domain and gestational stage and the interaction between domain and stage while using a nesting for the AP domain since they are obtained from the same animal (~ sex + AP_domain + Gest_stage + AP_domain:ind + AP_domain:Gest_stage). I also used the `collapseReplicates()` function from DESeq2 to merge the technical replicates we have from resequencing of several B6 samples. Even though differentially expressed genes between sexes are a handfull I will still use it as an effect in the model given we observe it recapitulated as a principal component in the top ten components. 
 
 ::: panel-tabset
 
 ### Are there any sex effects? No, not really. 
 
-There are only a small number of genes that are on the sex chromosomes that show a sex effect.
+There are only a small number of genes that are on the sex chromosomes that show a sex effect (adjusted p-value < 0.05 & 1.5 fold change). 
 
 ```{r b6_gest_domain_sex}
 #| warning: false
@@ -984,7 +988,7 @@ b6_sex_eff <- results(b6_dds_coll, contrast = list(c("sexM")))
 b6_sex_eff %>% 
   as_tibble( rownames = "gene_id") %>% 
   mutate( Comparison = "Males vs Females") %>% 
-  filter( padj < 0.05 & !is.na(padj) & abs(log2FoldChange) >= 1) %>% 
+  filter( padj < 0.05 & !is.na(padj) & abs(log2FoldChange) > .5) %>% 
   left_join( all_genes_palate) %>% 
   select(Comparison, gene_id, symbol, chromosome, baseMean, log2FoldChange, padj) %>% 
   mutate( padj =formatC(padj, format = "e", digits =2), baseMean = round(baseMean,2), log2FoldChange = round(log2FoldChange,2)) %>% 
@@ -1000,58 +1004,189 @@ b6_sex_eff %>%
 #| warning: false
 #| message: false
 
-b6_domain_eff_max_pm <- results(b6_dds_coll, contrast = list(c("AP_domainPM"))) # max vs pm
-b6_domain_eff_max_post <- results(b6_dds_coll, contrast = list(c("AP_domainPOST"))) # max vs post
-b6_domain_eff_pm_post <- results(b6_dds_coll, contrast = list(c("AP_domainPM","AP_domainPOST"))) # pm vs post
+b6_domain_eff_max_pm <- results(b6_dds_coll, contrast = list("AP_domainMAX")) 
+b6_domain_eff_post_pm <- results(b6_dds_coll, contrast = list("AP_domainPOST")) 
+b6_domain_eff_post_max <- results(b6_dds_coll, contrast = list("AP_domainPOST","AP_domainMAX")) 
 
 b6_domain_eff_merged <- b6_domain_eff_max_pm %>% 
   as_tibble( rownames = "gene_id") %>% 
-  mutate( Comparison = "PM vs MAX") %>% 
+  mutate( Comparison = "MAX vs PM") %>% 
   rbind(
-    b6_domain_eff_max_post %>% 
-      as_tibble( rownames = "gene_id") %>% 
-      mutate( Comparison = "POST vs MAX")
-  ) %>% 
-  rbind(
-    b6_domain_eff_pm_post %>% 
+    b6_domain_eff_post_pm %>% 
       as_tibble( rownames = "gene_id") %>% 
       mutate( Comparison = "POST vs PM")
+  ) %>% 
+  rbind(
+    b6_domain_eff_post_max %>% 
+      as_tibble( rownames = "gene_id") %>% 
+      mutate( Comparison = "POST vs MAX")
   )%>% 
-  filter( padj < 0.05 & !is.na(padj) & abs(log2FoldChange) >= 1) %>% 
   left_join( all_genes_palate) 
 
 
 ```
 
-There are `r formatC(nrow(b6_domain_eff_merged %>%  select(gene_id) %>% distinct()), big.mark = ",")` unique genes differentially expressed across domains (adjusted p-value < 0.05 and at least 2 fold change). Here is the overview of up/downregulated genes in all pairwise comparisons: 
+There are `r formatC(nrow(b6_domain_eff_merged %>% filter( padj < 0.05 & !is.na(padj) & abs(log2FoldChange) > .5) %>% select(gene_id) %>% distinct()), big.mark = ",")` unique genes differentially expressed across domains (adjusted p-value < 0.05 and 1.5 fold change). 
 
-```{r b6_domain_eff_gene#_table}
 
-b6_domain_eff_merged %>% 
-  filter(abs(log2FoldChange) >= 1) %>% 
-  group_by( log2FoldChange > 0) %>% 
-  dplyr::count(Comparison) %>% 
-  mutate( Category = ifelse( `log2FoldChange > 0` , "Up","Down")) %>% 
-  ungroup() %>% 
-  select(Comparison, Category, `# of genes` = n) %>% 
-  create_dt()
+<!-- ```{r b6_domain_eff_gene#_table} -->
 
-```
+<!-- b6_domain_eff_merged %>%  -->
+<!--   filter(abs(log2FoldChange) > .5, padj < 0.05) %>%  -->
+<!--   group_by( log2FoldChange > 0) %>%  -->
+<!--   dplyr::count(Comparison) %>%  -->
+<!--   mutate( Category = ifelse( `log2FoldChange > 0` , "Up","Down")) %>%  -->
+<!--   ungroup() %>%  -->
+<!--   select(Comparison, Category, `# of genes` = n) %>%  -->
+<!--   create_dt() -->
 
-Here is the full list of genes that are differentially expressed between two domains.
-  
-```{r b6_domain_eff_gene_table}
+<!-- ``` -->
+
+<!-- Here is the full list of genes that are differentially expressed between two domains. -->
+
+<!-- ```{r b6_domain_eff_gene_table} -->
+<!-- #| warning: false -->
+<!-- #| message: false -->
+
+
+<!-- b6_domain_eff_merged %>%  -->
+<!--     filter(abs(log2FoldChange) > .5, padj < 0.05) %>%  -->
+<!--   select(Comparison, gene_id, symbol, chromosome, baseMean, log2FoldChange, padj) %>%  -->
+<!--   mutate( padj =formatC(padj, format = "e", digits =2), baseMean = round(baseMean,2), log2FoldChange = round(log2FoldChange,2)) %>%  -->
+<!--   arrange( log2FoldChange, padj) %>%  -->
+<!--   create_dt() -->
+
+<!-- ``` -->
+
+#### Genes only differentially expressed in the PM domain
+
+Here, I am focusing on genes that are up/down regulated in the PM domain but doesn't show a significant difference between MAX and POST.
+
+```{r pm_diff_genes}
 #| warning: false
 #| message: false
 
+# MAX vs PM_padj < 0.05 & POST vs PM_padj < 0.05
+b6_pm_diff_genes <-  b6_domain_eff_merged %>% 
+  pivot_wider(., id_cols = "gene_id", names_from = Comparison, names_glue = "{Comparison}_{.value}",values_from = c(padj, log2FoldChange) ) %>%
+  filter(
+    `MAX vs PM_padj` < 0.05 & `POST vs PM_padj` < 0.05 &
+    abs(`MAX vs PM_log2FoldChange`) > .5 & abs(`POST vs PM_log2FoldChange`) > .5) %>% 
+  filter(
+     ( is.na(`POST vs MAX_padj`) | 
+         `POST vs MAX_padj` >=  0.05 | 
+         is.na(`POST vs MAX_log2FoldChange`) |
+         abs(`POST vs MAX_log2FoldChange`) < .5)
+  ) %>% 
+  mutate( Comparison = ifelse( `MAX vs PM_log2FoldChange` > 0 &`POST vs PM_log2FoldChange` > 0,
+          "Upregulated in PM",
+          "Downregulated in PM")
+  ) %>% 
+  left_join(all_genes_palate)
 
-b6_domain_eff_merged %>% 
-  select(Comparison, gene_id, symbol, chromosome, baseMean, log2FoldChange, padj) %>% 
-  mutate( padj =formatC(padj, format = "e", digits =2), baseMean = round(baseMean,2), log2FoldChange = round(log2FoldChange,2)) %>% 
-  arrange( log2FoldChange, padj) %>% 
-  create_dt()
 
 ```
+
+#### Genes uniquely differentially expressed in the MAX domain
+
+Here, I am focusing on genes that are up/down regulated in the MAX domain but doesn't show a significant difference between PM and POST.
+
+```{r max_diff_genes}
+#| warning: false
+#| message: false
+
+# MAX vs PM_padj < 0.05 & POST vs PM_padj < 0.05
+b6_max_diff_genes <-  b6_domain_eff_merged %>% 
+  pivot_wider(., id_cols = "gene_id", names_from = Comparison, names_glue = "{Comparison}_{.value}",values_from = c(padj, log2FoldChange) ) %>%
+  filter(
+    `MAX vs PM_padj` < 0.05 & `POST vs MAX_padj` < 0.05 &
+    abs(`MAX vs PM_log2FoldChange`) > .5 & abs(`POST vs MAX_log2FoldChange`) > .5) %>% 
+  filter(
+     ( is.na(`POST vs PM_padj`) | 
+         `POST vs PM_padj` >=  0.05 | 
+         is.na(`POST vs PM_log2FoldChange`) |
+         abs(`POST vs PM_log2FoldChange`) < .5)
+  )  %>% 
+  mutate( Comparison = ifelse( `MAX vs PM_log2FoldChange` < 0 &
+            `POST vs MAX_log2FoldChange` > 0,
+          "Downregulated in MAX",
+          ifelse(`MAX vs PM_log2FoldChange` > 0 &
+            `POST vs MAX_log2FoldChange` < 0, 
+            "Upregulated in MAX",NA))
+  ) %>% 
+  left_join(all_genes_palate)
+
+```
+
+
+#### Genes uniquely differentially expressed in the POST domain
+
+Here, I am focusing on genes that are up/down regulated in the POST domain but doesn't show a significant difference between PM and MAX.
+
+```{r post_diff_genes}
+#| warning: false
+#| message: false
+
+# MAX vs PM_padj < 0.05 & POST vs PM_padj < 0.05
+b6_post_diff_genes <-  b6_domain_eff_merged %>% 
+  pivot_wider(., id_cols = "gene_id", names_from = Comparison, names_glue = "{Comparison}_{.value}",values_from = c(padj, log2FoldChange) ) %>%
+  filter(
+    `POST vs PM_padj` < 0.05 & `POST vs MAX_padj` < 0.05 &
+    abs(`POST vs PM_log2FoldChange`) > .5 & abs(`POST vs MAX_log2FoldChange`) > .5) %>% 
+  filter(
+     ( is.na(`MAX vs PM_padj`) | 
+         `MAX vs PM_padj` >=  0.05 | 
+         is.na(`MAX vs PM_log2FoldChange`) |
+         abs(`MAX vs PM_log2FoldChange`) < .5)
+  ) %>% 
+  mutate( Comparison = ifelse( `POST vs PM_log2FoldChange` > 0 & `POST vs MAX_log2FoldChange` > 0,
+          "Upregulated in POST",
+          "Downregulated in POST")
+  ) %>% 
+  left_join(all_genes_palate)
+
+```
+
+
+#### Genes gradually differentially expressed across all the three domains 
+
+Here, I am focusing on genes that are up/down regulated across the three domains and sow effects in the same direction between neighboring domains. 
+
+```{r domain_diff_genes_all}
+#| warning: false
+#| message: false
+
+# Get the list of genes that are up/down regulated PM > MAX > POST or PM < MAX < POST
+
+b6_domain_all_diff_genes <-  b6_domain_eff_merged %>% 
+  pivot_wider(., id_cols = "gene_id", names_from = Comparison, names_glue = "{Comparison}_{.value}",values_from = c(padj, log2FoldChange) ) %>%
+  filter(
+   `MAX vs PM_padj` < 0.05 &  `POST vs PM_padj` < 0.05 & `POST vs MAX_padj` < 0.05 & 
+    abs(`MAX vs PM_log2FoldChange`) > .5  & abs(`POST vs PM_log2FoldChange`) > .5 & abs(`POST vs MAX_log2FoldChange`) > .5) %>% 
+    mutate( Comparison = ifelse( (`MAX vs PM_log2FoldChange`) > 0  & 
+            (`POST vs PM_log2FoldChange`) > 0 & 
+            (`POST vs MAX_log2FoldChange`) > 0,
+          "POST > MAX > PM",
+          ifelse((`MAX vs PM_log2FoldChange`) < 0  & 
+            (`POST vs PM_log2FoldChange`) < 0 & 
+            (`POST vs MAX_log2FoldChange`) < 0 , "POST < MAX < PM" , NA))
+  ) %>% 
+  left_join(all_genes_palate)
+
+# 
+# b6_domain_all_up_genes <- b6_domain_all_diff_genes %>% 
+#   filter( (`MAX vs PM_log2FoldChange`) > 0  & 
+#             (`POST vs PM_log2FoldChange`) > 0 & 
+#             (`POST vs MAX_log2FoldChange`) > 0)
+# b6_domain_all_down_genes <- b6_domain_all_diff_genes %>% 
+#   filter( (`MAX vs PM_log2FoldChange`) < 0  & 
+#             (`POST vs PM_log2FoldChange`) < 0 & 
+#             (`POST vs MAX_log2FoldChange`) < 0)
+
+# filter(b6_domain_all_diff_genes , is.na(Comparison)) -- what do you wanna do with these?
+
+```
+
 
 ```{r ora_domain_eff}
 #| warning: false
@@ -1881,7 +2016,50 @@ g.strain_by_stage$result %>%
 
 
 
+```{r}
 
+
+expr_mat %>% 
+  t() %>% 
+  as_tibble(rownames = "sample") %>% 
+  left_join( sample_annot) %>% 
+  filter( strain %in% c("B6","CAST"))-> dat
+
+fig <- plot_ly(dat, 
+               y = ~ENSMUSG00000000567, 
+                = ~LB_stage, 
+               z = ~AP_domain,
+               symbol = ~strain,
+               symbols = c("circle","diamond","square"),
+               text = ~sample,
+               color = ~AP_domain,
+               colors = domain_colors,
+               mode = "markers",
+               type = "scatter3d"
+)
+fig <- fig %>% 
+  layout(scene = list(xaxis = list(title = "ENSMUSG00000000567"),
+                                   yaxis = list(title = "LB_stage"),
+                                   zaxis = list(title = "AP_domain" ))
+)
+
+fig
+
+f <- dat %>% 
+  ggplot()+
+  aes(y = `ENSMUSG00000000567`, 
+      x = LB_stage, 
+      col = AP_domain,
+      shape = strain)+
+  scale_color_manual(values = domain_colors)+
+  geom_point( size = 5)+
+  theme_pubclean()
+
+ggplotly(f)
+"ENSMUSG00000074637"
+
+
+```
 
 
 
