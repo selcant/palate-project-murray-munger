@@ -1052,7 +1052,7 @@ gsva_peak_meds_merged %>%
 
 :::
 
-## Weighted correlation network analysis
+## Weighted gene co-expression network analysis
 
 <!-- Module details: -->
 
@@ -4080,4 +4080,19 @@ candidate_peaks_chr15 <- peaks_annotated %>%
 
 ```
 
+
 :::
+
+
+```{r}
+#| eval: false
+
+require(openxlsx)
+list_of_datasets <- list("chr1" = chr1.eQTL1, 
+                         "chr2" = chr2.eQTL1,
+                         "chr4" = chr4.eQTL1,
+                         "chr8" = chr8.eQTL1,
+                         "chr13" = chr13.eQTL1)
+write.xlsx(list_of_datasets, file = here("_data","DO_palate_eQTL_hotspots_09062023.xlsx"))
+
+```

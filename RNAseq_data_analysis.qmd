@@ -209,8 +209,15 @@ heatmaply(x = as.matrix(sample_dist_ss),
 #| message: false
 #| warning: false
 
-# running with uq normalized values
-pca <- prcomp( t(SummarizedExperiment::assay(dds,"vst")), center = T, scale. = F)
+# Deseq2 uses the top 500 features
+# ntop <- 500
+# rv <- matrixStats::rowVars(SummarizedExperiment::assay(dds,"vst"))
+# 
+# # select the ntop genes by variance
+# select <- order(rv, decreasing=TRUE)[seq_len(min(ntop, length(rv)))]
+
+# perform a PCA on the data in assay(x) for the selected genes
+pca <- prcomp( t(SummarizedExperiment::assay(dds,"vst")[]), center = T, scale. = F)
 
 # running with DESeq2 transformed values
 #pca <- prcomp(t(SummarizedExperiment::assay(rlog_expr_mat)), center = T, scale. = T)
@@ -270,7 +277,7 @@ tibble(var =  var_explained[1:10]* 100, PC = paste0("PC", seq(1:10))) %>%
   xlab("Principal Component") +
   ylab("% Variation explained") +
   theme_pubclean(base_size = 14)+
-  ylim(0,25)
+  ylim(0,45)
 
 
 ```
@@ -586,10 +593,19 @@ heatmaply(x = as.matrix(sample_dist_vst),
 #| message: false
 #| warning: false
 
-# running with uq normalized values
-pca <- prcomp( t(log1p(raw_expr_mat)), center = T, scale. = F)
+# # Deseq2 uses the top 500 features
+# ntop <- 500
+# rv <- matrixStats::rowVars(raw_expr_mat)
+# # select the ntop genes by variance
+# select <- order(rv, decreasing=TRUE)[seq_len(min(ntop, length(rv)))]
 
-pca_vst <- prcomp( t( SummarizedExperiment::assay(dds_emase,"vst")), center = T, scale. = F)
+# perform a PCA on the data in assay(x) for the selected genes
+pca <- prcomp( t(log1p(raw_expr_mat[])), center = T, scale. = F)
+
+# rv <- matrixStats::rowVars(SummarizedExperiment::assay(dds_emase,"vst"))
+# # select the ntop genes by variance
+# select <- order(rv, decreasing=TRUE)[seq_len(min(ntop, length(rv)))]
+pca_vst <- prcomp( t( SummarizedExperiment::assay(dds_emase,"vst")[]), center = T, scale. = F)
 
 # pca <- pca_vst
 
@@ -768,7 +784,7 @@ tibble(var =  var_explained[1:10]* 100, PC = paste0("PC", seq(1:10))) %>%
   xlab("Principal Component") +
   ylab("% Variation explained") +
   theme_pubclean(base_size = 14)+
-  ylim(0,25)
+  ylim(0,50)
 
 
 ```
