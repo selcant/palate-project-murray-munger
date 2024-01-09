@@ -1,0 +1,141 @@
+---
+title: "Data for Robyn"
+output: html_document
+author: Selcan Aydin
+date: "`r Sys.Date()`"
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(assertthat)
+library(crunch)
+
+```
+
+This is what Robyn asked for:
+
+> The datasets I need are
+>
+> 1.  meta data e.g., experimental_cleft_palate_DO-meta.csv
+>
+>     1.  columns are mouse_id that matches column names in expression and genoprobs file, sex (m, f),  generation, any other important covariates
+>
+> 2.  expression data (prefer TPM) \--\> experimental_cleft_palate_DO-data.csv.gz
+>
+>     1.  column 1: gene_id = ensemble gene_id followed by columns for mouse_ids
+>
+> 3.  genoprobs file, prefer RDS array or just a csv is fine \--\> experimental_cleft_palate_DO-genoprobs.RDS or .csv.gz
+>
+> 4.  eQTL results \--\> experimental_cleft_palate_DO-eQTL.csv.gz
+>
+>     1.  marker_id, marker_chr, gene_id, lod
+>
+>     2.  were corrections made for covariates?
+
+Read in sample details and write the metadata to `/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-meta.csv` .
+
+```{r write_metadata, warning=FALSE, message=FALSE}
+# reading in the sample details + some phenotypes
+sample_details <- readr::read_csv("/projects/munger-lab/projects/palate-project-murray-munger/samplesheet.csv") 
+# remove contaminated samples then filter for only DO@13.5
+contam_samples <- c("B6_12.5_PM_1","B6_13.5_POST_3", "CAST_14.5_MAX_7", "DO_13.5_MAX_6", "DO_13.5_MAX_14", "DO_13.5_MAX_14_2", "B6_13.5_MAX_3")
+
+sample_annot <- sample_details |> 
+  filter( !sample %in% contam_samples) |> 
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") |> 
+  filter( strain =="DO") |> 
+  filter(!( strain =="DO" & Gest_stage == "E12.5") ) |> 
+  select( mouse_id = sample, 
+          sex,
+          generation = DO_gen,
+          batch
+          )
+
+write_csv(sample_annot,
+          file = "/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-meta.csv")
+
+
+```
+
+Read in tpm data and write to `/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-data.csv.gz`.
+
+```{r write_tpm, warning=FALSE, message=FALSE}
+# get the list of tpm files
+tpm_files <- list.files("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/gbrs_emase", pattern = "DO_.*diploid.genes.tpm", full.names = T)
+# read in and merge the tpm files
+file1 <- read_tsv(tpm_files[1])
+read_gbrs <- function(filename) {
+  samplename <- paste(strsplit(basename(filename), "[.]")[[1]][1:2], collapse=".")
+  dat <- read_tsv(filename) |> mutate(sample=samplename)
+  dat <- unite(dat, id, sample, remove=FALSE)
+  assert_that(are_equal(dat$locus, file1$locus))
+  select(dat, locus, id, sample, total)
+}
+tpm <- bind_rows(lapply(tpm_files, read_gbrs)) |> 
+  rename(tpm=total)
+
+tpm |> 
+  select(-sample) |>  
+  pivot_wider( names_from = "id", values_from = "tpm") |> 
+  rename("gene_id"="locus") |> 
+  select(gene_id, sample_annot$mouse_id) |> 
+  write.csv.gz(file = "/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-data.csv.gz")
+
+```
+
+Load in genoprobs and write to `/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-genoprobs.RDS`.
+
+```{r write_genoprobs, message=FALSE, warning=FALSE}
+load("/projects/munger-lab/projects/palate-project-murray-munger/qtl_mapping/DO_Palate_eQTL_forMapping.RData") # expr, exprZ, genoprobs ..etc.
+write_rds(genoprobs, file = "/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-genoprobs.RDS")
+rm(genoprobs, expr)
+```
+
+
+Load eQTL mapping results and write to `/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-eQTL.csv.gz`
+
+```{r write_eqtl_results, message=FALSE, warning=FALSE}
+load("/projects/munger-lab/projects/palate-project-murray-munger/qtl_mapping/DO_Palate_paired_eQTL_peaks.RData")
+
+peaks |> 
+  left_join(
+    map_dat2 |> 
+      mutate(pos = as.numeric(pos)),
+    by=c("peak_chr"="chrom","peak_cM"="pos")
+    ) |> 
+  select(
+    marker_id = marker,
+    marker_chr = peak_chr,
+    gene_id = phenotype,
+    lod
+  ) |> 
+  write.csv.gz(file = "/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-eQTL.csv.gz")
+
+
+
+```
+
+Details on data:
+
+-   The data is from [maxilla](https://bioportal.bioontology.org/ontologies/UBERON?p=classes&conceptid=http%3A%2F%2Fpurl.obolibrary.org%2Fobo%2FUBERON_0002397) from E13.5 mouse embryos.
+
+-   GBRS v0.1.6 is used (GRCm38).
+
+-   Both the gene expression counts and genotypes are obtained from GBRS.
+
+-   69k grid is used in mapping.
+
+-   3 samples were removed due to contamination resulting in `r nrow(exprZ)` many samples.
+
+-   For filtering I use median(tpm) \> 0.5 resulting in `r ncol(exprZ)` many genes.
+
+-   The expected gene expression counts are upper quantile normalized then rankZ transformed before eQTL mapping.
+
+-   Sex was used as a covariate in eQTL mapping.
+
+
