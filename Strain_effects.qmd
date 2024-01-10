@@ -1148,14 +1148,15 @@ b6_stage_eff_genes_merged <-  b6_stage_diff %>%
   filter( ! gene_id %in% b6_domain_by_stage_lrt$gene_id )
 
 # merge the genes showing different time*domain effects and subset for the genes showing significant interaction effects acc to the LRT
-b6_domain_by_stage_merged <- b6_domain_by_stage_max_pm %>%
+# I am using the one with the interaction term. Although the one with/without doesn't seem very different, there are only a handful of genes that are unique to each one and the directionality of the common ones are the same with similar magnitudes.
+b6_domain_by_stage_merged <- b6_domain_by_stage_max_pm2 %>%
   filter( padj < 0.05 &
             abs(log2FoldChange) > .5 &
             gene_id %in% b6_domain_by_stage_lrt$gene_id
   ) %>%
   mutate( Comparison = "MAX vs PM") %>%
   rbind(
-    b6_domain_by_stage_post_pm %>%
+    b6_domain_by_stage_post_pm2 %>%
       filter( padj < 0.05 &
                 abs(log2FoldChange) > .5 &
                 gene_id %in% b6_domain_by_stage_lrt$gene_id
@@ -1163,7 +1164,7 @@ b6_domain_by_stage_merged <- b6_domain_by_stage_max_pm %>%
       mutate( Comparison = "POST vs PM")
   ) %>%
   rbind(
-     b6_domain_by_stage_post_max %>%
+     b6_domain_by_stage_post_max2 %>%
       filter( padj < 0.05 &
                 abs(log2FoldChange) > .5 &
                 gene_id %in% b6_domain_by_stage_lrt$gene_id
@@ -1207,103 +1208,18 @@ b6_gene_counts <- counts(b6_dds_simple, normalized=TRUE) %>%
 
 ```
 
-
-```{r checking}
-#| eval: false
-
-
-# Am I getting any weird results in stage by domain?
-# That one makes sense where I am getting the stage effects for each domain when I add the interaction term. 
-
-a <- b6_stage_by_domain_merged %>% 
-  select(gene_id, symbol, baseMean, log2FoldChange, padj,Comparison) %>% 
-    mutate( Comparison = case_when( log2FoldChange >0 ~ "Upregulated over time",
-                                  log2FoldChange <0 ~"Downregulated over time")
-          ) 
-
-b <- b6_stage_diff %>%
-  mutate( Comparison = case_when( log2FoldChange >0 ~ "Upregulated over time",
-                                  log2FoldChange <0 ~"Downregulated over time")
-          ) %>%
-  filter( padj < 0.05 & !is.na(padj) & abs(log2FoldChange) > .5) %>% 
-  select(gene_id, symbol, baseMean, log2FoldChange, padj,Comparison) 
-
-c <- inner_join( select(a, symbol,baseMean), select(b, symbol, baseMean)) %>% distinct()
-d <- inner_join( select(a, symbol, baseMean, Comparison), select(b, symbol, baseMean, Comparison)) %>% distinct()
-
-assertthat::are_equal(select(c,symbol,baseMean) %>% arrange(baseMean), select(d,symbol,baseMean) %>% arrange(baseMean))
-# Yes, we are getting the same directionality! So no problems here.
-
-# I am getting weird results from domain by stage. 
-# Note that it is not clear to me what comparison I am making here though.
-# I am using the interaction term for each comparison BUT I don't really know
-# what the actual comparison is with/without the interaction term since there is no 
-# reference level for a continuous variable (acc to M.Love).
-b6_domain_eff_genes_merged <- b6_domain_eff_max_pm %>%
-  mutate( Comparison = "MAX vs PM") %>%
-  rbind(
-    b6_domain_eff_post_pm %>%
-      mutate( Comparison = "POST vs PM")
-  ) %>%
-  rbind(
-    b6_domain_eff_post_max %>%
-      mutate( Comparison = "POST vs MAX")
-  )%>%
-  filter( padj < 0.05 & !is.na(padj) & abs(log2FoldChange) > .5) 
-
-# What is going on with sox2?
-sox2 <- all_genes_palate %>% filter(symbol =="Sox2")
-
-b6_domain_by_stage_merged %>% 
-  filter(gene_id == sox2$gene_id) %>% 
-  select(gene_id, symbol, baseMean, log2FoldChange, padj,Comparison)
-
-b6_domain_eff_genes_merged %>% 
-  filter(gene_id == sox2$gene_id) %>% 
-  select(gene_id, symbol, baseMean, log2FoldChange, padj,Comparison)
-
-ggplot(filter(b6_gene_counts, gene_id == sox2$gene_id))+aes(x=LB_stage, y = count, col = AP_domain)+geom_point()+geom_line()+theme_pubclean()+scale_color_manual(values = domain_colors)
-
-ggplot(filter(b6_gene_counts, gene_id == sox2$gene_id))+aes(x=AP_domain, y = count, col = AP_domain)+geom_point()+theme_pubclean()+scale_color_manual(values = domain_colors)
-
-ggplot(filter(b6_gene_counts, gene_id == "ENSMUSG00000018411"))+aes(x=LB_stage, y = count, col = AP_domain)+geom_point()+geom_line()+theme_pubclean()+scale_color_manual(values = domain_colors)
-
-ggplot(filter(b6_gene_counts, gene_id == "ENSMUSG00000018411"))+aes(x=AP_domain, y = count, col = AP_domain)+geom_point()+theme_pubclean()+scale_color_manual(values = domain_colors)
-
-
-# are there any other genes like Sox2? Looks like there are 149 of them! 
-b6_domain_by_stage_merged %>% 
-  #filter(gene_id == sox2$gene_id) %>% 
-  select(gene_id, symbol, baseMean, log2FoldChange, padj,Comparison) %>% 
-  mutate( Comparison = paste(Comparison, "int model")) %>% 
-  rbind(
-    b6_domain_eff_genes_merged %>% 
-      #filter(gene_id == sox2$gene_id) %>% 
-      select(gene_id, symbol, baseMean, log2FoldChange, padj,Comparison)
-  ) %>% 
-  pivot_wider(., id_cols = "gene_id", names_from = Comparison, names_glue = "{Comparison}_{.value}",values_from = c(padj, log2FoldChange) ) %>% 
-  filter(
-   (`MAX vs PM int model_log2FoldChange`*`MAX vs PM_log2FoldChange` < 0) |
-   (`POST vs PM int model_log2FoldChange`*`POST vs PM_log2FoldChange` < 0) |
-   (`POST vs MAX int model_log2FoldChange`*`POST vs MAX_log2FoldChange` < 0)
-  ) %>% 
-  select(gene_id, `MAX vs PM int model_log2FoldChange`,`MAX vs PM_log2FoldChange`,
-         `POST vs PM int model_log2FoldChange`,`POST vs PM_log2FoldChange`,
-         `POST vs MAX int model_log2FoldChange`,`POST vs MAX_log2FoldChange`) %>% view()
-
-```
-
-There are `r formatC( b6_domain_eff_genes_merged %>% select(gene_id) %>% distinct() %>% nrow(), big.mark = ",")` genes differentially expressed across the three AP domains (adjusted p-value \< 0.05 and 1.5 fold change), `r formatC( b6_stage_eff_genes_merged %>% select(gene_id) %>% distinct() %>% nrow(), big.mark = ",")` genes that are differentially expressed over developmental time.
-In addition, there are `r formatC( b6_domain_by_stage_merged %>% select(gene_id) %>% distinct() %>% nrow(), big.mark = ",")` genes that are differentially expressed between domains over time (domain by stage effect) and `r formatC( b6_stage_by_domain_merged %>% select(gene_id) %>% distinct() %>% nrow(), big.mark = ",")` genes that change differently between domains over time (stage by domain effect).
-Below in each tab, I include the list of genes with details and overrepresentation analysis results.
-
 :::: {#B6_results .panel-tabset .nav-pills}
 
 ### Genes differentially expressed between AP domains (no interaction with time)
 
+Here I am highlighting genes that show differences in expression between AP domains in B6. In total there are `r formatC(length(unique(b6_domain_eff_genes_merged$gene_id)), big.mark = ",")` unique genes with a domain effect (i.e. differentially expressed between any two domains) that doesn't change over developmental stage (i.e. difference between the two domains are similar over time). Below in each tab I focus on genes that are significantly lower or higher than the other two domains and perform overrepresentation analysis.
+
+
 ::: {#B6_results_domain .panel-tabset .nav-pills}
 
 #### Genes differentially expressed in the PM domain 
+
+These are all the genes that are expressed higher **or** lower in the PM domain in comparison to MAX or POST domains with the line representing the mean expression in each domain. 
 
 ```{r pm_diff_genes_rep_plot}
 #| warning: false
@@ -1315,7 +1231,7 @@ b6_domain_eff_genes_merged %>%
   pivot_wider(., id_cols = "gene_id", names_from = Comparison, names_glue = "{Comparison}_{.value}",values_from = c(padj, log2FoldChange) ) %>%
   filter(
     (`MAX vs PM_padj` < 0.05 & abs(`MAX vs PM_log2FoldChange`) > .5) |
-      (`POST vs PM_padj` < 0.05 && abs(`POST vs PM_log2FoldChange`) > .5)
+      (`POST vs PM_padj` < 0.05 & abs(`POST vs PM_log2FoldChange`) > .5)
     ) %>%
   mutate( Comparison = case_when( 
     (`MAX vs PM_log2FoldChange` > 0 | `POST vs PM_log2FoldChange` > 0) ~"Lower expression in PM",
@@ -1323,6 +1239,7 @@ b6_domain_eff_genes_merged %>%
   ) %>%
   select(gene_id, Comparison) %>%
   left_join(b6_gene_counts) %>%
+  #filter(gene_id %in% c("ENSMUSG00000000385","ENSMUSG00000006143")) |> 
   ggplot()+
   aes( x = AP_domain, y = count, col = AP_domain)+
   geom_point()+
@@ -1345,7 +1262,7 @@ b6_pm_diff_genes <-  b6_domain_eff_genes_merged %>%
   pivot_wider(., id_cols = "gene_id", names_from = Comparison, names_glue = "{Comparison}_{.value}",values_from = c(padj, log2FoldChange) ) %>%
 filter(
     (`MAX vs PM_padj` < 0.05 & abs(`MAX vs PM_log2FoldChange`) > .5) |
-      (`POST vs PM_padj` < 0.05 && abs(`POST vs PM_log2FoldChange`) > .5)
+      (`POST vs PM_padj` < 0.05 & abs(`POST vs PM_log2FoldChange`) > .5)
     ) %>%
   mutate( Comparison = case_when( 
     (`MAX vs PM_log2FoldChange` > 0 | `POST vs PM_log2FoldChange` > 0) ~"Lower expression in PM",
@@ -1378,8 +1295,20 @@ g.b6_domain_pm_down$result <- g.b6_domain_pm_down$result %>% filter(term_size < 
 #| message: false
 #| warning: false
 
-b6_pm_diff_genes %>%
-  select(Comparison, gene_id, symbol, chromosome ) %>%
+b6_domain_eff_genes_merged |> 
+  filter( gene_id %in% b6_pm_diff_genes$gene_id,
+          padj < 0.05, abs(log2FoldChange) > 0.5,
+          Comparison %in% c("MAX vs PM", "POST vs PM")) |> 
+  mutate( Comparison = case_when(
+    Comparison == "MAX vs PM" & log2FoldChange < 0 ~"PM > MAX",
+    Comparison == "MAX vs PM" & log2FoldChange > 0 ~"PM < MAX",
+    Comparison == "POST vs PM" & log2FoldChange < 0 ~"PM > POST",
+    Comparison == "POST vs PM" & log2FoldChange > 0 ~"PM < POST",
+  )) |> 
+  select( gene_id, symbol, log2FoldChange, padj, Comparison) |> 
+  distinct() |> 
+  arrange(gene_id, padj) |> 
+  mutate_if( is.numeric , formatC, format = "g", digits = 2) |> 
   create_dt()
 
 ```
@@ -1401,6 +1330,8 @@ g.b6_domain_pm_up$result %>%
 ```
 
 #### Genes differentially expressed in the MAX domain 
+
+These are all the genes that are expressed higher **or** lower in the MAX domain in comparison to PM or POST domains with the line representing the mean expression in each domain. 
 
 ```{r max_diff_genes_rep_plot}
 #| warning: false
@@ -1478,18 +1409,29 @@ if(length( g.b6_domain_max_down$result) != 0) g.b6_domain_max_down$result <- g.b
 #| message: false
 #| warning: false
 
-b6_max_diff_genes %>%
-  select(Comparison, gene_id, symbol, chromosome ) %>%
+b6_domain_eff_genes_merged |> 
+  filter( gene_id %in% b6_max_diff_genes$gene_id,
+          padj < 0.05, abs(log2FoldChange) > 0.5,
+          Comparison %in% c("MAX vs PM", "POST vs MAX")) |> 
+  mutate( Comparison = case_when(
+    Comparison == "MAX vs PM" & log2FoldChange < 0 ~"MAX < PM",
+    Comparison == "MAX vs PM" & log2FoldChange > 0 ~"MAX > PM",
+    Comparison == "POST vs MAX" & log2FoldChange < 0 ~"MAX > POST",
+    Comparison == "POST vs MAX" & log2FoldChange > 0 ~"MAX < POST",
+  )) |> 
+  select( gene_id, symbol, log2FoldChange, padj, Comparison) |> 
+  distinct() |> 
+  arrange(gene_id, padj) |> 
+  mutate_if( is.numeric , formatC, format = "g", digits = 2) |> 
   create_dt()
 
 ```
 
-Nothing in ORA!
 
 ```{r max_diff_genes_ora_table}
 #| message: false
 #| warning: false
-#| eval: false
+#| eval: true
 
 g.b6_domain_max_up$result %>%
   mutate( Category = "Higher expression in MAX") %>%
@@ -1505,6 +1447,8 @@ g.b6_domain_max_up$result %>%
 
 
 #### Genes differentially expressed in the POST domain 
+
+These are all the genes that are expressed higher **or** lower in the POST domain in comparison to PM or MAX domains with the line representing the mean expression in each domain. 
 
 ```{r post_diff_genes_rep_plot}
 #| warning: false
@@ -1584,8 +1528,20 @@ if(length( g.b6_domain_post_down$result) != 0) g.b6_domain_post_down$result <- g
 #| message: false
 #| warning: false
 
-b6_post_diff_genes %>%
-  select(Comparison, gene_id, symbol, chromosome ) %>%
+b6_domain_eff_genes_merged |> 
+  filter( gene_id %in% b6_post_diff_genes$gene_id,
+          padj < 0.05, abs(log2FoldChange) > 0.5,
+          Comparison %in% c("POST vs PM", "POST vs MAX")) |> 
+  mutate( Comparison = case_when(
+    Comparison == "POST vs PM" & log2FoldChange < 0 ~"POST < PM",
+    Comparison == "POST vs PM" & log2FoldChange > 0 ~"POST > PM",
+    Comparison == "POST vs MAX" & log2FoldChange < 0 ~"POST < MAX",
+    Comparison == "POST vs MAX" & log2FoldChange > 0 ~"POST > MAX",
+  )) |> 
+  select( gene_id, symbol, log2FoldChange, padj, Comparison) |> 
+  distinct() |> 
+  arrange(gene_id, padj) |> 
+  mutate_if( is.numeric , formatC, format = "g", digits = 2) |> 
   create_dt()
 
 ```
@@ -1672,7 +1628,7 @@ b6_dds_comp_norm_wclusters %>%
   select( gene_id = genes) %>% 
   left_join( b6_domain_eff_genes_merged ) %>% 
   left_join( all_genes_palate) %>% 
-  select( gene_id, symbol, log2FoldChange, padj) %>%
+  select( gene_id, symbol, log2FoldChange, padj, Comparison) %>%
   distinct() %>% 
   arrange(gene_id, padj) %>% 
   mutate_if( is.numeric , formatC, format = "g", digits = 2) %>% 
@@ -1851,10 +1807,11 @@ geststage_clusters <- degPatterns(ma = b6_dds_comp_norm[unique(b6_stage_eff_gene
 
 ```
 
-Clustering by LB stage:
+
 ```{r}
 #| fig-width: 16
 #| fig-height: 14
+#| eval: false
 lbstage_clusters$plot+
   theme_pubclean()+
   theme( axis.text.x = element_text(angle = 30),
@@ -1871,7 +1828,11 @@ geststage_clusters$plot+
          legend.position = "none")
 ```
 
+Groups 1 & 6: Increased expression later in development
 
+Group 2: Steady increase in expession over development
+
+Group 3: Steady decrease in expression over development
 
 
 
