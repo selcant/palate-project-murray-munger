@@ -1141,8 +1141,8 @@ b6_domain_eff_genes_merged <- b6_domain_eff_max_pm %>%
 
 # merge the genes differentially expressed over time AND remove the ones showing interaction with domain
 b6_stage_eff_genes_merged <-  b6_stage_diff %>%
-  mutate( Comparison = case_when( log2FoldChange >0 ~ "Upregulated over time",
-                                  log2FoldChange <0 ~"Downregulated over time")
+  mutate( Comparison = case_when( log2FoldChange >0 ~ "Increas over time",
+                                  log2FoldChange <0 ~"Decrease over time")
           ) %>%
   filter( padj < 0.05 & !is.na(padj) & abs(log2FoldChange) > .5)  %>%
   filter( ! gene_id %in% b6_domain_by_stage_lrt$gene_id )
@@ -1205,6 +1205,77 @@ b6_gene_counts <- counts(b6_dds_simple, normalized=TRUE) %>%
   left_join( colData(b6_dds_simple) %>%
                as_tibble( rownames = "sample")
              )
+
+```
+
+
+Here are some cartoon examples to explain the comparisons we are making and what it means to have interaction terms.
+
+```{r}
+
+# only domain effects
+b6_domain_eff_genes_merged |> 
+  arrange( desc(abs(log2FoldChange)), padj) |> 
+  slice_(n=1) |> 
+  select(gene_id) |> 
+  left_join(b6_gene_counts) |> 
+  ggplot()+
+  aes(x = AP_domain, y = count)+
+  geom_boxplot(aes(col = AP_domain, group=interaction(AP_domain,LB_stage)))+
+  #geom_point(aes(col = AP_domain))+
+  scale_color_manual(values = domain_colors)+
+  theme_pubclean()+
+  scale_y_log10()+
+  ggtitle("Domain effect (no interaction)")
+
+
+# only stage effects
+b6_stage_eff_genes_merged |> 
+  arrange( desc(abs(log2FoldChange)), padj) |> 
+  slice_(n=1) |> 
+  select(gene_id) |> 
+  left_join(b6_gene_counts) |> 
+  ggplot()+
+  aes(x = LB_stage, y = count)+
+  geom_boxplot(aes(col = AP_domain, group=interaction(AP_domain,LB_stage)))+
+  geom_point(aes(col = AP_domain))+
+  geom_smooth(aes(col=AP_domain), se = F)+
+  scale_color_manual(values = domain_colors)+
+  theme_pubclean()+
+  scale_y_log10()+
+  ggtitle("Stage effect (no interaction)")
+
+# domain by stage
+b6_domain_by_stage_merged |> 
+  arrange( desc(abs(log2FoldChange)), padj) |> 
+  slice_(n=1) |> 
+  select(gene_id) |> 
+  left_join(b6_gene_counts) |> 
+  ggplot()+
+  aes(x = AP_domain, y = count)+
+  geom_boxplot(aes(col = AP_domain, group=interaction(AP_domain,LB_stage)))+
+  #geom_point(aes(col = AP_domain,group=interaction(AP_domain,LB_stage)))+
+  #geom_smooth(aes(col = AP_domain))+
+  scale_color_manual(values = domain_colors)+
+  theme_pubclean()+
+  scale_y_log10()+
+  ggtitle("Domain effect (with interaction)")
+
+# stage by domain
+b6_stage_by_domain_merged |> 
+  arrange( desc(abs(log2FoldChange)), padj) |> 
+  slice_(n=1) |> 
+  select(gene_id) |> 
+  left_join(b6_gene_counts) |> 
+  ggplot()+
+  aes(x = LB_stage, y = count)+
+  geom_boxplot(aes(col = AP_domain, group=interaction(AP_domain,LB_stage)))+
+  geom_point(aes(col = AP_domain))+
+  geom_smooth(aes(col=AP_domain), se = F)+
+  scale_color_manual(values = domain_colors)+
+  theme_pubclean()+
+  scale_y_log10()+
+  ggtitle("Stage effect (with interaction)")
 
 ```
 
@@ -1564,6 +1635,8 @@ g.b6_domain_post_up$result %>%
 
 #### Alternative grouping using clustering
 
+**Does any of the clusters below look interesting? If so, I can follow up on them. **
+
 ```{r b6_domain_diff_clustering}
 #| message: false
 #| warning: false
@@ -1616,7 +1689,7 @@ domain_clusters$plot+
 
 ```
 
-Group 1 genes:
+Group 1 genes: 
 
 ```{r b6_domain_diff_cluster1}
 #| warning: false
@@ -1704,6 +1777,9 @@ b6_dds_comp_norm_wclusters %>%
 
 ### Genes differentially expressed over developmental time (LB stage) (without domain interaction)
 
+Here I am highlighting genes that show differences in expression over developmental time in B6. In total there are `r formatC(length(unique(b6_stage_eff_genes_merged$gene_id)), big.mark = ",")` unique genes with a developmental stage effect (i.e. differentially expressed over time) that doesn't differ between domains (i.e. the trend over time is similar between domains). 
+
+
 ```{r b6_stages_diff}
 #| warning: false
 #| message: false
@@ -1711,7 +1787,7 @@ b6_dds_comp_norm_wclusters %>%
 
 
 g.b6_stage_up <- gost( query = unique( (b6_stage_eff_genes_merged %>%
-                                                 filter( Comparison =="Upregulated over time"))$symbol),
+                                                 filter( Comparison =="Increase over time"))$symbol),
                            organism = "mmusculus",
                            domain_scope = "custom",
                            custom_bg = all_genes_palate$symbol,
@@ -1720,7 +1796,7 @@ g.b6_stage_up <- gost( query = unique( (b6_stage_eff_genes_merged %>%
 g.b6_stage_up$result <- g.b6_stage_up$result %>% filter(term_size < 660)
 
 g.b6_stage_down <- gost( query = unique( (b6_stage_eff_genes_merged %>%
-                                                 filter( Comparison =="Downregulated over time"))$symbol),
+                                                 filter( Comparison =="Decrease over time"))$symbol),
                            organism = "mmusculus",
                            domain_scope = "custom",
                            custom_bg = all_genes_palate$symbol,
@@ -1730,6 +1806,10 @@ g.b6_stage_down$result <- g.b6_stage_down$result %>% filter(term_size < 660)
 
 
 ```
+
+::: {#B6_results_stage .panel-tabset .nav-pills}
+
+#### Genes increasing and decreasing over time
 
 ```{r b6_stage_diff_genes_rep_plot}
 #| warning: false
@@ -1767,10 +1847,10 @@ b6_stage_eff_genes_merged %>%
 #| warning: false
 
 g.b6_stage_up$result %>%
-  mutate( Category = "Upregulated over time") %>%
+  mutate( Category = "Increase over time") %>%
   rbind(
     g.b6_stage_down$result %>%
-      mutate(Category = "Downregulated over time")
+      mutate(Category = "Decrease over time")
   )  %>%
   select( Category, term_name, source, p_value, term_size, intersection_size,intersection) %>%  # intersecion: adding the list of genes identified as overlapping with each category
   mutate_if( is.numeric, formatC, digits =2) %>%
@@ -1778,7 +1858,9 @@ g.b6_stage_up$result %>%
 
 ```
 
-Alternative grouping by clustering:
+#### Alternative grouping using clustering
+
+**Does any of the clusters below look interesting? If so, I can follow up on them. **
 
 ```{r b6_stage_diff_clustering}
 #| message: false
@@ -1798,12 +1880,12 @@ geststage_clusters <- degPatterns(ma = b6_dds_comp_norm[unique(b6_stage_eff_gene
                                time = "Gest_stage", 
                                plot = FALSE)
 
-# b6_dds_comp_norm_wclusters_stage <- b6_dds_comp_norm %>%
-#   as_tibble(rownames = "genes") %>%
-#   pivot_longer(cols = 2:ncol(.), names_to = "sample", values_to= "expression") %>%
-#   right_join(distinct(lbstage_clusters$df[,c("genes", "cluster")]),
-#                by = "genes") %>%
-#   left_join( as_tibble(colData(b6_dds_comp), rownames = "sample") )
+b6_dds_comp_norm_wclusters_stage <- b6_dds_comp_norm %>%
+  as_tibble(rownames = "genes") %>%
+  pivot_longer(cols = 2:ncol(.), names_to = "sample", values_to= "expression") %>%
+  right_join(distinct(geststage_clusters$df[,c("genes", "cluster")]),
+               by = "genes") %>%
+  left_join( as_tibble(colData(b6_dds_comp), rownames = "sample") )
 
 ```
 
@@ -1819,6 +1901,7 @@ lbstage_clusters$plot+
 ```
 
 Clustering by gestational stage:
+
 ```{r}
 #| fig-width: 12
 #| fig-height: 10
@@ -1829,20 +1912,85 @@ geststage_clusters$plot+
 ```
 
 Groups 1 & 6: Increased expression later in development
+```{r b6_stage_diff_cluster1_6}
+#| warning: false
+#| message: false
 
-Group 2: Steady increase in expession over development
+
+b6_dds_comp_norm_wclusters_stage %>% 
+  filter(cluster == 1 | cluster == 6) %>% 
+  select( gene_id = genes) %>% 
+  left_join( b6_stage_eff_genes_merged ) %>% 
+  left_join( all_genes_palate) %>% 
+  select( gene_id, symbol, log2FoldChange, padj, Comparison) %>%
+  distinct() %>% 
+  arrange(gene_id, padj) %>% 
+  mutate_if( is.numeric , formatC, format = "g", digits = 2) %>% 
+  create_dt()
+
+
+```
+
+Group 2: Steady increase in expression over development
+```{r b6_stage_diff_cluster2}
+#| warning: false
+#| message: false
+
+
+b6_dds_comp_norm_wclusters_stage %>% 
+  filter(cluster ==2) %>% 
+  select( gene_id = genes) %>% 
+  left_join( b6_stage_eff_genes_merged ) %>% 
+  left_join( all_genes_palate) %>% 
+  select( gene_id, symbol, log2FoldChange, padj, Comparison) %>%
+  distinct() %>% 
+  arrange(gene_id, padj) %>% 
+  mutate_if( is.numeric , formatC, format = "g", digits = 2) %>% 
+  create_dt()
+
+
+```
 
 Group 3: Steady decrease in expression over development
+```{r b6_stage_diff_cluster3}
+#| warning: false
+#| message: false
+
+
+b6_dds_comp_norm_wclusters_stage %>% 
+  filter(cluster ==3) %>% 
+  select( gene_id = genes) %>% 
+  left_join( b6_stage_eff_genes_merged ) %>% 
+  left_join( all_genes_palate) %>% 
+  select( gene_id, symbol, log2FoldChange, padj, Comparison) %>%
+  distinct() %>% 
+  arrange(gene_id, padj) %>% 
+  mutate_if( is.numeric , formatC, format = "g", digits = 2) %>% 
+  create_dt()
+
+
+```
+
+:::
+
+### Genes with different trends between AP domains over time (with stage by domain interaction)
+
+**ADD EXPLANATION HERE: WHAT is the question we are getting at? Why is this biologically relevant?**
+
+### Genes with different trends over time between AP domains (with stage by domain interaction)
+
+**ADD EXPLANATION HERE: WHAT is the question we are getting at? Why is this biologically relevant?**
+Here, I am highlighting genes that show differences in expression over time **AND** these changes over time are **NOT** similar between the three domains (i.e. there is an interaction between stage and domain).
 
 
 
-### Genes with different trends over time across domains (with time by domain interaction)
 
 ```{r b6_stage_by_domain_gene_list_table}
 #| warning: false
 #| message: false
+#| eval: false
 
-b6_stage_by_domain_merged %>%
+b6_stage_by_domain_merged %>% filter(symbol =="Tcf7")
   mutate( type = ifelse(log2FoldChange > 0, "Up","Down")) %>%
   unite( "Comparison_type",  c("type","Comparison"),  sep = " in ", remove = FALSE) %>%
   group_by(gene_id, symbol, chromosome) %>%
@@ -1896,6 +2044,7 @@ b6_stage_by_domain_merged %>%
   select(gene_id, Comparison_type) %>%
   mutate(Comparison_type = paste(Comparison_type, "over time")) %>%
   left_join(b6_gene_counts) %>%
+  filter(AP_domain == "PM") |> 
   ggplot()+
   aes(x = LB_stage, y = count, color = AP_domain, group = AP_domain) +
   geom_point() +
@@ -2112,53 +2261,54 @@ g.b6_stage_by_domain_post_up$result %>%
 
 ```
 
-#### Alternative grouping using clustering
+<!-- #### Alternative grouping using clustering -->
 
-```{r b6_stage_by_domain_diff_clustering}
-#| message: false
-#| warning: false
+<!-- ```{r b6_stage_by_domain_diff_clustering} -->
+<!-- #| message: false -->
+<!-- #| warning: false -->
 
-# b6_dds_comp_norm = assay(vst(b6_dds_comp))
-# columns <- colData(b6_dds_comp)[,c("Gest_stage","AP_domain","LB_stage"), 
-#                                                     drop=FALSE]
-# columns$LB_stage_d <- as_factor(columns$LB_stage) 
-lbstage_clusters_int <- degPatterns(ma = b6_dds_comp_norm[unique(b6_stage_by_domain_merged$gene_id),],
-                                    columns ,
-                                    time = "LB_stage_d", col = "AP_domain",
-                                    plot = FALSE)
+<!-- # b6_dds_comp_norm = assay(vst(b6_dds_comp)) -->
+<!-- # columns <- colData(b6_dds_comp)[,c("Gest_stage","AP_domain","LB_stage"),  -->
+<!-- #                                                     drop=FALSE] -->
+<!-- # columns$LB_stage_d <- as_factor(columns$LB_stage)  -->
+<!-- lbstage_clusters_int <- degPatterns(ma = b6_dds_comp_norm[unique(b6_stage_by_domain_merged$gene_id),], -->
+<!--                                     columns , -->
+<!--                                     time = "LB_stage_d", col = "AP_domain", -->
+<!--                                     plot = FALSE) -->
 
-geststage_clusters_int <- degPatterns(ma = b6_dds_comp_norm[unique(b6_stage_by_domain_merged$gene_id),],
-                                      columns ,
-                                      time = "Gest_stage",  col = "AP_domain",
-                                      plot = FALSE)
+<!-- geststage_clusters_int <- degPatterns(ma = b6_dds_comp_norm[unique(b6_stage_by_domain_merged$gene_id),], -->
+<!--                                       columns , -->
+<!--                                       time = "Gest_stage",  col = "AP_domain", -->
+<!--                                       plot = FALSE) -->
 
-```
+<!-- ``` -->
 
-Clustering by LB stage:
-```{r}
-#| message: false
-#| warning: false
-#| fig-width: 18
-#| fig-height: 14
-lbstage_clusters_int$plot+
-  scale_color_manual( values = domain_colors )+
-  theme_pubclean()+
-  theme( axis.text.x = element_text(angle = 30),
-         legend.position = "none")
-```
+<!-- Clustering by LB stage: -->
+<!-- ```{r} -->
+<!-- #| message: false -->
+<!-- #| warning: false -->
+<!-- #| fig-width: 18 -->
+<!-- #| fig-height: 14 -->
+<!-- lbstage_clusters_int$plot+ -->
+<!--   scale_color_manual( values = domain_colors )+ -->
+<!--   theme_pubclean()+ -->
+<!--   theme( axis.text.x = element_text(angle = 30), -->
+<!--          legend.position = "none") -->
+<!-- ``` -->
 
-Clustering by gestational stage:
-```{r}
-#| message: false
-#| warning: false
-#| fig-width: 20
-#| fig-height: 14
-geststage_clusters_int$plot+
-  scale_color_manual( values = domain_colors )+
-  theme_pubclean()+
-  theme( axis.text.x = element_text(angle = 30),
-         legend.position = "none")
-```
+<!-- Clustering by gestational stage: -->
+<!-- ```{r} -->
+<!-- #| message: false -->
+<!-- #| warning: false -->
+<!-- #| fig-width: 20 -->
+<!-- #| fig-height: 14 -->
+<!-- geststage_clusters_int$plot+ -->
+<!--   scale_color_manual( values = domain_colors )+ -->
+<!--   theme_pubclean()+ -->
+<!--   theme( axis.text.x = element_text(angle = 30), -->
+<!--          legend.position = "none") -->
+<!-- ``` -->
+
 
 :::
   
@@ -2678,7 +2828,7 @@ g.strain_eff_cast_up$result %>%
 
 ```
 
-### Genes differentially expressed between B6 and CAST in each domain over time (with strain by time interaction)
+### Genes with different trends over time in each domain between B6 and CAST (with strain by time interaction)
 
 ```{r strain_eff_by_time_ind_domains}
 #| warning: false
@@ -2747,14 +2897,12 @@ strain_by_time_pm_genes1 <- results(strain_dds_int_pm, contrast = list(c("strain
           padj < 0.05,
           abs(log2FoldChange) > 0.5
           )
-
 strain_by_time_pm_genes2 <- results(strain_dds_int_pm, contrast = list(c("strainCAST","strainCAST.LB_stage")) ) %>%
   as_tibble( rownames = "gene_id") %>%
   filter( gene_id %in% strain_dds_pm_lrt_genes$gene_id,
           padj < 0.05,
           abs(log2FoldChange) > 0.5
           )
-
 # length(unique(intersect(strain_by_time_pm_genes1$gene_id, strain_by_time_pm_genes2$gene_id))) # 486
 # length(unique(setdiff(strain_by_time_pm_genes1$gene_id, strain_by_time_pm_genes2$gene_id))) # 2!
 # length(unique(setdiff(strain_by_time_pm_genes2$gene_id, strain_by_time_pm_genes1$gene_id))) # 0! 
@@ -3188,7 +3336,7 @@ time_by_strain_pm_genes_b6 <- results(strain_dds_int_post, contrast = list(c("LB
           abs(log2FoldChange) > 0.5
   ) %>%
   mutate(
-    Comparison = ifelse( log2FoldChange >0, "Upregulated over time in B6", "Downregulated over time in B6")
+    Comparison = ifelse( log2FoldChange >0, "Increase over time in B6", "Decrease over time in B6")
   ) %>%
   left_join(all_genes_palate)
 time_by_strain_pm_genes_cast <- results(strain_dds_int_post, contrast = list(c("LB_stage","strainCAST.LB_stage")) ) %>%
@@ -3198,7 +3346,7 @@ time_by_strain_pm_genes_cast <- results(strain_dds_int_post, contrast = list(c("
           abs(log2FoldChange) > 0.5
   ) %>%
   mutate(
-    Comparison = ifelse( log2FoldChange >0, "Upregulated over time in CAST", "Downregulated over time in CAST")
+    Comparison = ifelse( log2FoldChange >0, "Increase over time in CAST", "Decrease over time in CAST")
   ) %>%
   left_join(all_genes_palate)
 
@@ -3211,7 +3359,7 @@ time_by_strain_max_genes_b6 <- results(strain_dds_int_post, contrast = list(c("L
           abs(log2FoldChange) > 0.5
           ) %>%
   mutate(
-    Comparison = ifelse( log2FoldChange >0, "Upregulated over time in B6", "Downregulated over time in B6")
+    Comparison = ifelse( log2FoldChange >0, "Increase over time in B6", "Decrease over time in B6")
   ) %>%
   left_join(all_genes_palate)
 time_by_strain_max_genes_cast <- results(strain_dds_int_post, contrast = list(c("LB_stage","strainCAST.LB_stage")) ) %>%
@@ -3221,7 +3369,7 @@ time_by_strain_max_genes_cast <- results(strain_dds_int_post, contrast = list(c(
           abs(log2FoldChange) > 0.5
           ) %>%
   mutate(
-    Comparison = ifelse( log2FoldChange >0, "Upregulated over time in CAST", "Downregulated over time in CAST")
+    Comparison = ifelse( log2FoldChange >0, "Increase over time in CAST", "Decrease over time in CAST")
   ) %>%
   left_join(all_genes_palate)
 time_by_strain_max_genes <- time_by_strain_max_genes_b6 %>% 
@@ -3237,7 +3385,7 @@ time_by_strain_post_genes_b6 <- results(strain_dds_int_post, contrast = list(c("
           abs(log2FoldChange) > 0.5
           ) %>%
   mutate(
-    Comparison = ifelse( log2FoldChange >0, "Upregulated over time in B6", "Downregulated over time in B6")
+    Comparison = ifelse( log2FoldChange >0, "Increase over time in B6", "Decrease over time in B6")
   ) %>%
   left_join(all_genes_palate)
 time_by_strain_post_genes_cast <- results(strain_dds_int_post, contrast = list(c("LB_stage","strainCAST.LB_stage")) ) %>%
@@ -3247,7 +3395,7 @@ time_by_strain_post_genes_cast <- results(strain_dds_int_post, contrast = list(c
           abs(log2FoldChange) > 0.5
           ) %>%
   mutate(
-    Comparison = ifelse( log2FoldChange >0, "Upregulated over time in CAST", "Downregulated over time in CAST")
+    Comparison = ifelse( log2FoldChange >0, "Increase over time in CAST", "Decrease over time in CAST")
   ) %>%
   left_join(all_genes_palate)
 
@@ -3271,13 +3419,13 @@ time_by_strain_pm_genes_b6 %>%
   summarise( "Comparison" = paste(Comparison, collapse=", "))  %>%
   select(gene_id, Comparison) %>%
   mutate( Comparison = case_when(
-    Comparison =="Upregulated over time in B6, Upregulated over time in CAST"~"Up in both",
-    Comparison =="Downregulated over time in B6, Downregulated over time in CAST"~"Down in both",
-    Comparison =="Upregulated over time in B6"~"Up in B6",
-    Comparison =="Downregulated over time in B6"~"Down in B6",
-    Comparison =="Upregulated over time in CAST"~"Up in CAST",
-    Comparison =="Downregulated over time in CAST"~"Down in CAST",
-    Comparison =="Upregulated over time in B6, Downregulated over time in CAST"~"Up in B6, Down in CAST",
+    Comparison =="Increase over time in B6, Increase over time in CAST"~"Up in both",
+    Comparison =="Decrease over time in B6, Decrease over time in CAST"~"Down in both",
+    Comparison =="Increase over time in B6"~"Up in B6",
+    Comparison =="Decrease over time in B6"~"Down in B6",
+    Comparison =="Increase over time in CAST"~"Up in CAST",
+    Comparison =="Decrease over time in CAST"~"Down in CAST",
+    Comparison =="Increase over time in B6, Decrease over time in CAST"~"Up in B6, Down in CAST",
   )) %>% 
   left_join(strain_dds_pm_gene_counts) %>%
   ggplot()+
@@ -3307,13 +3455,13 @@ time_by_strain_pm_genes_b6 %>%
   summarise( "Comparison" = paste(Comparison, collapse=", "))  %>%
   select(gene_id, Comparison) %>%
   mutate( Comparison = case_when(
-    Comparison =="Upregulated over time in B6, Upregulated over time in CAST"~"Up in both",
-    Comparison =="Downregulated over time in B6, Downregulated over time in CAST"~"Down in both",
-    Comparison =="Upregulated over time in B6"~"Up in B6",
-    Comparison =="Downregulated over time in B6"~"Down in B6",
-    Comparison =="Upregulated over time in CAST"~"Up in CAST",
-    Comparison =="Downregulated over time in CAST"~"Down in CAST",
-    Comparison =="Upregulated over time in B6, Downregulated over time in CAST"~"Up in B6, Down in CAST",
+    Comparison =="Increase over time in B6, Increase over time in CAST"~"Up in both",
+    Comparison =="Decrease over time in B6, Decrease over time in CAST"~"Down in both",
+    Comparison =="Increase over time in B6"~"Up in B6",
+    Comparison =="Decrease over time in B6"~"Down in B6",
+    Comparison =="Increase over time in CAST"~"Up in CAST",
+    Comparison =="Decrease over time in CAST"~"Down in CAST",
+    Comparison =="Increase over time in B6, Decrease over time in CAST"~"Up in B6, Down in CAST",
   )) %>% 
   create_dt()
 
@@ -3384,13 +3532,13 @@ time_by_strain_max_genes_b6 %>%
   summarise( "Comparison" = paste(Comparison, collapse=", "))  %>%
   select(gene_id, Comparison) %>%
   mutate( Comparison = case_when(
-    Comparison =="Upregulated over time in B6, Upregulated over time in CAST"~"Up in both",
-    Comparison =="Downregulated over time in B6, Downregulated over time in CAST"~"Down in both",
-    Comparison =="Upregulated over time in B6"~"Up in B6",
-    Comparison =="Downregulated over time in B6"~"Down in B6",
-    Comparison =="Upregulated over time in CAST"~"Up in CAST",
-    Comparison =="Downregulated over time in CAST"~"Down in CAST",
-    Comparison =="Upregulated over time in B6, Downregulated over time in CAST"~"Up in B6, Down in CAST",
+    Comparison =="Increase over time in B6, Increase over time in CAST"~"Up in both",
+    Comparison =="Decrease over time in B6, Decrease over time in CAST"~"Down in both",
+    Comparison =="Increase over time in B6"~"Up in B6",
+    Comparison =="Decrease over time in B6"~"Down in B6",
+    Comparison =="Increase over time in CAST"~"Up in CAST",
+    Comparison =="Decrease over time in CAST"~"Down in CAST",
+    Comparison =="Increase over time in B6, Decrease over time in CAST"~"Up in B6, Down in CAST",
   )) %>% 
   left_join(strain_dds_max_gene_counts) %>%
   ggplot()+
@@ -3418,13 +3566,13 @@ time_by_strain_max_genes_b6 %>%
   summarise( "Comparison" = paste(Comparison, collapse=", "))  %>%
   select(gene_id, Comparison) %>%
   mutate( Comparison = case_when(
-    Comparison =="Upregulated over time in B6, Upregulated over time in CAST"~"Up in both",
-    Comparison =="Downregulated over time in B6, Downregulated over time in CAST"~"Down in both",
-    Comparison =="Upregulated over time in B6"~"Up in B6",
-    Comparison =="Downregulated over time in B6"~"Down in B6",
-    Comparison =="Upregulated over time in CAST"~"Up in CAST",
-    Comparison =="Downregulated over time in CAST"~"Down in CAST",
-    Comparison =="Upregulated over time in B6, Downregulated over time in CAST"~"Up in B6, Down in CAST",
+    Comparison =="Increase over time in B6, Increase over time in CAST"~"Up in both",
+    Comparison =="Decrease over time in B6, Decrease over time in CAST"~"Down in both",
+    Comparison =="Increase over time in B6"~"Up in B6",
+    Comparison =="Decrease over time in B6"~"Down in B6",
+    Comparison =="Increase over time in CAST"~"Up in CAST",
+    Comparison =="Decrease over time in CAST"~"Down in CAST",
+    Comparison =="Increase over time in B6, Decrease over time in CAST"~"Up in B6, Down in CAST",
   )) %>% 
   create_dt()
 
@@ -3494,13 +3642,13 @@ time_by_strain_post_genes_b6 %>%
   summarise( "Comparison" = paste(Comparison, collapse=", "))  %>%
   select(gene_id, Comparison) %>%
   mutate( Comparison = case_when(
-    Comparison =="Upregulated over time in B6, Upregulated over time in CAST"~"Up in both",
-    Comparison =="Downregulated over time in B6, Downregulated over time in CAST"~"Down in both",
-    Comparison =="Upregulated over time in B6"~"Up in B6",
-    Comparison =="Downregulated over time in B6"~"Down in B6",
-    Comparison =="Upregulated over time in CAST"~"Up in CAST",
-    Comparison =="Downregulated over time in CAST"~"Down in CAST",
-    Comparison =="Upregulated over time in B6, Downregulated over time in CAST"~"Up in B6, Down in CAST",
+    Comparison =="Increase over time in B6, Increase over time in CAST"~"Up in both",
+    Comparison =="Decrease over time in B6, Decrease over time in CAST"~"Down in both",
+    Comparison =="Increase over time in B6"~"Up in B6",
+    Comparison =="Decrease over time in B6"~"Down in B6",
+    Comparison =="Increase over time in CAST"~"Up in CAST",
+    Comparison =="Decrease over time in CAST"~"Down in CAST",
+    Comparison =="Increase over time in B6, Decrease over time in CAST"~"Up in B6, Down in CAST",
   )) %>% 
   left_join(strain_dds_post_gene_counts) %>%
   ggplot()+
@@ -3529,13 +3677,13 @@ time_by_strain_post_genes_b6 %>%
   summarise( "Comparison" = paste(Comparison, collapse=", "))  %>%
   select(gene_id, Comparison) %>%
   mutate( Comparison = case_when(
-    Comparison =="Upregulated over time in B6, Upregulated over time in CAST"~"Up in both",
-    Comparison =="Downregulated over time in B6, Downregulated over time in CAST"~"Down in both",
-    Comparison =="Upregulated over time in B6"~"Up in B6",
-    Comparison =="Downregulated over time in B6"~"Down in B6",
-    Comparison =="Upregulated over time in CAST"~"Up in CAST",
-    Comparison =="Downregulated over time in CAST"~"Down in CAST",
-    Comparison =="Upregulated over time in B6, Downregulated over time in CAST"~"Up in B6, Down in CAST",
+    Comparison =="Increase over time in B6, Increase over time in CAST"~"Up in both",
+    Comparison =="Decrease over time in B6, Decrease over time in CAST"~"Down in both",
+    Comparison =="Increase over time in B6"~"Up in B6",
+    Comparison =="Decrease over time in B6"~"Down in B6",
+    Comparison =="Increase over time in CAST"~"Up in CAST",
+    Comparison =="Decrease over time in CAST"~"Down in CAST",
+    Comparison =="Increase over time in B6, Decrease over time in CAST"~"Up in B6, Down in CAST",
   )) %>% 
   create_dt()
 
