@@ -102,20 +102,43 @@ Load eQTL mapping results and write to `/projects/munger-lab/projects/palate-pro
 ```{r write_eqtl_results, message=FALSE, warning=FALSE}
 load("/projects/munger-lab/projects/palate-project-murray-munger/qtl_mapping/DO_Palate_paired_eQTL_peaks.RData")
 
+# We map with the genetic map and get back the peak locations in cM. Robyn wants the marker id instead. For most, the peaks are at the marker and I can exchange the peak position in cM with the marker id using the matched data frame (map_dat2). For a subset, the peak position in cM is between markers, for those I will find and use the closest marker id. 
+
 peaks |> 
   left_join(
     map_dat2 |> 
       mutate(pos = as.numeric(pos)),
     by=c("peak_chr"="chrom","peak_cM"="pos")
-    ) |> 
+    ) -> peaks_w_markers
+
+# there are some cases where the marker is NA
+# find the nearest marker for those cases
+find_closest_marker <-function(x){
+  closest_marker <- map_dat2 |> 
+    filter(chr == x$peak_chr) |> 
+    filter( abs(as.numeric(pos)-x$peak_cM) == min(abs(as.numeric(pos)-x$peak_cM)))
+  x$marker <- closest_marker$marker[1]
+  x$chr <- closest_marker$chr[1]
+  x$pos_bp <- closest_marker$pos_bp[1]
+  x$n <- closest_marker$n[1]
+  return(x)
+}
+peaks_wo_markers <- peaks_w_markers |> 
+  filter(is.na(marker))
+for(i in 1:nrow(peaks_wo_markers)){
+  peaks_wo_markers[i,] <- find_closest_marker(peaks_wo_markers[i,])
+}
+  
+peaks_w_markers |> 
+  filter(!is.na(marker)) |> 
+  rbind(peaks_wo_markers) |> 
   select(
     marker_id = marker,
     marker_chr = peak_chr,
     gene_id = phenotype,
     lod
   ) |> 
-  write.csv.gz(file = "/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-eQTL.csv.gz")
-
+  write.csv.gz(file = "/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-eQTL_v2.csv.gz")
 
 
 ```
