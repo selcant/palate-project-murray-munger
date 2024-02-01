@@ -3788,6 +3788,8 @@ plotDendroAndColors(net$dendrograms[[1]],
 ```
 
 ```{r wgcna_module_dets}
+#| warning: false
+#| message: false
 ## Trait correlations
 # Define numbers of genes and samples
 nGenes = ncol(datExpr)
@@ -3797,10 +3799,18 @@ moduleColors = labels2colors(net$colors)
 MEs0 = moduleEigengenes(datExpr, moduleColors)$eigengenes
 MEs = orderMEs(MEs0)
 
+# module train correlations
 moduleTraitCor = cor(MEs, datTraits, use = "p")
 moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
 moduleTraitPvalue_adj = apply(moduleTraitPvalue,2, p.adjust, method = "BH")
 modules = unique(labels2colors(net$colors))
+
+module_genes <- net$colors |> 
+  as_tibble( rownames = "gene_id") |>
+  rename("value" = "module_num") |> 
+  cbind(moduleColors)
+
+
 
 ```
 
@@ -3817,17 +3827,146 @@ As recommended by the authors, I am choosing the smallest power such that the sc
 This leads to `r length(unique(net$colors))` modules in total which are characterized below. Of note, there are 13 modules that show significant correlation to strain, 15 modules that show significant correlation to A-P domain, 23 modules that show significant correlation to LB stage or gestational stage and 18 modules with significant correlation to palate closure state. 
 
 Still to add:
--   Anova with module summary eigengenes.
--   Deseq2 results for genes within the modules.
--   Looking at gene connectivity. 
+
+-   Anova with module summary eigengenes.  
+-   Deseq2 results for genes within the modules.  
+-   Looking at gene connectivity.   
+
 
 ::: {#WGCNA_results .panel-tabset .nav-pills}
 
-### Module eigengenes
 
-::: {#WGCNA_modules .panel-tabset .nav-pills}
+### Module genes
+
+::: {#WGCNA_module_genes .panel-tabset .nav-pills}
+
+```{r module_gene_expr_plots}
+#| warning: false
+#| message: false
+#| results: asis
+#| fig-width: 10
+#| fig-height: 10
+
+  
+for( mod_col in unique(module_genes$moduleColors)){
+  mod_genes <- module_genes |> 
+    filter(moduleColors ==mod_col)
+  
+  cat("\n####",mod_col, "module","\n")
+  p <- pheatmap(mat = log1p(t(datExpr[,mod_genes$gene_id, drop = FALSE])),
+         show_rownames = F,
+         show_colnames = F, 
+         color = viridisLite::plasma(512, begin = 0, end = 1,direction = -1 ),
+         annotation_col = coldata[,c("strain","AP_domain","LB_stage")],
+         annotation_colors = list( 
+                    strain = strain_colors[c("B6","CAST")],
+                    AP_domain =domain_colors,
+                    LB_stage = viridisLite::viridis(114,begin = 0, end = 1, direction = -1, option = "D")
+            )
+  )
+  print(p)
+  cat("\n\n")
+  # print(mod_genes |>
+  #   inner_join( strain_eff_genes_merged ) |>
+  #   select(module = moduleColors,gene_id, symbol, baseMean, log2FoldChange, padj,test) |>
+  #   mutate_if(is.numeric, formatC, digits = 2) |>
+  #   create_dt())
+  # cat("\n\n")
+}        
+         
+```
+
+:::
+
+### Module genes that show differential expression 
+
+#### Between CAST and B6
+
 
 ```{r}
+
+strain_eff_genes_merged <- strain_eff_genes |> 
+  select(-Comparison) |>
+  mutate(test = "CAST vs B6") |> 
+  rbind(
+    strain_pm_genes |> 
+      select(-Comparison) |> 
+      mutate( test = "CAST vs B6 in PM")
+    ) |> 
+  rbind(
+    strain_by_time_pm_genes |> 
+      mutate( test = "CAST vs B6 in PM with time interaction")
+    ) |> 
+  rbind(
+    strain_max_genes |> 
+      select(-Comparison) |> 
+      mutate( test = "CAST vs B6 in MAX")
+    ) |> 
+  rbind(
+    strain_by_time_max_genes |> 
+      mutate( test = "CAST vs B6 in MAX with time interaction")
+    ) |> 
+  rbind(
+    strain_post_genes |> 
+      select(-Comparison) |> 
+      mutate( test = "CAST vs B6 in POST")
+    ) |> 
+  rbind(
+    strain_by_time_post_genes |> 
+      mutate( test = "CAST vs B6 in POST with stage interaction")
+    )
+
+
+module_genes |>
+  inner_join( strain_eff_genes_merged ) |>
+  select(module = moduleColors,gene_id, symbol, baseMean, log2FoldChange, padj,test) |>
+  mutate_if(is.numeric, formatC, digits = 2) |> 
+  create_dt()
+  
+```
+
+#### In B6 between AP domains
+
+```{r}
+
+b6_domain_eff_merged <- b6_domain_eff_genes_merged |> 
+  rbind( b6_domain_by_stage_merged |> 
+    mutate(Comparison = paste0(Comparison, " with stage interaction"))
+  )
+module_genes |>
+  inner_join( b6_domain_eff_merged ) |>
+  select(module = moduleColors,gene_id, symbol, baseMean, log2FoldChange, padj,test = Comparison) |>
+  mutate_if(is.numeric, formatC, digits = 2) |> 
+  create_dt()
+
+
+```
+
+
+#### In B6 over developmental time
+
+```{r}
+
+b6_stage_eff_merged <- b6_stage_eff_genes_merged |> 
+  rbind( b6_stage_by_domain_merged|> 
+    mutate(Comparison = paste0(Comparison, " over time"))
+  )
+  
+module_genes |>
+  inner_join( b6_stage_eff_merged ) |>
+  select(module = moduleColors,gene_id, symbol, baseMean, log2FoldChange, padj,test = Comparison) |>
+  mutate_if(is.numeric, formatC, digits = 2) |> 
+  create_dt()
+
+
+```
+
+
+### Module eigengenes
+
+::: {#WGCNA_module_eigengenes .panel-tabset .nav-pills}
+
+```{r module_eigengene_plots}
 #| warning: false
 #| message: false
 #| results: asis
@@ -3904,8 +4043,8 @@ plot_eigengene_by_samples <- function(mod_name){
         aes( y = 1, x= sample, fill=LB_stage,col = LB_stage)+
         geom_tile()+
         theme_pubclean(base_size = 8)+
-        scale_color_viridis_c()+
-        scale_fill_viridis_c()+
+        scale_color_viridis_c(begin = 0, end = 1, direction = -1, option = "D")+
+        scale_fill_viridis_c(begin = 0, end = 1, direction = -1, option = "D")+
         theme( legend.position = "bottom",
                legend.key.height =  unit(0.2, 'cm'),
                axis.text.x = element_blank(),
@@ -3938,6 +4077,7 @@ for(mod in names(module_colors)){
 
 :::
 
+
 ### Module-trait correlations
 
 ```{r wgcna_trait_cor}
@@ -3958,8 +4098,9 @@ colorlegend(xlim=c(8,10), ylim=c(2,12), COL2('PRGn'), c(seq(-1,1,.5)), align="l"
 
 ```
 
-```{r}
-
+```{r module_trait_cor_table}
+#| warning: false
+#| message: false
 moduleTraitCor[,c("sex","strain","AP_domain","Gest_stage","LB_stage","palate_closure")] |> 
   as_tibble(rownames = "module") |> 
   pivot_longer(2:7, names_to = "effect", values_to = "Correlation") |> 
