@@ -37,7 +37,7 @@ This is what Robyn asked for:
 >
 >     2.  were corrections made for covariates?
 
-Read in sample details and write the metadata to `/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-meta.csv` .
+Read in sample details and write the metadata to `/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-meta.csv` and `/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_B6_CAST-meta.csv` .
 
 ```{r write_metadata, warning=FALSE, message=FALSE}
 # reading in the sample details + some phenotypes
@@ -56,13 +56,28 @@ sample_annot <- sample_details |>
           batch
           )
 
+non_do_sample_annot <- sample_details |> 
+  filter( !sample %in% contam_samples) |> 
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") |> 
+  filter( !strain =="DO") |> 
+  select( mouse_id = sample, 
+          strain,
+          sex,
+          AP_domain, 
+          Gest_stage,
+          LB_stage,
+          batch
+          )
+
 write_csv(sample_annot,
           file = "/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-meta.csv")
 
+write_csv(non_do_sample_annot,
+          file = "/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_B6_CAST-meta.csv")
 
 ```
 
-Read in tpm data and write to `/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-data.csv.gz`.
+Read in tpm data and write to `/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-data.csv.gz` and `/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_B6_CAST-data.csv.gz`.
 
 ```{r write_tpm, warning=FALSE, message=FALSE}
 # get the list of tpm files
@@ -85,6 +100,27 @@ tpm |>
   rename("gene_id"="locus") |> 
   select(gene_id, sample_annot$mouse_id) |> 
   write.csv.gz(file = "/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_DO-data.csv.gz")
+
+b6_tpm_files <- list.files("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/gbrs_emase/", pattern = "B6_.*.genes.tpm", full.names = T)
+cast_tpm_files <- list.files("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/gbrs_emase", pattern = "CAST_.*.genes.tpm", full.names = T)
+# read in and merge the tpm files
+file1 <- read_tsv(c(b6_tpm_files, cast_tpm_files)[1])
+read_gbrs <- function(filename) {
+  samplename <- paste(strsplit(basename(filename), "[.]")[[1]][1:2], collapse=".")
+  dat <- read_tsv(filename) |> mutate(sample=samplename)
+  dat <- unite(dat, id, sample, remove=FALSE)
+  assert_that(are_equal(dat$locus, file1$locus))
+  select(dat, locus, id, sample, total)
+}
+tpm <- bind_rows(lapply(c(b6_tpm_files, cast_tpm_files), read_gbrs)) |> 
+  rename(tpm=total)
+
+tpm |> 
+  select(-sample) |>  
+  pivot_wider( names_from = "id", values_from = "tpm") |> 
+  rename("gene_id"="locus") |> 
+  select(gene_id, non_do_sample_annot$mouse_id) |> 
+  write.csv.gz(file = "/projects/munger-lab/projects/palate-project-murray-munger/experimental_maxilla_B6_CAST-data.csv.gz")
 
 ```
 
