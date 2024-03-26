@@ -155,6 +155,21 @@ The second section focuses on B6 and CAST gene expression to specifically identi
 Finally, the third section performs weighted gene co-expression network analysis using the gene expression data from B6 and CAST strains.
 The genetic characterization of gene expression and developmental phenotypes using the DO strains can be found in `Palate_qtl_mapping.html` notebook.
 
+
+
+Raw data was processed as follows:
+
+-   Genes with a median transcript per million (TPM) lower than 0.5 were filtered while samples were grouped by gestational stage.
+    The grouping is necessary because there are uniquely expressed genes in each stage.
+
+-   Counts were upper quartile normalized.
+
+<!-- -   Contaminated samples were removed. The sample DO_13.5_MAX_14_2 was also removed, since the contamination was not resolved. -->
+
+-   A new contaminated sample was identified and removed ("B6_13.5_MAX_3").
+
+In the final data set we have `r formatC(nrow(expr_mat), big.mark=",")` genes expressed across `r nrow(sample_annot)` samples.
+
 ```{r save_data_for_ian}
 #| warning: false
 #| message: false
@@ -229,19 +244,15 @@ save(
 
 # Principal component analysis
 
-Raw data was processed as follows:
+-   First principal component (PC) groups samples by developmental time. 
 
--   Genes with a median transcript per million (TPM) lower than 0.5 were filtered while samples were grouped by gestational stage.
-    The grouping is necessary because there are uniquely expressed genes in each stage.
+-   Second PC groups samples by strain background.
 
--   Counts were upper quartile normalized.
+-   Third PC groups samples by AP domain. 
 
-<!-- -   Contaminated samples were removed. The sample DO_13.5_MAX_14_2 was also removed, since the contamination was not resolved. -->
+-   Fourth PC separates the MAX AP domain from the other domains. 
 
--   A new contaminated sample was identified and removed ("B6_13.5_MAX_3").
-
-In the final data set we have `r formatC(nrow(expr_mat), big.mark=",")` genes expressed across `r nrow(sample_annot)` samples.
-The first and second principal components (PCs) group samples by developmental time and strain background respectively.
+-   PC8 groups samples based on sex. 
 
 ```{r pca_b6_cast_do}
 #| message: false
@@ -390,7 +401,7 @@ pca$x %>%
   theme_pubclean(base_size = 14) +
   scale_color_manual( values = strain_colors)+
   scale_fill_manual( values = strain_colors)+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
   # color_palette("npg")+
   # fill_palette("npg")+
   theme(legend.position = "right")
@@ -416,7 +427,7 @@ pca$x %>%
   theme_pubclean(base_size = 14) +
   # scale_color_manual( values = strain_colors)+
   # scale_fill_manual( values = strain_colors)+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
   scale_color_viridis_d()+
   scale_fill_viridis_d()+
   theme(legend.position = "right")
@@ -444,7 +455,7 @@ pca$x %>%
   # scale_fill_manual( values = strain_colors)+
   # scale_color_viridis_d()+
   # scale_fill_viridis_d()+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
   color_palette("npg")+
   fill_palette("npg")+
   theme(legend.position = "right")
@@ -551,7 +562,7 @@ pca_plot <- pca_df %>%
   #color_palette("npg")+
   #scale_color_manual( values = strain_colors)+
   scale_color_viridis_d()+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
   xlab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
   ylab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+
   theme(legend.position = "right")+
@@ -582,7 +593,7 @@ pca_plot <- pca_df %>%
   theme_pubclean()+
   scale_color_viridis_c(limits = c(12,16))+
   #scale_color_manual(values=strain_colors)+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
   xlab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
   ylab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+
   theme(legend.position = "right")+
@@ -656,7 +667,7 @@ pca_plot <- pca_df %>%
   scale_color_viridis_d()+
   #color_palette("npg")+
   scale_color_manual( values = strain_colors)+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
   xlab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+
   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
   theme(legend.position = "right")
@@ -725,7 +736,7 @@ pca_plot <- pca_df %>%
   #color_palette("npg")+
   scale_color_manual( values = domain_colors)+
   #scale_color_viridis_d()+
-  #scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
+  #scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
   xlab(paste0("PC3 (",100*round(var_explained[3],2),"%)"))+
   theme(legend.position = "right")+
@@ -755,7 +766,7 @@ pca_plot <- pca_df %>%
   theme_pubclean()+
   #scale_color_viridis_c(limits = c(12,16))+
   scale_color_manual(values = domain_colors)+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
   ylab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+
   xlab(paste0("PC3 (",100*round(var_explained[3],2),"%)"))+
   theme(legend.position = "right")+
@@ -826,7 +837,7 @@ pca_plot <- pca_df %>%
   #color_palette("npg")+
   #scale_color_manual( values = strain_colors)+
   scale_color_viridis_d()+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
   xlab(paste0("PC4 (",100*round(var_explained[4],2),"%)"))+
   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
   theme(legend.position = "right")
@@ -854,7 +865,7 @@ pca_plot <- pca_df %>%
   theme_pubclean()+
   #color_palette("npg")+
   scale_color_manual( values = domain_colors)+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
   xlab(paste0("PC4 (",100*round(var_explained[4],2),"%)"))+
   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
   theme(legend.position = "right")
@@ -923,7 +934,7 @@ pc4_drivers %>%
 <!--   theme_pubclean()+ -->
 <!--   #color_palette("npg")+ -->
 <!--   scale_color_viridis_d()+ -->
-<!--   scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+ -->
+<!--   scale_shape_manual( values = c(B6="circle",CAST="diamond"))+ -->
 <!--   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+ -->
 <!--   xlab(paste0("PC5 (",100*round(var_explained[5],2),"%)"))+ -->
 <!--   theme(legend.position = "right") -->
@@ -954,7 +965,7 @@ pc4_drivers %>%
 <!--   theme_pubclean()+ -->
 <!--   #color_palette("npg")+ -->
 <!--   scale_color_viridis_d()+ -->
-<!--   scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+ -->
+<!--   scale_shape_manual( values = c(B6="circle",CAST="diamond"))+ -->
 <!--   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+ -->
 <!--   xlab(paste0("PC6 (",100*round(var_explained[6],2),"%)"))+ -->
 <!--   theme(legend.position = "right") -->
@@ -985,7 +996,7 @@ pc4_drivers %>%
 <!--   theme_pubclean()+ -->
 <!--   #color_palette("npg")+ -->
 <!--   scale_color_viridis_d()+ -->
-<!--   scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+ -->
+<!--   scale_shape_manual( values = c(B6="circle",CAST="diamond"))+ -->
 <!--   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+ -->
 <!--   xlab(paste0("PC7 (",100*round(var_explained[7],2),"%)"))+ -->
 <!--   theme(legend.position = "right") -->
@@ -1016,7 +1027,7 @@ pca_plot <- pca_df %>%
   theme_pubclean()+
   color_palette("npg")+
   #scale_color_viridis_d()+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
   xlab(paste0("PC8 (",100*round(var_explained[8],2),"%)"))+
   theme(legend.position = "right")
