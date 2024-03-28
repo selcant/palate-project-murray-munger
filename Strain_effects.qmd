@@ -1090,6 +1090,45 @@ For the B6/CAST comparison analysis:
 -   Next, I compare the simple model to the complex model including the interaction between strain and developmental time for each domain (\~ strain + LB_stage + AP_domain:ind + strain:LB_stage) using LRT.
     Once I have the list of genes that likely show interactions I can use the complex model to get the genes that show differences in expression.
 
+```{r lb_stage_binning}
+#| echo: false
+#| eval: false
+
+min_lb_stage <- 12.25#min(sample_annot$LB_stage)
+sample_annot |> 
+  mutate( new_bin = case_when(
+    ( LB_stage < 12.25 )~"exclude",
+    (between(LB_stage, 13.25, 13.5))~"exclude",
+    (between(LB_stage, 12.25,12.75))~"1",
+    (between(LB_stage, 13.5, 14))~"2",
+    (between(LB_stage, 14.25, 14.75))~"3",
+    (between(LB_stage, 15.1, 15.6))~"4"
+  )) |> 
+  mutate( new_bin = as_factor(new_bin)) |> 
+  #dplyr::count(new_bin, strain)
+  ggplot()+
+  aes(x = LB_stage,
+      y = Gest_stage,
+      col = new_bin,
+      shape = strain)+
+  #geom_point()+
+  geom_jitter(size = 3, alpha = .7)+
+  #scale_color_manual(values = strain_colors)+
+  color_palette("Dark2")+
+  ggtitle("Bin = 0.5 day")+
+  ylab("Gestational Stage")+
+  labs( color = "Bins", shape = "Strain")+
+  scale_x_continuous( name = "LB stage", 
+                    breaks = c(12,12.25,12.75, 13.5, 14,14.25, 14.75, 15.1, 15.6, 16)
+                    #breaks = seq(from = 12, to =17, by = 0.25)
+                    )+
+  theme_pubclean(flip = TRUE)
+  
+  
+
+```
+
+
 ## Differential gene expression in palate domains across developmental time in B6 mice
 
 ```{r b6_gest_domain}
