@@ -51,6 +51,11 @@ library(DT)
 
 library(here)
 
+select <- dplyr::select # I am adding this explicitly
+rename <- dplyr::rename # I am adding this explicitly
+filter <- dplyr::filter # I am adding this explicitly
+summarize <- dplyr::summarize # I am adding this explicitly
+
 # functions
 create_dt <- function(x){
   DT::datatable(x,
@@ -91,6 +96,15 @@ strain_colors <- c( B6 = "#555555",
 # loading the count data
 load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts_v3.RData") # raw_expr_mat, expr_mat_do, expr_mat_nondo 
 expr_mat <- expr_mat_nondo
+contam_samples <- c("B6_12.5_PM_1","B6_13.5_POST_3", "CAST_14.5_MAX_7", "B6_13.5_MAX_3")
+expr_mat <- expr_mat[ ,!colnames(expr_mat) %in% contam_samples]
+do_expr_mat <- expr_mat_do
+remove_samples <- c("DO_13.5_MAX_6", "DO_13.5_MAX_14", "DO_13.5_MAX_14_2",
+                    "DO_12.5_MAX_1" , "DO_12.5_MAX_2" ,"DO_13.5_MAX_97", "DO_13.5_MAX_96") # 96 & 97 are also 12.5 samples
+do_expr_mat <- do_expr_mat[ ,!colnames(do_expr_mat) %in% remove_samples]
+
+expr_mat_all <- cbind( expr_mat[intersect(rownames(expr_mat),rownames(do_expr_mat)),,drop=F],
+                       do_expr_mat[intersect(rownames(expr_mat),rownames(do_expr_mat)),,drop=F])
 rm(expr_mat_do, expr_mat_nondo)
 
 # Get v84 gene annotations
@@ -103,15 +117,24 @@ all.genes_v84 <- all.genes_v84 %>%   mutate( midpoint = (start+end)/2)
 all_genes_palate <- all.genes_v84 %>%
   filter(gene_id %in% rownames(expr_mat))
 
-# process data
-contam_samples <- c("B6_12.5_PM_1","B6_13.5_POST_3", "CAST_14.5_MAX_7", "DO_13.5_MAX_6", "DO_13.5_MAX_14", "DO_13.5_MAX_14_2", "B6_13.5_MAX_3")
-
+# sample annotations
 sample_annot <- sample_details %>% 
+  #as_tibble( rownames = "sample") |> 
   filter( !sample %in% contam_samples & sample %in% colnames(expr_mat)) %>% 
   separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% 
   select(sample,sex, AP_domain,Gest_stage, strain,batch, Harvest_date,LB_stage, palate_closure) %>% 
   mutate( strain = case_when(strain =="B6J"~"B6",
                              strain !="B6J"~strain)) 
+
+sample_annot_all <- sample_details %>% 
+  #as_tibble( rownames = "sample") |> 
+  filter( !sample %in% contam_samples & sample %in% colnames(expr_mat_all)) %>% 
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% 
+  select(sample,sex, AP_domain,Gest_stage, strain,batch, Harvest_date,LB_stage, palate_closure) %>% 
+  mutate( strain = case_when(strain =="B6J"~"B6",
+                             strain !="B6J"~strain)) 
+
+# Genes from Ian:
 pheno_gene_list <- readxl::read_xlsx(here("_data","Supp6_BoneGeneList.xlsx")) |> 
   select( symbol = gene_name) |> 
   distinct() |> 
@@ -129,13 +152,55 @@ figure_genes <- c(MSC =c("Axin2","Gli1","Meis2","Lepr","Prrx1"),
            
            ) |> 
   as_tibble(rownames = "type" ) |> 
-  rename( "value" = "symbol") |> 
+  rename( symbol = value  ) |> 
   mutate(type = gsub("[0-9]","",type)) |> 
   mutate( type_long = case_when(type =="MSC"~"MSC/skeletal progenitor markers",
                                 type =="skeletal"~"Skeletal speciation markers",
                                 type =="osteoclast"~"Osteoclast markers",
                                 type =="osteoblast"~"osteoblast/osteocyte markers"
                                 )) 
+
+morpho_genes <- readxl::read_xlsx(path = here("_data","abnormal craniofacial morphology-MGIBatchReport.xlsx")) |> 
+  select(symbol = Symbol, mgi_id = `MGI Gene/Marker ID`, gene_biotype = `Feature Type`) 
+
+# add gene names to MGI ids for genes
+# checked the overlap
+# length(intersect(mgi_id_annots$symbol, all_genes_palate$symbol)) # 16958/17146
+# most of the missing ones are RPXX-YY genes or Gms
+mgi_id_annots <- read_delim( file = here("_data","MRK_List1.rpt"),
+                             #MGI Marker Accession ID	Chromosome	cM Position	Genome Coordinate Start	Genome Coordinate End	Genome Strand	Marker Symbol	Status	Marker Name	Marker Type	Feature Types (|-delimted)	Marker Synonyms (|-delimited)
+                             col_names = c("mgi_id",
+                                           "chromosome",
+                                           "pos_cM",
+                                           "start",
+                                           "end",
+                                           "strand",
+                                           "symbol",
+                                           "status",
+                                           "marker_name",
+                                           "marker_type",
+                                           "feature_types",
+                                           "marker_synms"), skip = 1) 
+
+# getting the gene list for mammalian phenotypes
+mp_genes <- read_delim( file = here("_data","MGI_PhenoGenoMP.rpt"),
+                        # Allelic Composition	Allele Symbol(s)	Genetic Background	Mammalian Phenotype ID	PubMed ID	MGI Marker Accession ID (comma-delimited)
+                        col_names = c("allelic_comp",
+                                      "allele_symbol",
+                                      "genetic_background",
+                                      "mp_id",
+                                      "pubmed_id",
+                                      "mgi_id")) |> 
+  select(mp_id, mgi_id) |> 
+  distinct() |> 
+  separate_longer_delim( mgi_id, delim = "|") |> 
+  left_join(mgi_id_annots |> 
+              select(mgi_id, symbol)) 
+# add mammalian phenotype definitions
+mp_defs <- read_delim( file = here("_data","VOC_MammalianPhenotype.rpt"),
+                       col_names = c("mp_id","term_name","term_details")) 
+
+
 
 genes <- full_join( figure_genes, skeletal_gene_table ) |> 
   #full_join( pheno_gene_list) |> 
@@ -150,25 +215,10 @@ genes <- full_join( figure_genes, skeletal_gene_table ) |>
 ```
 
 This notebook is analyzing the palate gene expression from different genetic backgrounds, AP domains obtained at various gestational stages.
-The first section uses the normalized gene expression counts from B6 and CAST mice to look at sources of variation.
+The first section uses the normalized gene expression counts from DO, B6 and CAST mice to look at sources of variation.
 The second section focuses on B6 and CAST gene expression to specifically identify differentially expressed genes across domains, gestational stages and strain backgrounds.
 Finally, the third section performs weighted gene co-expression network analysis using the gene expression data from B6 and CAST strains.
 The genetic characterization of gene expression and developmental phenotypes using the DO strains can be found in `Palate_qtl_mapping.html` notebook.
-
-
-
-Raw data was processed as follows:
-
--   Genes with a median transcript per million (TPM) lower than 0.5 were filtered while samples were grouped by gestational stage.
-    The grouping is necessary because there are uniquely expressed genes in each stage.
-
--   Counts were upper quartile normalized.
-
-<!-- -   Contaminated samples were removed. The sample DO_13.5_MAX_14_2 was also removed, since the contamination was not resolved. -->
-
--   A new contaminated sample was identified and removed ("B6_13.5_MAX_3").
-
-In the final data set we have `r formatC(nrow(expr_mat), big.mark=",")` genes expressed across `r nrow(sample_annot)` samples.
 
 ```{r save_data_for_ian}
 #| warning: false
@@ -244,15 +294,27 @@ save(
 
 # Principal component analysis
 
--   First principal component (PC) groups samples by developmental time. 
+Raw data was processed as follows:
+
+-   Genes with a median transcript per million (TPM) lower than 0.5 were filtered while samples were grouped by gestational stage.
+    The grouping is necessary because there are uniquely expressed genes in each stage.
+
+-   Counts were upper quantile normalized.
+
+In the final data set we have `r formatC(nrow(expr_mat_all), big.mark=",")` genes expressed across `r nrow(sample_annot_all)` samples.
+
+Brief summary of PCA results:
+
+-   First principal component (PC) groups samples by developmental time.
 
 -   Second PC groups samples by strain background.
 
--   Third PC groups samples by AP domain. 
+-   Fourth PC groups samples by AP domain.
 
--   Fourth PC separates the MAX AP domain from the other domains. 
+-   PC5 and PC6 are highlighting a few DO samples that are highly similar to each other but differ from the rest of the samples.
+    In the DO data, PC1 and PC2 separates these same samples from the rest of the DO samples.
 
--   PC8 groups samples based on sex. 
+-   PC7 groups samples based on sex.
 
 ```{r pca_b6_cast_do}
 #| message: false
@@ -277,9 +339,9 @@ save(
 # pca <- prcomp(t(assay(raw_dds, "vst")), center=TRUE, scale=FALSE)
 
 
-pca <- prcomp( t( log1p( expr_mat[,sample_annot$sample,drop = F])), center = T, scale = F)
+pca <- prcomp( t( log1p( expr_mat_all)), center = T, scale = F)
 pca_df <- as_tibble(pca$x, rownames = "sample") %>% 
-  left_join(sample_annot)
+  left_join(sample_annot_all)
 var_explained <- (pca$sdev^2 / sum(pca$sdev^2))
 
 ```
@@ -318,12 +380,26 @@ pc4_drivers <- pca$rotation[,"PC4", drop = FALSE] %>%
              ) %>% 
   filter( abs(PC4) >= quantile(abs(PC4), 0.95))
 
-pc8_drivers <- pca$rotation[,"PC8", drop = FALSE] %>% 
+pc5_drivers <- pca$rotation[,"PC5", drop = FALSE] %>% 
   as_tibble( rownames = "id") %>% 
   left_join( all.genes_v84 %>%  
                select(id, symbol)
              ) %>% 
-  filter( abs(PC8) >= quantile(abs(PC8), 0.95))
+  filter( abs(PC5) >= quantile(abs(PC5), 0.95))
+
+pc6_drivers <- pca$rotation[,"PC6", drop = FALSE] %>% 
+  as_tibble( rownames = "id") %>% 
+  left_join( all.genes_v84 %>%  
+               select(id, symbol)
+             ) %>% 
+  filter( abs(PC6) >= quantile(abs(PC6), 0.95))
+
+pc7_drivers <- pca$rotation[,"PC7", drop = FALSE] %>% 
+  as_tibble( rownames = "id") %>% 
+  left_join( all.genes_v84 %>%  
+               select(id, symbol)
+             ) %>% 
+  filter( abs(PC7) >= quantile(abs(PC7), 0.95))
 
 
 # ORA with pc drivers 1-5
@@ -366,15 +442,25 @@ g.pc4 <- gost(
 )
 if(length(g.pc4$result) >1) g.pc4$result <- g.pc4$result %>% filter(term_size < 660)
 
-# g.pc5 <- gost(
-#   query = pc5_drivers$symbol,
-#   organism = "mmusculus",
-#   domain_scope = "custom",
-#   custom_bg = all.genes_v84$symbol,
-#   evcodes = TRUE,
-#   correction_method = "fdr"
-# )
-# if(length(g.pc5$result) >1) g.pc5$result <- g.pc5$result %>% filter(term_size < 660)
+g.pc5 <- gost(
+  query = pc5_drivers$symbol,
+  organism = "mmusculus",
+  domain_scope = "custom",
+  custom_bg = all.genes_v84$symbol,
+  evcodes = TRUE,
+  correction_method = "fdr"
+)
+if(length(g.pc5$result) >1) g.pc5$result <- g.pc5$result %>% filter(term_size < 660)
+
+g.pc6 <- gost(
+  query = pc6_drivers$symbol,
+  organism = "mmusculus",
+  domain_scope = "custom",
+  custom_bg = all.genes_v84$symbol,
+  evcodes = TRUE,
+  correction_method = "fdr"
+)
+if(length(g.pc6$result) >1) g.pc6$result <- g.pc6$result %>% filter(term_size < 660)
 
 
 ```
@@ -392,7 +478,7 @@ By strain:
 
 pca$x %>%
   as_tibble(rownames = "sample") %>% 
-  left_join(sample_annot) %>%
+  left_join(sample_annot_all) %>%
   ggpairs(.,
     columns = 2:11, progress = FALSE, ggplot2::aes(color = strain, shape =strain),
     upper = list(continuous = "density", combo = "box_no_facet"),
@@ -401,7 +487,7 @@ pca$x %>%
   theme_pubclean(base_size = 14) +
   scale_color_manual( values = strain_colors)+
   scale_fill_manual( values = strain_colors)+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond", DO="square"))+
   # color_palette("npg")+
   # fill_palette("npg")+
   theme(legend.position = "right")
@@ -418,7 +504,7 @@ By gestational stage:
 
 pca$x %>%
   as_tibble(rownames = "sample") %>% 
-  left_join(sample_annot) %>%
+  left_join(sample_annot_all) %>%
   ggpairs(.,
     columns = 2:11, progress = FALSE, ggplot2::aes(shape = strain, color =Gest_stage),
     upper = list(continuous = "density", combo = "box_no_facet"),
@@ -427,7 +513,7 @@ pca$x %>%
   theme_pubclean(base_size = 14) +
   # scale_color_manual( values = strain_colors)+
   # scale_fill_manual( values = strain_colors)+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
   scale_color_viridis_d()+
   scale_fill_viridis_d()+
   theme(legend.position = "right")
@@ -444,7 +530,7 @@ By sex:
 
 pca$x %>%
   as_tibble(rownames = "sample") %>% 
-  left_join(sample_annot) %>%
+  left_join(sample_annot_all) %>%
   ggpairs(.,
     columns = 2:11, progress = FALSE, ggplot2::aes(shape = strain, color =sex),
     upper = list(continuous = "density", combo = "box_no_facet"),
@@ -455,7 +541,7 @@ pca$x %>%
   # scale_fill_manual( values = strain_colors)+
   # scale_color_viridis_d()+
   # scale_fill_viridis_d()+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
   color_palette("npg")+
   fill_palette("npg")+
   theme(legend.position = "right")
@@ -478,12 +564,12 @@ tibble(var =  var_explained[1:10]* 100, PC = paste0("PC", seq(1:10))) %>%
   xlab("Principal Component") +
   ylab("% Variation explained") +
   theme_pubclean(base_size = 14)+
-  ylim(0,35)
+  ylim(0,25)
 
 
 ```
 
-## PC1, PC2 and PC3
+## PC1, PC2 and PC4
 
 ```{r pc123_3dplot}
 #| message: false
@@ -494,7 +580,7 @@ tibble(var =  var_explained[1:10]* 100, PC = paste0("PC", seq(1:10))) %>%
 fig <- plot_ly(pca_df, 
                x = ~PC1, 
                y = ~PC2, 
-               z = ~PC3,
+               z = ~PC4,
                symbol = ~strain,
                symbols = c("circle","diamond","square"),
                text = ~sample,
@@ -506,7 +592,7 @@ fig <- plot_ly(pca_df,
 fig <- fig %>% 
   layout(scene = list(xaxis = list(title = paste0("PC1 (",100*round(var_explained[1],2),"%)")),
                                    yaxis = list(title = paste0("PC2 (",100*round(var_explained[2],2),"%)")),
-                                   zaxis = list(title = paste0("PC3 (",100*round(var_explained[3],2),"%)")))
+                                   zaxis = list(title = paste0("PC4 (",100*round(var_explained[4],2),"%)")))
 )
 
 fig
@@ -522,7 +608,7 @@ fig
 fig <- plot_ly(pca_df, 
                x = ~PC1, 
                y = ~PC2, 
-               z = ~PC3,
+               z = ~PC4,
                color = ~AP_domain,
                symbol = ~strain,
                symbols = c("circle","diamond","square"),
@@ -534,7 +620,7 @@ fig <- plot_ly(pca_df,
 fig <- fig %>% 
   layout(scene = list(xaxis = list(title = paste0("PC1 (",100*round(var_explained[1],2),"%)")),
                                    yaxis = list(title = paste0("PC2 (",100*round(var_explained[2],2),"%)")),
-                                   zaxis = list(title = paste0("PC3 (",100*round(var_explained[3],2),"%)")))
+                                   zaxis = list(title = paste0("PC4 (",100*round(var_explained[4],2),"%)")))
 )
 
 fig
@@ -562,7 +648,7 @@ pca_plot <- pca_df %>%
   #color_palette("npg")+
   #scale_color_manual( values = strain_colors)+
   scale_color_viridis_d()+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
   xlab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
   ylab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+
   theme(legend.position = "right")+
@@ -593,7 +679,7 @@ pca_plot <- pca_df %>%
   theme_pubclean()+
   scale_color_viridis_c(limits = c(12,16))+
   #scale_color_manual(values=strain_colors)+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
   xlab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
   ylab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+
   theme(legend.position = "right")+
@@ -622,7 +708,7 @@ gostplot(g.pc1)
 
 g.pc1$result %>% 
   select( term_name, source, FDR = p_value, term_size, intersection_size,intersection) %>%  # intersecion: adding the list of genes identified as overlapping with each category
-  filter( FDR <0.01) %>% 
+  filter( FDR <0.05) %>% 
   mutate_if( is.numeric, formatC, digits =2) %>% 
   create_dt()
 
@@ -646,7 +732,7 @@ pc1_drivers %>%
 
 ```
 
-## PC2 groups samples by strain
+## PC2 and PC3 group samples by strain
 
 ```{r pc2_pc1_strain}
 #| message: false
@@ -667,7 +753,7 @@ pca_plot <- pca_df %>%
   scale_color_viridis_d()+
   #color_palette("npg")+
   scale_color_manual( values = strain_colors)+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
   xlab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+
   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
   theme(legend.position = "right")
@@ -691,7 +777,7 @@ gostplot(g.pc2, capped = F)
 
 g.pc2$result %>% 
   select( term_name, source, FDR = p_value, term_size, intersection_size, intersection) %>% 
-  filter( FDR <0.01) %>% 
+  filter( FDR <0.05) %>% 
   mutate_if( is.numeric, formatC, digits =2) %>% 
   create_dt()
 
@@ -715,39 +801,6 @@ pc2_drivers %>%
 
 ```
 
-## PC3 groups samples by domain
-
-```{r pc1_pc3_domain}
-#| message: false
-#| warning: false
-#| fig-width: 8
-#| fig-height: 6
-
-pca_plot <- pca_df %>% 
-  ggplot()+
-  aes( y = PC1, 
-       x = PC3,
-       col = AP_domain,
-       shape = Gest_stage,
-       label = sample,
-       )+
-  geom_point(size = 4, alpha = 0.7)+
-  theme_pubclean()+
-  #color_palette("npg")+
-  scale_color_manual( values = domain_colors)+
-  #scale_color_viridis_d()+
-  #scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
-  ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
-  xlab(paste0("PC3 (",100*round(var_explained[3],2),"%)"))+
-  theme(legend.position = "right")+
-  labs(shape = "Gestational stage",
-       color = "AP domain")
-
-
-ggplotly(pca_plot, tooltip = c("label"))
-
-```
-
 ```{r pc2_pc3_domain}
 #| message: false
 #| warning: false
@@ -766,7 +819,7 @@ pca_plot <- pca_df %>%
   theme_pubclean()+
   #scale_color_viridis_c(limits = c(12,16))+
   scale_color_manual(values = domain_colors)+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
   ylab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+
   xlab(paste0("PC3 (",100*round(var_explained[3],2),"%)"))+
   theme(legend.position = "right")+
@@ -792,7 +845,7 @@ gostplot(g.pc3, capped = T)
 #| eval: true
 g.pc3$result %>% 
   select( term_name, source, FDR = p_value, term_size, intersection_size, intersection) %>% 
-  filter( FDR <0.01) %>% 
+  filter( FDR <0.05) %>% 
   mutate_if( is.numeric, formatC, digits =2) %>% 
   create_dt()
 
@@ -816,36 +869,7 @@ pc3_drivers %>%
 
 ```
 
-## PC4 separates the MAX domain
-
-```{r pc1_pc4_stage}
-#| message: false
-#| warning: false
-#| fig-width: 8
-#| fig-height: 6
-
-pca_plot <- pca_df %>% 
-  ggplot()+
-  aes( x = PC4, 
-       y = PC1,
-       col = Gest_stage,
-       shape = strain,
-       label = sample
-       )+
-  geom_point(size = 4, alpha = 0.7)+
-  theme_pubclean()+
-  #color_palette("npg")+
-  #scale_color_manual( values = strain_colors)+
-  scale_color_viridis_d()+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
-  xlab(paste0("PC4 (",100*round(var_explained[4],2),"%)"))+
-  ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
-  theme(legend.position = "right")
-
-
-ggplotly(pca_plot, tooltip = c("label"))
-
-```
+## PC4 groups samples by domain
 
 ```{r pc1_pc4_domain}
 #| message: false
@@ -865,7 +889,7 @@ pca_plot <- pca_df %>%
   theme_pubclean()+
   #color_palette("npg")+
   scale_color_manual( values = domain_colors)+
-  scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
   xlab(paste0("PC4 (",100*round(var_explained[4],2),"%)"))+
   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
   theme(legend.position = "right")
@@ -889,7 +913,7 @@ gostplot(g.pc4, capped = T)
 
 g.pc4$result %>% 
   select( term_name, source, FDR = p_value, term_size, intersection_size, intersection) %>% 
-  filter( FDR <0.01) %>% 
+  filter( FDR <0.05) %>% 
   mutate_if( is.numeric, formatC, digits =2) %>% 
   create_dt()
 
@@ -913,102 +937,64 @@ pc4_drivers %>%
 
 ```
 
-<!-- ## PC5 -->
+## PC5 and PC6
 
-<!-- ```{r pc5_pc1} -->
-<!-- #| message: false -->
-<!-- #| warning: false -->
-<!-- #| fig-width: 8 -->
-<!-- #| fig-height: 6 -->
+```{r pc5_pc6}
+#| message: false
+#| warning: false
+#| fig-width: 8
+#| fig-height: 6
 
-<!-- pca_plot <- pca_df %>%  -->
-<!--   filter( !is.na(sex)) %>%  -->
-<!--   ggplot()+ -->
-<!--   aes( x = PC5,  -->
-<!--        y = PC1, -->
-<!--        col = Gest_stage, -->
-<!--        shape = strain, -->
-<!--        label = sample -->
-<!--        )+ -->
-<!--   geom_point(size = 4, alpha = 0.7)+ -->
-<!--   theme_pubclean()+ -->
-<!--   #color_palette("npg")+ -->
-<!--   scale_color_viridis_d()+ -->
-<!--   scale_shape_manual( values = c(B6="circle",CAST="diamond"))+ -->
-<!--   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+ -->
-<!--   xlab(paste0("PC5 (",100*round(var_explained[5],2),"%)"))+ -->
-<!--   theme(legend.position = "right") -->
-
-
-<!-- ggplotly(pca_plot, tooltip = c("label")) -->
-
-<!-- ``` -->
-
-<!-- ## PC6 -->
-
-<!-- ```{r pc6_pc1} -->
-<!-- #| message: false -->
-<!-- #| warning: false -->
-<!-- #| fig-width: 8 -->
-<!-- #| fig-height: 6 -->
-
-<!-- pca_plot <- pca_df %>%  -->
-<!--   filter( !is.na(sex)) %>%  -->
-<!--   ggplot()+ -->
-<!--   aes( x = PC6,  -->
-<!--        y = PC1, -->
-<!--        col = Gest_stage, -->
-<!--        shape = strain, -->
-<!--        label = sample -->
-<!--        )+ -->
-<!--   geom_point(size = 4, alpha = 0.7)+ -->
-<!--   theme_pubclean()+ -->
-<!--   #color_palette("npg")+ -->
-<!--   scale_color_viridis_d()+ -->
-<!--   scale_shape_manual( values = c(B6="circle",CAST="diamond"))+ -->
-<!--   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+ -->
-<!--   xlab(paste0("PC6 (",100*round(var_explained[6],2),"%)"))+ -->
-<!--   theme(legend.position = "right") -->
+pca_plot <- pca_df %>%
+  filter( !is.na(sex)) %>%
+  ggplot()+
+  aes( x = PC5,
+       y = PC6,
+       col = LB_stage,
+       shape = strain,
+       label = sample
+       )+
+  geom_point(size = 4, alpha = 0.7)+
+  theme_pubclean()+
+  #color_palette("npg")+
+  scale_color_viridis_c(limits = c(12,16))+
+  scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
+  ylab(paste0("PC6 (",100*round(var_explained[6],2),"%)"))+
+  xlab(paste0("PC5 (",100*round(var_explained[5],2),"%)"))+
+  theme(legend.position = "right")
 
 
-<!-- ggplotly(pca_plot, tooltip = c("label")) -->
+ggplotly(pca_plot, tooltip = c("label"))
 
-<!-- ``` -->
+```
 
-<!-- ## PC7 -->
+Table with the full list of PC5 and PC6 driver genes:
 
-<!-- ```{r pc7_pc1} -->
-<!-- #| message: false -->
-<!-- #| warning: false -->
-<!-- #| fig-width: 8 -->
-<!-- #| fig-height: 6 -->
-
-<!-- pca_plot <- pca_df %>%  -->
-<!--   filter( !is.na(sex)) %>%  -->
-<!--   ggplot()+ -->
-<!--   aes( x = PC7,  -->
-<!--        y = PC1, -->
-<!--        col = Gest_stage, -->
-<!--        shape = strain, -->
-<!--        label = sample -->
-<!--        )+ -->
-<!--   geom_point(size = 4, alpha = 0.7)+ -->
-<!--   theme_pubclean()+ -->
-<!--   #color_palette("npg")+ -->
-<!--   scale_color_viridis_d()+ -->
-<!--   scale_shape_manual( values = c(B6="circle",CAST="diamond"))+ -->
-<!--   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+ -->
-<!--   xlab(paste0("PC7 (",100*round(var_explained[7],2),"%)"))+ -->
-<!--   theme(legend.position = "right") -->
+```{r pc7_gene_table}
+#| message: false
+#| warning: false
 
 
-<!-- ggplotly(pca_plot, tooltip = c("label")) -->
+pc5_drivers %>% 
+  mutate(PC = "PC5") |> 
+  dplyr::rename( "value" = "PC5") |> 
+  rbind(
+    pc6_drivers |> 
+      mutate(PC = "PC6") |> 
+      dplyr::rename("value" = "PC6")
+  ) |> 
+  left_join(
+    all_genes_palate %>% 
+      select(symbol, chromosome)
+  ) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  create_dt()
 
-<!-- ``` -->
+```
 
-## PC8 group samples by sex
+## PC7 group samples by sex
 
-```{r pc8_pc1}
+```{r pc7_pc1}
 #| message: false
 #| warning: false
 #| fig-width: 8
@@ -1017,7 +1003,7 @@ pc4_drivers %>%
 pca_plot <- pca_df %>% 
   filter( !is.na(sex)) %>% 
   ggplot()+
-  aes( x = PC8, 
+  aes( x = PC7, 
        y = PC1,
        col = sex,
        shape = strain,
@@ -1029,7 +1015,7 @@ pca_plot <- pca_df %>%
   #scale_color_viridis_d()+
   scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
   ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
-  xlab(paste0("PC8 (",100*round(var_explained[8],2),"%)"))+
+  xlab(paste0("PC7 (",100*round(var_explained[7],2),"%)"))+
   theme(legend.position = "right")
 
 
@@ -1037,24 +1023,189 @@ ggplotly(pca_plot, tooltip = c("label"))
 
 ```
 
-Table with the full list of PC8 driver genes:
+Table with the full list of PC7 driver genes:
 
-```{r pc8_gene_table}
+```{r pc7_gene_table}
 #| message: false
 #| warning: false
 
 
-pc8_drivers %>% 
+pc7_drivers %>% 
   left_join(
     all_genes_palate %>% 
       select(symbol, chromosome)
   ) %>% 
-  arrange(desc(abs(PC8))) %>% 
+  arrange(desc(abs(PC7))) %>% 
   mutate_if(is.numeric, round, 2) %>% 
   create_dt()
 
 ```
 :::
+
+# Gene set variation analysis
+
+Add GSVA here with:
+
+-   GO BP
+
+-   MGI mammalian phenotypes
+
+
+```{r run_gsva}
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# reading in the GO + mgi downloaded from: http://www.informatics.jax.org/gotools/data/input/MGIgenes_by_GOid.txt
+go_terms <- read_tsv( "http://www.informatics.jax.org/gotools/data/input/MGIgenes_by_GOid.txt") %>% 
+  mutate( genes = str_split(genes, ",")) %>% 
+  unnest() # separete the symbols, note the overlap: length(intersect(unique(go_terms$genes), npc.genes$mgi_symbol) ) = 11806
+
+
+slim_go_terms <- read_tsv( "http://www.informatics.jax.org/gotools/data/input/map2MGIslim.txt") %>% 
+  select(-term) %>% 
+  mutate( ONT = case_when( aspect == "P" ~  "BP",
+                     aspect == "F" ~ "MF",
+                     aspect == "C" ~ "CC"
+                     )
+          ) %>% 
+  select(-aspect)
+
+genesbygo <- split(go_terms$genes, go_terms$GO_id)
+
+go_terms_annot <- go_terms %>%  
+  select(GO_id) %>% 
+  distinct() %>% 
+  left_join( slim_go_terms %>%  select( GO_id, ONT) %>% distinct())
+
+goannot_wdef <- AnnotationDbi::select(GO.db::GO.db, keys= unique(go_terms$GO_id), columns=c("GOID","DEFINITION","ONTOLOGY","TERM")) %>%
+  left_join( slim_go_terms, by=c("GOID"="GO_id")) %>% 
+  mutate( ONTOLOGY = ONT) %>% 
+  select(-ONT)
+
+go_bp <- goannot_wdef %>% filter( ONTOLOGY == "BP") %>% 
+  select(GOID) %>%  distinct()
+
+# adding mammalian phenotypes!
+genesbyMP <- split(mp_genes$symbol, mp_genes$mp_id)
+
+# expr - change gene id's to symbols for GSVA with GO
+expr.upd <- expr_mat[all_genes_palate$gene_id,]
+rownames(expr.upd) <- all_genes_palate$symbol
+
+# run gsva
+gsva_go <- GSVA::gsva(  expr = expr.upd,
+                   gset.idx.list = genesbygo,
+                    method ="gsva",
+                    kcdf = "none",
+                    min.sz = 5,
+                    max.sz = 1000,
+                    mx.diff = TRUE
+                   )
+
+gsva_mp <- GSVA::gsva(  expr = expr.upd,
+                   gset.idx.list = genesbyMP,
+                    method ="gsva",
+                    kcdf = "none",
+                    min.sz = 5,
+                    max.sz = 5000, # setting to 1000 only removes 6 gene sets
+                    mx.diff = TRUE
+                   )
+
+# following up on rna results
+gsva_go %>% 
+  as_tibble(rownames = "Category") %>% 
+  filter( Category %in% go_bp$GOID) %>% #filtering for BP
+  rbind( gsva_mp |> 
+           as_tibble( rownames = "Category")) |> 
+  pivot_longer( cols = colnames(expr.upd),
+                values_to = "Enrichment_Score",
+                names_to = "sample") %>% 
+  # add covariates 
+  left_join( sample_annot %>% 
+               select(sample, sex, palate_closure,LB_stage_binned)) -> gsva_results
+
+gsva_results %>% 
+  group_by( Category) %>% 
+  rstatix::anova_test( Enrichment_Score ~ strain+AP_domain+LB_stage_binned) %>% 
+  rstatix::adjust_pvalue( method = "BH") %>%
+  rstatix::add_significance("p.adj") %>% 
+  ungroup() -> gsva_aov
+
+gsva_results %>% 
+  group_by(Category) %>% 
+  rstatix::tukey_hsd( Enrichment_Score ~ strain+AP_domain+LB_stage_binned) %>% 
+  ungroup() %>% 
+  as_tibble() -> gsva_tukey
+
+gsva_aov %>% 
+  as_tibble() %>% 
+  filter( p.adj.signif != "ns" & !is.na(p.adj) ) -> signif_eff_terms
+
+gsva_tukey %>% 
+  inner_join( ., select( signif_eff_terms, Category, term = Effect)) -> signif_results_tukey
+
+```
+
+Below are the list of GO Biological processes that show significant differences by strain, AP domain and LB stage (adjusted p-value \< 0.05).
+
+::: panel-tabset
+
+### GO BP terms and mammalian phenotypes showing significant differences 
+
+```{r gsva_results_table}
+#| warning: false
+#| message: false
+
+
+signif_eff_terms %>% 
+  filter( p.adj<0.05) %>% 
+  filter( str_detect(Category, "GO:")) |> 
+  left_join( goannot_wdef |> 
+               select(Category = GOID, TERM) |> 
+               distinct()) |> 
+  rbind(
+    signif_eff_terms |> 
+      filter( p.adj < 0.05) |> 
+      filter(str_detect(Category, "MP:")) |> 
+      left_join( mp_defs |> 
+                   select(Category = mp_id,
+                          TERM = term_name))
+  ) |> 
+  select(Effect, Category, TERM,p.adj) %>% 
+  #filter( p.adj < 0.01) %>% 
+  distinct() %>% 
+  mutate( "Adjusted p-value" = formatC(p.adj, digits=2, format ="e")) %>% 
+  select(-p.adj) %>% 
+  create_dt()
+
+
+
+  
+```
+
+Let's simplify the GO terms that show significant differences between LB stage bins:
+
+```{r simplify_gsva_pn}
+#| warning: false
+#| message: false
+#| fig-height: 8
+#| fig-width: 16
+#| cache: true
+
+
+gsva_lb_stage_terms <- signif_eff_terms %>% 
+  filter( p.adj<0.05, Effect == "LB_stage_binned", str_detect(Category, "GO")) 
+
+simplifyGO( mat = GO_similarity(gsva_lb_stage_terms$Category, ont = "BP"))
+
+#compare_clustering_methods(GO_similarity(gsva_pn_go_terms$Category, ont = "BP"))
+
+```
+
+
+
 
 # Differential gene expression analysis
 
@@ -1127,7 +1278,6 @@ sample_annot |>
   
 
 ```
-
 
 ## Differential gene expression in palate domains across developmental time in B6 mice
 
@@ -1440,7 +1590,8 @@ lm_ex_plot <- ggarrange(p1,p2,p3,p4, nrow = 1,ncol=4, common.legend = T)
 lm_ex_plot
 ```
 
-Above I am plotting an example gene for each of the four categories separated in tabs below. On the left, there is a gene with a domain effect that doesn't show an interaction with stage.
+Above I am plotting an example gene for each of the four categories separated in tabs below.
+On the left, there is a gene with a domain effect that doesn't show an interaction with stage.
 This gene has a significantly higher expression in PM domain in comparison to both MAX and POST domains, and significantly higher expression in MAX domain in comparison to POST.
 Second from the left, is a gene that shows a stage effect where its expression increases with time similarly in each domain hence lacking an interaction with domain.
 
@@ -2718,7 +2869,6 @@ g.strain_eff_cast_down$result <- g.strain_eff_cast_down$result %>% filter(term_s
 There are `r formatC(nrow(strain_eff_genes), big.mark =",")` genes that show a strain effect (i.e differentially expressed between CAST and B6).
 Note that we are not including any interaction terms and some of these genes are likely to show variability in their difference between the strains over time or across domains.
 
-
 ```{r simple_mod_strain_plot}
 #| warning: false
 #| message: false
@@ -3088,7 +3238,7 @@ strain_pm_genes |>
 
 ```
 
-As you can see in the examples above, the trend over time for each gene is highly similar over developmental time. 
+As you can see in the examples above, the trend over time for each gene is highly similar over developmental time.
 
 ```{r strain_pm_table}
 #| message: false
@@ -3140,7 +3290,9 @@ strain_by_time_pm_genes |>
 
 ```
 
-The example genes here show different trends over time, the slopes of the CAST line is higher than the B6 line on the left for *Itgb3* leading to a positive fold change whereas the opposite is observed for *Mmp9* leading to a negative fold change. Currently I am grouping genes based on the sign of the fold changes although I am not sure if that biologically makes sense. Let me know which genes you would like to investigate further and we can look at them closer instead. 
+The example genes here show different trends over time, the slopes of the CAST line is higher than the B6 line on the left for *Itgb3* leading to a positive fold change whereas the opposite is observed for *Mmp9* leading to a negative fold change.
+Currently I am grouping genes based on the sign of the fold changes although I am not sure if that biologically makes sense.
+Let me know which genes you would like to investigate further and we can look at them closer instead.
 
 ```{r strain_by_time_pm}
 #| message: false
@@ -3198,10 +3350,10 @@ g.strain_by_time_pm_up_genes$result %>%
 
 ```
 
-<\br>
-<\br>
+\<\br\> \<\br\>
 
-Alternative grouping using clustering might be a better aproach for these genes. Let me know if any of these look interesting and I can follow up.
+Alternative grouping using clustering might be a better aproach for these genes.
+Let me know if any of these look interesting and I can follow up.
 
 ```{r}
 #| warning: false
@@ -3295,7 +3447,7 @@ strain_max_genes |>
 
 ```
 
-As you can see in the examples above, the trend over time for each gene is highly similar over developmental time. 
+As you can see in the examples above, the trend over time for each gene is highly similar over developmental time.
 
 ```{r strain_max_table}
 #| message: false
@@ -3347,8 +3499,9 @@ strain_by_time_max_genes |>
 
 ```
 
-The example genes here show different trends over time, where the slopes of the CAST line is higher than the B6 line it leads to a positive fold change (ex: *Itgb3*) and where the opposite is observed leads to a negative fold change (ex: *Acp5, Dcn, Mmp9*). Currently I am grouping genes based on the sign of the fold changes although I am not sure if that biologically makes sense. Let me know which genes you would like to investigate further and we can look at them closer instead. 
-
+The example genes here show different trends over time, where the slopes of the CAST line is higher than the B6 line it leads to a positive fold change (ex: *Itgb3*) and where the opposite is observed leads to a negative fold change (ex: *Acp5, Dcn, Mmp9*).
+Currently I am grouping genes based on the sign of the fold changes although I am not sure if that biologically makes sense.
+Let me know which genes you would like to investigate further and we can look at them closer instead.
 
 ```{r strain_by_time_max}
 #| message: false
@@ -3406,10 +3559,10 @@ g.strain_by_time_max_up_genes$result %>%
 
 ```
 
-<\br>
-<\br>
+\<\br\> \<\br\>
 
-Alternative grouping using clustering might be a better aproach for these genes. Let me know if any of these look interesting and I can follow up.
+Alternative grouping using clustering might be a better aproach for these genes.
+Let me know if any of these look interesting and I can follow up.
 
 ```{r}
 #| warning: false
@@ -3501,8 +3654,9 @@ strain_post_genes |>
 
 ```
 
-As you can see in the examples above, the trend over time for each gene is highly similar over developmental time. What is going on with *Bglap2*? I think it is expressed at a very low level and it is being picked up here because CAST samples don't really have much expression.
-
+As you can see in the examples above, the trend over time for each gene is highly similar over developmental time.
+What is going on with *Bglap2*?
+I think it is expressed at a very low level and it is being picked up here because CAST samples don't really have much expression.
 
 ```{r strain_post_table}
 #| message: false
@@ -3555,8 +3709,9 @@ strain_by_time_post_genes |>
 
 ```
 
-The example genes here show different trends over time, where the slopes of the CAST line is higher than the B6 line it leads to a positive fold change and where the opposite is observed leads to a negative fold change. Currently I am grouping genes based on the sign of the fold changes although I am not sure if that biologically makes sense. Let me know which genes you would like to investigate further and we can look at them closer instead. 
-
+The example genes here show different trends over time, where the slopes of the CAST line is higher than the B6 line it leads to a positive fold change and where the opposite is observed leads to a negative fold change.
+Currently I am grouping genes based on the sign of the fold changes although I am not sure if that biologically makes sense.
+Let me know which genes you would like to investigate further and we can look at them closer instead.
 
 ```{r strain_by_time_post}
 #| message: false
@@ -3584,7 +3739,6 @@ g.strain_by_time_post_down_genes <- gost( query = unique( (strain_by_time_post_g
 g.strain_by_time_post_down_genes$result <- g.strain_by_time_post_down_genes$result %>% filter(term_size < 660)
 
 ```
-
 
 ```{r strain_by_time_post_table}
 #| message: false
@@ -3614,10 +3768,10 @@ g.strain_by_time_post_up_genes$result %>%
 
 ```
 
-<\br>
-<\br>
+\<\br\> \<\br\>
 
-Alternative grouping using clustering might be a better aproach for these genes. Let me know if any of these look interesting and I can follow up.
+Alternative grouping using clustering might be a better aproach for these genes.
+Let me know if any of these look interesting and I can follow up.
 
 ```{r}
 #| warning: false
@@ -3672,7 +3826,6 @@ strain_geststage_clusters_int_post$plot+
   theme( axis.text.x = element_text(angle = 30),
          legend.position = "none")
 ```
-
 :::
 :::
 
@@ -3681,18 +3834,34 @@ strain_geststage_clusters_int_post$plot+
 ```{r prep_for_wgcna}
 #| warning: false
 #| message: false
+#| 
 
-coldata <- b6_cast_samples %>%
+b6_samples <- sample_annot %>%
+  filter(strain %in% c("B6")) %>%
+  separate(sample, sep = "_", into = c("s","e","d","ind","rep"), remove = F) %>%
+  select(-e,-d) %>%
+  mutate( rep = ifelse( is.na(rep),1,rep)) %>%
+  unite( "unique_sampleid" , c(s,ind,AP_domain,Gest_stage),sep ="_", remove = F) |> # adding an individual column to match the domains to the same animal/embryo and rep column for replicates
   select(sample,unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, strain, LB_stage) %>%
-  #filter( rep ==1) %>%
   filter(!is.na(sex) ) %>%
   mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
   column_to_rownames("sample")
 
-datExpr <- t(expr_mat[all_genes_palate$gene_id,rownames(coldata), drop = F])
+# # Using deseq2 to normalize the full gene expression matrix and collapse replicates.
+b6_cts_all <- round(raw_expr_mat[,rownames(b6_samples), drop = F])
+b6_dds_all <- DESeqDataSetFromMatrix( countData = b6_cts_all,
+                                  colData = b6_samples,
+                                  design = ~1)
+b6_dds_all <- collapseReplicates(b6_dds_all, b6_dds_all$unique_sampleid)
+b6_dds_all_norm <- vst(b6_dds_all)
+b6_datExpr <- t(assay(b6_dds_all_norm))
+b6_coldata <- colData(b6_dds_all)
 
-datTraits <- sample_annot %>%
-  filter( sample %in% rownames(coldata)) %>%
+
+b6_gsg <- goodSamplesGenes(b6_datExpr)
+# summary(b6_gsg)
+b6_datTraits <- sample_annot %>%
+  filter( sample %in% rownames(b6_coldata)) %>%
   select(sample, sex, LB_stage, palate_closure, AP_domain, Gest_stage, strain) %>%
   mutate( strain = ifelse( strain == "B6",0,1),
           sex = ifelse(sex == "M", 0, 1),
@@ -3718,6 +3887,50 @@ datTraits <- sample_annot %>%
           )) %>%
   column_to_rownames("sample")
 
+
+# cast_samples <- sample_annot %>%
+#   filter(strain %in% c("CAST")) %>%
+#   separate(sample, sep = "_", into = c("s","e","d","ind","rep"), remove = F) %>%
+#   select(-e,-d) %>%
+#   mutate( rep = ifelse( is.na(rep),1,rep)) %>%
+#   unite( "unique_sampleid" , c(s,ind,AP_domain,Gest_stage),sep ="_", remove = F) # adding an individual column to match the domains to the same animal/embryo and rep column for replicates
+# 
+# cast_coldata <- cast_samples %>%
+#   select(sample,unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, strain, LB_stage) %>%
+#   filter(!is.na(sex) ) %>%
+#   mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
+#   column_to_rownames("sample")
+# 
+# cast_datExpr <- t(expr_mat[all_genes_palate$gene_id,rownames(cast_coldata), drop = F])
+# 
+# cast_datTraits <- sample_annot %>%
+#   filter( sample %in% rownames(cast_coldata)) %>%
+#   select(sample, sex, LB_stage, palate_closure, AP_domain, Gest_stage, strain) %>%
+#   mutate( strain = ifelse( strain == "B6",0,1),
+#           sex = ifelse(sex == "M", 0, 1),
+#           AP_domain = case_when(
+#             AP_domain =="PM"~0,
+#             AP_domain =="MAX"~1,
+#             AP_domain =="POST"~2,
+#           ),
+#           Gest_stage = case_when(
+#             Gest_stage == "E12.5"~0,
+#             Gest_stage == "E13.5"~1,
+#             Gest_stage == "E14.5"~2,
+#             Gest_stage == "E15.5"~3,
+#           ),
+#           palate_closure=case_when(
+#             is.na(palate_closure)~0,
+#             palate_closure =="vertical"~1,
+#             palate_closure =="mid"~2,
+#             palate_closure =="late"~3,
+#             palate_closure =="elevated"~4,
+#             palate_closure =="closed"~5,
+#             palate_closure =="early"~6
+#           )) %>%
+#   column_to_rownames("sample")
+
+
 ```
 
 ```{r choose_sftpower}
@@ -3727,14 +3940,17 @@ datTraits <- sample_annot %>%
 #| cache: true
 
 # Choose a set of soft-thresholding powers
-powers = c(c(1:10), seq(from = 12, to=30, by=2))
+powers = c(c(1:10), seq(from = 12, to=24, by=2))
 # Call the network topology analysis function
-sft = pickSoftThreshold(datExpr, powerVector = powers, verbose = 0, blockSize = 20000)
+sft=pickSoftThreshold(log1p(b6_datExpr),
+                      dataIsExpr = TRUE,
+                      powerVector = powers,
+                      corFnc = cor,
+                      corOptions = list(use = 'p'),
+                      networkType = "signed")
 soft.power <- which(sft$fitIndices$SFT.R.sq >= 0.9)[1]
 
 ```
-
-
 
 ```{r}
 #| warning: false
@@ -3753,7 +3969,7 @@ xlim=c(0,24));
 text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
 labels=powers,cex=cex1,col="red");
 # this line corresponds to using an R^2 cut-off of h
-abline(h=0.90,col="red")
+abline(h=0.9,col="red")
 #abline(h=0.80,col="red")
 # Mean connectivity as a function of the soft-thresholding power
 plot(sft$fitIndices[,1], sft$fitIndices[,5],
@@ -3764,9 +3980,6 @@ text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
 
 ```
 
-
-
-
 ```{r run_wgcna}
 #| warning: false
 #| message: false
@@ -3774,41 +3987,64 @@ text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
 #| results: hide
 
 # # using log1p transformed data following recommendations here: https://horvath.genetics.ucla.edu/html/CoexpressionNetwork/Rpackages/WGCNA/faq.html
-net = blockwiseModules( log1p(datExpr),
-                       power = soft.power,
-                       networkType = "signed",
-                       TOMType = "signed",
-                       minModuleSize = 30,
-                       reassignThreshold = 0,
-                       mergeCutHeight = 0.25,
-                       deepSplit = 4,
-                       numericLabels = TRUE,
-                       pamRespectsDendro = FALSE,
-                       maxBlockSize = 20000,
-                       verbose = 3)
+# net = blockwiseModules( log1p(b6_datExpr),
+#                        power = soft.power,
+#                        #networkType = "signed",
+#                        #TOMType = "signed",
+#                        minModuleSize = 30,
+#                        reassignThreshold = 0,
+#                        mergeCutHeight = 0.25,
+#                        #deepSplit = 4,
+#                        numericLabels = TRUE,
+#                        pamRespectsDendro = FALSE,
+#                        #maxBlockSize = 20000,
+#                        verbose = 3)
 
-# Doing it step by step instead
-# adj.mtx <- adjacency( log1p(datExpr), power=soft.power)
-# TOM = TOMsimilarity(adj.mtx)
-# diss.TOM = 1 - TOM
-# gene.clust <- hclust(as.dist(diss.TOM), method="average")
-# min.module.size <- 15
-# modules <- cutreeDynamic(dendro=gene.clust, distM=diss.TOM, deepSplit=2, pamRespectsDendro=FALSE, minClusterSize=min.module.size)
-# cols <- labels2colors(modules)
-# # merging similar modules
-# me.list <- moduleEigengenes(log1p(datExpr), colors=cols) 
-# me <- me.list$eigengenes
-# # Eigengene dissimilarity
-# me.diss <- 1 - cor(me)
-# h <- hclust(as.dist(me.diss), method="average")
-# # Merge threshold = 1 - correlation threshold
-# merge.thresh <- 0.25
-# merge <- mergeCloseModules(log1p(datExpr), cols, cutHeight=merge.thresh, verbose=0)
-# merged.cols <- merge$colors
-# merged.mes <- merge$newMEs
+# Running step by step because I am getting weird results from the one step function. Not sure why!
+soft.power <- 12
+expression.data <- log1p(b6_datExpr)
+adjacency <- adjacency(expression.data, power = soft.power, type = "signed")
+TOM <- TOMsimilarity(adjacency)
+TOM.dissimilarity <- 1-TOM
+geneTree <- hclust(as.dist(TOM.dissimilarity), method = "average") 
+
+# sizeGrWindow(12,9)
+# plot(geneTree, xlab="", sub="", main = "Gene clustering on TOM-based dissimilarity", 
+# labels = FALSE, hang = 0.04)
+
+Modules <- cutreeDynamic(dendro = geneTree, distM = TOM.dissimilarity, deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = 30)
+table(Modules) #returns a table of the counts of factor levels in an object. In this case how many genes are assigned to each created module. 
+ModuleColors <- labels2colors(Modules) #assigns each module number a color
+table(ModuleColors) #returns the counts for each color (aka the number of genes within each module)
+
+#plots the gene dendrogram with the module colors
+# plotDendroAndColors(geneTree, ModuleColors,"Module",
+# dendroLabels = FALSE, hang = 0.03,
+# addGuide = TRUE, guideHang = 0.05,
+# main = "Gene dendrogram and module colors")
+
+MElist <- moduleEigengenes(expression.data, colors = ModuleColors) 
+MEs <- MElist$eigengenes 
+ME.dissimilarity = 1-cor(MElist$eigengenes, use="complete") #Calculate eigengene dissimilarity
+METree = hclust(as.dist(ME.dissimilarity), method = "average") #Clustering eigengenes 
+# par(mar = c(0,4,2,0)) #seting margin sizes
+# par(cex = 0.6);#scaling the graphic
+# plot(METree)
+# abline(h=.25, col = "red") #a height of .25 corresponds to correlation of .75
+
+merge <- mergeCloseModules(expression.data, ModuleColors, cutHeight = .25)
+# The merged module colors, assigning one color to each module
+mergedColors = merge$colors
+# Eigengenes of the new merged modules
+mergedMEs = merge$newMEs
+
+plotDendroAndColors(geneTree, cbind(ModuleColors, mergedColors), 
+c("Original Module", "Merged Module"),
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05,
+main = "Gene dendrogram and module colors for original and merged modules")
 
 ```
-
 
 ```{r wgcna_modules}
 #| warning: false
@@ -3817,22 +4053,20 @@ net = blockwiseModules( log1p(datExpr),
 #| fig-height: 6
 
 
+# mergedColors = labels2colors(net$colors)
+# plotDendroAndColors(net$dendrograms[[1]], 
+#                     mergedColors[net$blockGenes[[1]]],
+#                     "Module colors",
+#                     dendroLabels = FALSE, 
+#                     hang = 0.03,
+#                     addGuide = TRUE, 
+#                     guideHang = 0.05)
 
-# # Check how the merging changed the clustering of the metabolites
-# plotDendroAndColors(
-#   gene.clust, cbind(cols, merged.cols), c("Dynamic Tree Cut", "Merged Dynamic"), xlab="", sub="",
-#   main="Gene Clustering on TOM-based Similarity",
-#   dendroLabels=FALSE, hang=0.03, addGuide=TRUE, guideHang=0.05
-#   )
-mergedColors = labels2colors(net$colors)
-plotDendroAndColors(net$dendrograms[[1]], 
-                    mergedColors[net$blockGenes[[1]]],
-                    "Module colors",
-                    dendroLabels = FALSE, 
-                    hang = 0.03,
-                    addGuide = TRUE, 
-                    guideHang = 0.05)
-
+plotDendroAndColors(geneTree, cbind(ModuleColors, mergedColors), 
+c("Original Module", "Merged Module"),
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05,
+main = paste0("Gene dendrogram and module colors for original and merged modules (power = ", soft.power,")"))
 
 
 ```
@@ -3864,32 +4098,25 @@ module_genes <- net$colors |>
 
 ```
 
-As recommended by the authors, I am choosing the smallest power such that the scale-free topology correlation reaches 0.9. Then I generate the modules using the `blockwiseModules` function with the following parameters changed from the default values:
+As recommended by the authors, I am choosing the smallest power such that the scale-free topology correlation reaches 0.85.
+Then I generate the modules using the `blockwiseModules` function with the following parameters changed from the default values:
 
 -   maxBlockSize = 20000
 -   power = `r soft.power`
--   networkType = "signed"
--   deepSplit = 4
--   mergeCutHeight = 0.25
--   minModuleSize = 30
 
-
-This leads to `r length(unique(net$colors))` modules in total which are characterized below. Of note, there are 13 modules that show significant correlation to strain, 15 modules that show significant correlation to A-P domain, 23 modules that show significant correlation to LB stage or gestational stage and 18 modules with significant correlation to palate closure state. 
+This leads to `r length(unique(net$colors))` modules in total which are characterized below.
+Of note, there are 13 modules that show significant correlation to strain, 15 modules that show significant correlation to A-P domain, 23 modules that show significant correlation to LB stage or gestational stage and 18 modules with significant correlation to palate closure state.
 
 Still to add:
 
--   Anova with module summary eigengenes.  
--   Deseq2 results for genes within the modules.  
--   Looking at gene connectivity.   
-
+-   Anova with module summary eigengenes.\
+-   Deseq2 results for genes within the modules.\
+-   Looking at gene connectivity.
 
 ::: {#WGCNA_results .panel-tabset .nav-pills}
-
-
 ### Module genes
 
 ::: {#WGCNA_module_genes .panel-tabset .nav-pills}
-
 ```{r module_gene_expr_plots}
 #| warning: false
 #| message: false
@@ -3925,13 +4152,11 @@ for( mod_col in unique(module_genes$moduleColors)){
 }        
          
 ```
-
 :::
 
-### Module genes that show differential expression 
+### Module genes that show differential expression
 
 #### Between CAST and B6
-
 
 ```{r}
 
@@ -3992,7 +4217,6 @@ module_genes |>
 
 ```
 
-
 #### In B6 over developmental time
 
 ```{r}
@@ -4011,11 +4235,9 @@ module_genes |>
 
 ```
 
-
 ### Module eigengenes
 
 ::: {#WGCNA_module_eigengenes .panel-tabset .nav-pills}
-
 ```{r module_eigengene_plots}
 #| warning: false
 #| message: false
@@ -4124,9 +4346,7 @@ for(mod in names(module_colors)){
 # ggsave(a, filename = here("_figures","test.pdf"), width = 8, height = 6)
 
 ```
-
 :::
-
 
 ### Module-trait correlations
 
@@ -4165,7 +4385,6 @@ moduleTraitCor[,c("sex","strain","AP_domain","Gest_stage","LB_stage","palate_clo
 
 ```
 
-
 ### ORA results for modules
 
 ```{r wgcna_module_ora}
@@ -4196,7 +4415,7 @@ do.call( rbind, ora_results) %>%
   select(-meta) %>%
   unnest("result") %>%
   select(module,  term_name, source, FDR = p_value, term_size, intersection_size,intersection) %>%
-    filter( FDR <0.01, term_size < 500) %>%
+    filter( FDR <0.05, term_size < 500) %>%
   mutate_if( is.numeric, formatC, digits =2) %>%
   create_dt()
 
