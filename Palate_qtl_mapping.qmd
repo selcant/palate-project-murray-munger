@@ -6,6 +6,14 @@ format:
   html:
       embed-resources: true
       standalone: true
+include-in-header:
+  - text: |
+      <style>
+      .panel-tabset > .nav-tabs,
+      .panel-tabset > .tab-content {
+        border: none;
+      }
+      </style>
 code-fold: true
 toc: true
 editor: 
@@ -2887,6 +2895,85 @@ chr2_pc1_med |>
   create_dt()
 
 ```
+
+Association mapping:
+```{r chr2_pc1_as}
+#| warning: false
+#| message: false
+pmap_Mbp <- lapply( pmap, function(x){x/1e06})
+attr(genoprobs, "is_x_chr") <- NULL
+
+chr2_pc1_as <- scan1snps(genoprobs = genoprobs,
+                     map = pmap_Mbp,
+                     pheno = chr2_pc1_rankz,
+                     kinship = kinship_loco[[chr2_pc1_peak$chr]],
+                     addcovar = covar,
+                     chr = as.character(chr2_pc1_peak$chr),
+                     query_func = query_variants,
+                     start = chr2_pc1_peak$pos/1e06 - 5,
+                     end = chr2_pc1_peak$pos/1e06 + 5,
+                     keep_all_snps = T
+                     )
+genes <- query_genes( chr2_pc1_peak$chr,
+                      chr2_pc1_peak$pos/1e06 - 5,
+                      chr2_pc1_peak$pos/1e06 + 5) %>%
+  distinct()
+
+```
+
+```{r chr2_pc1_as_plot}
+#| warning: false
+#| message: false
+#| fig-width: 16
+#| fig-height: 8
+
+par(mar=c(4.1, 4.1,2, 1))
+
+plot(chr2_pc1_as$lod,
+     chr2_pc1_as$snpinfo,
+     drop_hilit = 1,
+     genes = genes,
+     xlim=c(110,114))
+
+
+```
+
+SNPs with high LODs:
+
+```{r chr2_pc1_as_table}
+#| warning: false
+#| message: false
+chr2_pc1_as$lod |> 
+  as.data.frame( ) |> 
+  rownames_to_column("snp_id") |> 
+  left_join( chr2_pc1_as$snpinfo) |> 
+  filter( PC1 > 6) |> 
+  select( LOD = PC1,
+          snp_id ,
+          pos ,
+          alleles, 
+          consequence ,
+          gene_id = ensembl_gene ,
+          `129` = `129S1_SvImJ`,
+          `AJ` = A_J,
+          `CAST` = CAST_EiJ,
+          `NZO` = NZO_HlLtJ,
+          `PWK` = PWK_PhJ,
+          `B6` = C57BL_6J,
+          `NOD` = NOD_ShiLtJ,
+          `WSB` = WSB_EiJ
+          )  |> 
+  # filter( `129`==`B6`, B6==NZO & 
+  #         NOD==AJ, AJ==WSB , CAST == NOD, NOD == PWK) |> 
+  left_join( all_genes_palate |> 
+               select(gene_id, symbol) ,
+             by = c("gene_id")) |> 
+  mutate_if(is.numeric, round, 2) |> 
+  create_dt()
+
+
+```
+
 :::
 
 
