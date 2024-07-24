@@ -919,6 +919,17 @@
       ],
       "Hash": "4f57884290cc75ab22f4af9e9d4ca862"
     },
+    "admisc": {
+      "Package": "admisc",
+      "Version": "0.30",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "methods"
+      ],
+      "Hash": "607a9aa03ba8cce83f8359a65b2bf2b5"
+    },
     "annotate": {
       "Package": "annotate",
       "Version": "1.76.0",
@@ -2473,6 +2484,23 @@
       ],
       "Hash": "680ad542fbcf801442c83a6ac5a2126c"
     },
+    "maSigPro": {
+      "Package": "maSigPro",
+      "Version": "1.70.0",
+      "Source": "Repository",
+      "Repository": "BioCsoft",
+      "Requirements": [
+        "Biobase",
+        "MASS",
+        "R",
+        "grDevices",
+        "graphics",
+        "mclust",
+        "stats",
+        "venn"
+      ],
+      "Hash": "a8b327595edd9e0014238584c2402bb2"
+    },
     "magrittr": {
       "Package": "magrittr",
       "Version": "2.0.3",
@@ -2492,6 +2520,20 @@
         "R"
       ],
       "Hash": "36ad89a805c436c5316c22490079da67"
+    },
+    "mclust": {
+      "Package": "mclust",
+      "Version": "5.4.10",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "grDevices",
+        "graphics",
+        "stats",
+        "utils"
+      ],
+      "Hash": "540bcb053858d79a57325129f86c0650"
     },
     "memoise": {
       "Package": "memoise",
@@ -2801,6 +2843,17 @@
         "stats"
       ],
       "Hash": "ceb5c2a59ba33d42d051285a3e8a5118"
+    },
+    "ppcor": {
+      "Package": "ppcor",
+      "Version": "1.1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "MASS",
+        "R"
+      ],
+      "Hash": "0b26c0c84f22515249dd7915f4214d32"
     },
     "praise": {
       "Package": "praise",
@@ -3708,6 +3761,17 @@
         "rlang"
       ],
       "Hash": "c03fa420630029418f7e6da3667aac4a"
+    },
+    "venn": {
+      "Package": "venn",
+      "Version": "1.11",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "admisc"
+      ],
+      "Hash": "d6f35945e4115a9dde9ca2764bff0b4a"
     },
     "viridis": {
       "Package": "viridis",

@@ -8,3 +8,5 @@
 _data
 renv
 _figures
+*.png
+*.RData
