@@ -858,6 +858,26 @@ g.pc5$result <- g.pc5$result %>% filter(term_size < 660)
 
 ```
 
+
+```{r pc1_2_drivers_table}
+
+pc1_drivers %>% 
+  mutate(PC = "PC1") |> 
+  dplyr::rename( "value" = "PC1") |> 
+  rbind(
+    pc2_drivers |> 
+      mutate(PC = "PC2") |> 
+      dplyr::rename("value" = "PC2")
+  ) |> 
+  left_join(
+    all_genes_palate %>% 
+      select(symbol, chromosome)
+  ) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  create_dt()
+
+```
+
 ```{r ora_pca_table}
 
 g.pc1$result %>% 
@@ -2312,6 +2332,7 @@ eqtl_map <- ggplot()+
 eqtl_counts <- bands.rna %>% 
   as_tibble() %>% 
   select( chrom = seqnames, start, end, distant_rna) %>% 
+  mutate( chrom = factor(chrom, levels = c(seq(1:19),"X"))) |> 
   mutate( hotspot_midpoint = (start+end)/2 ) %>% 
   # adding all the marker locations to match axes
   rbind( (map_dat2 %>% 
@@ -2746,13 +2767,13 @@ chr2_pc1_rankz <- apply(chr2_pca$x[,"PC1", drop=FALSE],2, rankZ)
 chr2_pc1_qtl <- scan1(pheno = chr2_pc1_rankz,
                       genoprobs = genoprobs,
                       kinship = kinship_loco,
-                      addcovar = covar
+                      addcovar = covar[,"sex",drop=F]
 )
                 
 chr2_pc1_qtl_eff <- scan1blup(pheno = chr2_pc1_rankz,
                       genoprobs = genoprobs[,"2"],
                       kinship = kinship_loco[["2"]],
-                      addcovar = covar
+                      addcovar = covar[,"sex",drop=F]
 )
 
 chr2_pc1_peak <- find_peaks(chr2_pc1_qtl, threshold = 8, pmap) |> filter(chr ==2)
@@ -2768,7 +2789,7 @@ chr2_pc1_med <- mediation.scan(
   annotation = all_genes_palate |> 
     mutate( chromosome = ifelse( chromosome =="MT","M",chromosome)) |> 
     mutate(chr=chromosome,pos=midpoint),
-  covar =  covar,
+  covar =  covar[,"sex",drop=F],
   qtl.geno = geno, 
   verbose=FALSE
   ) 
@@ -2907,7 +2928,7 @@ chr2_pc1_as <- scan1snps(genoprobs = genoprobs,
                      map = pmap_Mbp,
                      pheno = chr2_pc1_rankz,
                      kinship = kinship_loco[[chr2_pc1_peak$chr]],
-                     addcovar = covar,
+                     addcovar = covar[,"sex",drop=F],
                      chr = as.character(chr2_pc1_peak$chr),
                      query_func = query_variants,
                      start = chr2_pc1_peak$pos/1e06 - 5,
@@ -3287,13 +3308,13 @@ chr13_pc1_rankz <- apply(chr13_pca$x[,"PC1", drop=FALSE],2, rankZ)
 chr13_pc1_qtl <- scan1(pheno = chr13_pc1_rankz,
                       genoprobs = genoprobs,
                       kinship = kinship_loco,
-                      addcovar = covar
+                      addcovar = covar[,"sex",drop=F]
 )
                 
 chr13_pc1_qtl_eff <- scan1blup(pheno = chr13_pc1_rankz,
                       genoprobs = genoprobs[,"13"],
                       kinship = kinship_loco[["13"]],
-                      addcovar = covar
+                      addcovar = covar[,"sex",drop=F]
 )
 
 chr13_pc1_peak <- find_peaks(chr13_pc1_qtl, threshold = 8, pmap) |> filter(chr ==13)
@@ -3309,7 +3330,7 @@ chr13_pc1_med <- mediation.scan(
   annotation = all_genes_palate |> 
     mutate( chromosome = ifelse( chromosome =="MT","M",chromosome)) |> 
     mutate(chr=chromosome,pos=midpoint),
-  covar =  covar,
+  covar =  covar[,"sex",drop=F],
   qtl.geno = geno, 
   verbose=FALSE
   ) 
@@ -3352,6 +3373,7 @@ plot_coefCC(chr13_pc1_qtl_eff, scan1_output =chr13_pc1_qtl, map = pmap , xlim= c
 abline( v =chr13_pc1_peak$pos, col = "red", lwd = 2, lty = 2)
 abline( v = filter( bands.rna,chr==13)$start[1], col = "blue", lwd = 2)
 abline( v =filter( bands.rna,chr==13)$end[1], col = "blue", lwd = 2)
+#abline( v =pc1_peak_chr13$pos, col = "black", lwd = 2, lty = 2)
 ```
 
 ```{r chr13_pc1_lod_plot}
@@ -3730,7 +3752,7 @@ chr13_pc1_as <- scan1snps(genoprobs = genoprobs,
                      map = pmap_Mbp,
                      pheno = chr13_pc1_rankz,
                      kinship = kinship_loco[[chr13_pc1_peak$chr]],
-                     addcovar = covar,
+                     addcovar = covar[,"sex",drop=F],
                      chr = as.character(chr13_pc1_peak$chr),
                      query_func = query_variants,
                      start = chr13_pc1_peak$pos/1e06 - 5,
@@ -4257,7 +4279,7 @@ lb_stage_peak13_as <- scan1snps(genoprobs = genoprobs,
                      map = pmap_Mbp,
                      pheno = lb_pheno_rankZ,
                      kinship = kinship_loco[[peak_chr13$chr]],
-                     addcovar = covar,
+                     addcovar = covar[,"sex",drop=F],
                      chr = as.character(peak_chr13$chr),
                      query_func = query_variants,
                      start = peak_chr13$pos/1e06 - 5,
@@ -4714,4 +4736,365 @@ write.xlsx(list_of_datasets, file = here("_data","DO_palate_eQTL_hotspots_090620
 
 :::
 
+## Genetic mapping with PC1
+
+```{r}
+
+pc1_rankz <- apply(pca$x[,"PC1", drop=FALSE],2, rankZ)
+
+pc1_qtl <- scan1(pheno = pc1_rankz,
+                      genoprobs = genoprobs,
+                      kinship = kinship_loco,
+                      addcovar = covar[,"sex",drop=F]
+)
+              
+
+```
+
+```{r pc1_perm}
+#| warning: false
+#| message: false
+#| cache: true
+
+pc1_perm <- scan1perm(genoprobs = genoprobs, 
+                     pheno = pc1_rankz,
+                     addcovar = covar[,"sex",drop = FALSE], 
+                     n_perm = 1000
+                  )
+
+```
+
+::: panel-tabset
+### LOD plot
+
+```{r pc1_lod_plot}
+#| warning: false
+#| message: false
+#| fig-width: 14
+#| fig-height: 4
+
+thres <- summary(pc1_perm, alpha = c(0.05, 0.1)) %>% 
+  as_tibble( rownames = "alpha")
+
+pc1_peaks <- find_peaks(pc1_qtl,
+                        threshold = 6,#thres$PC1[2], 
+                        pmap)
+
+chroms <-names(chrom_lens)
+chrom_segments <- tibble( start = 0, 
+                          end = chrom_lens,
+                          chr = chroms,
+                          type = as.character(rep(c(0,1),10)))
+chrom_segments$start <- chrom_segments$start+ chrom_lens_offset[chrom_segments$chr]
+chrom_segments$end <- chrom_segments$end+ chrom_lens_offset[chrom_segments$chr]
+
+pc1_scan_df <- pc1_qtl %>% 
+  as_tibble( rownames = "marker") %>% 
+  left_join(map_dat2) 
+pc1_scan_df$pos_bp_offset <- pc1_scan_df$pos_bp+chrom_lens_offset[pc1_scan_df$chr]
+
+ggplot()+
+  geom_rect( data = chrom_segments, 
+             aes( xmin =start, 
+                  xmax = end, 
+                  ymin = 0, 
+                  ymax = 10, 
+                  fill = type), 
+             inherit.aes = FALSE, alpha = 0.2, show.legend = FALSE)+
+  scale_fill_manual(values = c("dark gray","white"))+
+  geom_line(data = pc1_scan_df ,
+            aes( x = pos_bp_offset, y = PC1),
+            size = 1, 
+            col =strain_colors[[3]],
+             inherit.aes = FALSE )+
+  theme_pubclean(base_size = 16)+
+  scale_x_discrete( name = "Chr",
+                    limits = chrom_lens_midpt, 
+                    labels = names(chrom_lens), 
+                    expand = expansion( mult = 0.02))+
+  ylab("LOD")+
+  ylim(0,8)
+  # geom_hline( yintercept = thres$PC1[1], col = "red", lty = 2)+
+  # geom_hline( yintercept = thres$PC1[2], col = "red", lty = 3)
+
+```
+
+### QTL on chromosome 13
+
+```{r pc1_peak_chr13}
+
+pc1_peak_chr13 <- find_peaks( pc1_qtl, threshold = 6, pmap) |> filter(chr == 13)
+
+pc1_qtl_eff <- scan1blup(pheno = pc1_rankz,
+                      genoprobs = genoprobs[,"13"],
+                      kinship = kinship_loco[["13"]],
+                  addcovar = covar[,"sex",drop = FALSE],
+)
+
+marker   <- map_dat2 %>% filter(pos_bp == pc1_peak_chr13$pos)
+geno     <- pull_genoprobpos(genoprobs,marker$marker)
+pc1_peak_chr13_eff_sum <- (pc1_qtl_eff[marker$marker,,drop=F])
+
+
+
+
+pc1_peak_chr13_lod_plot <- pc1_scan_df %>% 
+  filter( chr == 13) %>% 
+  ggplot()+
+  aes( 
+    x= pos_bp/1e06,
+    y = PC1
+  )+
+  geom_rect(  xmin =filter( bands.rna,chr==13)$start[1]/1e06, 
+              xmax = filter( bands.rna,chr==13)$end[1]/1e06, 
+              ymin = 0, 
+              ymax = 25, 
+              fill = "gray", 
+              inherit.aes = FALSE, 
+              alpha = 0.1, 
+              show.legend = FALSE)+
+  geom_line( size = 1.5, col =strain_colors[[3]],)+
+  theme_pubclean( base_size = 18)+
+  xlab(paste0("Chr 13 location (Mbp)"))+
+  ylab( "LOD score")+
+  annotate( "text", x= 6+filter( bands.rna,chr==13)$end[1]/1e06, y = 6, label ="eQTL \n Hotspot", size =5)+
+  ylim(0,8)+
+  xlim(60,120)
+  
+pc1_peak_chr13_eff_plot <- pc1_peak_chr13_eff_sum[,LETTERS[1:8]] %>% 
+  as_tibble(rownames = "effect") %>% 
+  mutate( type = "PC1") %>% 
+  mutate( effect = case_when( effect == "A" ~ "AJ",
+                              effect == "B" ~ "B6",
+                              effect == "C" ~ "129",
+                              effect == "D" ~ "NOD",
+                              effect == "E" ~ "NZO",
+                              effect == "F" ~ "CAST",
+                              effect == "G" ~ "PWK",
+                              effect == "H" ~ "WSB")) %>% 
+  ggplot()+
+  aes( x = effect,
+       y = value,
+       group = type)+
+  geom_point(size = 4, show.legend = FALSE, col =strain_colors[[3]],)+
+  geom_line(show.legend = T, size = 1.2, col =strain_colors[[3]],)+
+  theme_pubclean(base_size = 18)+
+  ylab("Haplotype effects")+
+  xlab("")+
+  ylim(-2,1.1)+
+  geom_hline( yintercept = 0)+
+  theme(axis.line.x = element_blank(),
+        axis.title = element_text(size = 18))+
+  coord_flip( clip ="off")+
+  theme(legend.position = "none")
+
+```
+
+```{r pc1_peak13_plot}
+#| fig-width: 12
+#| fig-height: 5
+#| message: false
+#| warning: false
+
+
+pc1_peak13_plot<- ggarrange(pc1_peak_chr13_lod_plot, pc1_peak_chr13_eff_plot, widths = c(1, 0.5))
+pc1_peak13_plot
+
+```
+
+```{r}
+#| fig-width: 12
+#| fig-height: 7
+
+
+plot_coefCC( pc1_qtl_eff, pmap, scan1_output = pc1_qtl, xlim= c(1e08, 1.1e08), main = "PC1 QTL of the full data")
+abline( v =pc1_peak_chr13$pos, col = "black", lwd = 2, lty = 2)
+abline( v =chr13_pc1_peak$pos, col = "red", lwd = 2, lty = 2)
+abline( v = filter( bands.rna,chr==13)$start[1], col = "blue", lwd = 2)
+abline( v =filter( bands.rna,chr==13)$end[1], col = "blue", lwd = 2)
+
+
+
+
+```
+
+Association mapping:
+```{r pc1_chr13_peak_as}
+#| warning: false
+#| message: false
+pmap_Mbp <- lapply( pmap, function(x){x/1e06})
+attr(genoprobs, "is_x_chr") <- NULL
+
+pc1_chr13_peak_as <- scan1snps(genoprobs = genoprobs,
+                     map = pmap_Mbp,
+                     pheno = pc1_rankz,
+                     kinship = kinship_loco[[pc1_peak_chr13$chr]],
+                     addcovar = covar[,"sex",drop=F],
+                     chr = as.character(pc1_peak_chr13$chr),
+                     query_func = query_variants,
+                     start = pc1_peak_chr13$pos/1e06 - 5,
+                     end = pc1_peak_chr13$pos/1e06 + 5,
+                     keep_all_snps = T
+                     )
+genes <- query_genes( pc1_peak_chr13$chr,
+                      pc1_peak_chr13$pos/1e06 - 5,
+                      pc1_peak_chr13$pos/1e06 + 5) %>%
+  distinct()
+
+```
+
+
+```{r pc1_chr13_peak_as_plot}
+#| warning: false
+#| message: false
+#| fig-width: 16
+#| fig-height: 8
+
+par(mar=c(4.1, 4.1,2, 1))
+
+plot(pc1_chr13_peak_as$lod,
+     pc1_chr13_peak_as$snpinfo,
+     drop_hilit = 1,
+     genes = genes,
+     xlim=c(100,108))
+
+
+```
+
+SNPs specific to NZO are all in *Mast4*. According to MGI, mice homozygous for an ENU-induced allele exhibit malocclusion.
+
+```{r pc1_chr13_peak_as_table}
+#| warning: false
+#| message: false
+pc1_chr13_peak_as$lod |> 
+  as.data.frame( ) |> 
+  rownames_to_column("snp_id") |> 
+  left_join( pc1_chr13_peak_as$snpinfo) |> 
+  filter( PC1 > 4) |> 
+  select( LOD = PC1,
+          snp_id ,
+          pos ,
+          alleles, 
+          consequence ,
+          gene_id = ensembl_gene ,
+          `129` = `129S1_SvImJ`,
+          `AJ` = A_J,
+          `CAST` = CAST_EiJ,
+          `NZO` = NZO_HlLtJ,
+          `PWK` = PWK_PhJ,
+          `B6` = C57BL_6J,
+          `NOD` = NOD_ShiLtJ,
+          `WSB` = WSB_EiJ
+          )  |> 
+  filter( `129`==`B6`, B6==NOD , NOD==AJ, AJ==WSB &
+            CAST == WSB, WSB == PWK) |>
+  left_join( all_genes_palate |> 
+               select(gene_id, symbol) ,
+             by = c("gene_id")) |> 
+  mutate_if(is.numeric, round, 2) |> 
+  create_dt()
+
+
+```
+
+### Mediation results for Chr 13 peak
+
+```{r pc1_chr13_mediation}
+#| warning: false
+#| message: false
+#| results: hide
+
+marker   <- map_dat2 %>% filter(pos_bp == pc1_peak_chr13$pos)
+geno     <- pull_genoprobpos(genoprobs,marker$marker)
+
+pc1_med <- mediation.scan(
+  target= pc1_rankz,
+  mediator = exprZ,
+  annotation = all_genes_palate |> 
+    mutate( chromosome = ifelse( chromosome =="MT","M",chromosome)) |> 
+    mutate(chr=chromosome,pos=midpoint),
+  covar =  covar[,"sex",drop=F],
+  qtl.geno = geno, 
+  verbose=FALSE
+  ) 
+
+```
+
+```{r pc1_chr13_meds_table}
+#| warning: false
+#| message: false
+pc1_med %>% 
+  mutate( qtl_pos = pc1_peak_chr13$pos, qtl_chr = pc1_peak_chr13$chr, qtl_lod = pc1_peak_chr13$lod) %>% 
+  mutate( scaled_LOD = scale(LOD)) %>% 
+  filter( abs(qtl_pos-midpoint) <= 10e6 &   # filter within 10Mb
+            qtl_chr == chr
+  ) %>% 
+  arrange( LOD) %>% 
+  head(5) %>% 
+  arrange(midpoint) %>% 
+  select( symbol, chr, qtl_lod, mediation_lod = LOD, qtl_pos, pos) %>% 
+  mutate_if( is.numeric, round, 2) %>% 
+  create_dt()
+  
+```
+
+### Closer look at a subset of PC1 drivers
+
+There are `r nrow(pc1_drivers)` PC1 driver genes where `r length(intersect(pc1_drivers$id, chr13.eQTL1$gene_id))` also are targets of the Chr 13 eQTL hotspot. What are those genes?
+
+
+```{r}
+
+chr13.eQTL1 |> 
+  filter( gene_id %in% pc1_drivers$id) |> 
+  select(symbol, peak_chr, lod, peak_pos = interp_bp_peak) |>
+  mutate_if(is.numeric, round, 2) |> 
+  create_dt()
+
+```
+How does the eQTL allele effects look like?
+
+```{r}
+#|warning: false
+#|message: false
+#|fig-width: 10
+#|fig-height: 8
+
+pc1_drivers_overlap_chr13 <-intersect(pc1_drivers$id, chr13.eQTL1$gene_id)
+
+
+pc1_drivers_overlap_chr13_mat <- chr13.eQTL1 %>%
+  filter( gene_id %in% pc1_drivers_overlap_chr13) |>
+  filter(!is.na(A)) %>%
+  select(LETTERS[1:8],"symbol") %>%
+  distinct() %>%
+  column_to_rownames("symbol") %>%
+  as.matrix() %>%
+  t()
+
+annotation_row <- data.frame(strain=c("AJ","B6","129","NOD","NZO","CAST","PWK","WSB"))
+rownames(annotation_row) <- rownames(pc1_drivers_overlap_chr13_mat)
+
+annot.colors <- list(strain = founder_colors)
+
+# svg(filename = here("figures","chr1_hotspot_allele_eff.svg"),width = 800, height = 600)
+pheatmap(pc1_drivers_overlap_chr13_mat,
+         cluster_rows=T,
+         show_rownames=FALSE,
+         cluster_cols=T,
+         show_colnames = FALSE,
+         clustering_method = "complete",
+         scale="none",
+         clustering_distance_cols="correlation",
+         clustering_distance_rows="correlation",
+         annotation_row = annotation_row,
+         annotation_colors = annot.colors,
+         cutree_rows = 2)
+
+
+```
+
+
+
+:::
 ::: 
