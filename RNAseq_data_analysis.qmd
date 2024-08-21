@@ -24,29 +24,30 @@ This file walks through the details of the RNAseq processing and performs the pr
 
 -   Some samples were re-processed and re-sequenced due to suspected contamination at the library prep stage together with other anchoring samples to remove batch effects.
 
-## Nextflow pipeline using STAR + Salmon
+## Nextflow pipeline using STAR 
 
-The data was initially processed using the NGS nextflow pipeline where STAR is used for read alignment and SALMON is used for quantification of gene expression.
+Gene expression was quantified using STAR and RSEM pipeline developed by JAX CS. The reads were aligned to the GRCm39 assembly. 
 
--   Details of the pipeline can be found at: https://github.com/TheJacksonLaboratory/cs-nf-pipelines/wiki/RNA-Pipeline-ReadMe.
+-   Details of the pipeline can be found at: https://github.com/TheJacksonLaboratory/cs-nf-pipelines/wiki/RNA-Pipeline-ReadMe. I ran all the B6, CAST and DO samples (script: `Run_STAR_DO_palate_data.sh`).
 
--   The output files are at `/projects/murray-lab/welshi/nextflow/DO_DIF/batch1_RNAseq/nf_output/star_salmon`.
+-   The output files are at `/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/STAR/GRCm39/`.
 
--   **Next: The second set of samples will be run with the same pipeline to be compared to the quantities we get from EMASE.**
+-   The data was collated using `collate_STAR.R` script.
+
 
 ## Quantifying gene expression using EMASE and obtaining DO genotypes using GBRS
 
 In order to get strain specific alignment and quantification, as well as obtaining genotypes for the DO samples we utilized EMASE/GBRS.
 
--   I used bowtie followed by EMASE to align B6 and CAST background samples to strain specific genomes and quantify gene expression counts (script: `run_ONE_sample_trim_pseudo_bowtie_emase.slurm`).
+-   GBRS/EMASE uses bowtie to align reads to the genome which doesn't work well with 150bp reads, therefore I first trimmed the reads (script: `run_ONE_sample_trimgalore.sh`).
 
--   The DO samples were aligned to the 8-way transcriptome using bowtie followed by GBRS for gene expression quantification, genome reconstruction and interpolation onto the 69k grid for genetic mapping (script: `run_ONE_DO_sample_trim_pseudo_bowtie_gbrs.slurm`).
+-   Gene expression for B6 and CAST samples were both quantified using the EMASE pipeline developed by JAX CS, aligning to the new genome assembly (GRCm39) (scripts: `Run_prep_emase_B6.sh`, `Run_prep_emase_CAST.sh` and `Run_emase_B6_palate_data.sh`, `Run_emase_CAST_palate_data.sh`).
 
--   An important drawback of this method is that bowtie can not handle long reads (\>75bp) therefore the 150bp RNAseq reads are trimmed to 75bp final length using trimgalore before alignment.
+-   The DO samples were aligned to the 8-way transcriptome using bowtie followed by GBRS for gene expression quantification, genome reconstruction and interpolation using the JAX CS pipeline, aligning to the new genome assembly (script: `Run_GBRS_DO_palate_data.sh`).
 
--   The output files from EMASE/GBRS can be found at `/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/gbrs_emase/`.
+-   The output files from EMASE/GBRS can be found at `/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/EMASE/` and `/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/GBRS/`.
 
--   Both gene expression counts and DO genotypes are collated and processed (scripts: `collate_emase_gbrs.R` and `gbrs_genoprobs_to_RData.R`).
+-   Both gene expression counts and DO genotypes are collated and processed (scripts: `collate_emase_gbrs_v4.R` and `gbrs_genoprobs_to_RData_v2.R`).
 
 
 ## Contaminated samples
@@ -130,23 +131,19 @@ sample_details <- read_csv("/projects/munger-lab/projects/palate-project-murray-
 ```
 
 
-## Counts from STAR+SALMON
+## Counts from STAR
 
 ```{r load_data_star}
 #| message: false
 #| warning: false
 
-# salmon_expr <- readRDS("/projects/murray-lab/welshi/nextflow/DO_DIF/batch1_RNAseq/nf_output/star_salmon/salmon.merged.gene_counts.rds")
+load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_STAR_counts.RData")
 
-# load what was used in DESEQ2
-load("/projects/murray-lab/welshi/nextflow/DO_DIF/batch1_RNAseq/nf_output/star_salmon/deseq2_qc/deseq2.dds.RData") #dds
+all.genes_v105 <- read_tsv(here("_data","ENSMUSGid_to_symbol_v105.txt"),
+                           col_names = c("id","symbol","gene_biotype","chromosome","start","end"), skip =1) |>  
+  mutate(midpoint = (start+end)/2) |> 
+  filter( gene_id %in% rownames(raw_expr_mat))
 
-#  This is the data used in plotting multiQC: 
-# data <- readRDS("/projects/murray-lab/welshi/nextflow/DO_DIF/batch1_RNAseq/nf_output/star_salmon/salmon.merged.gene_counts_length_scaled.rds")
-# rld <- DESeq2::rlog(dds)
-# SummarizedExperiment::assay(dds, "rld") <- rld
-
-# Gene annotation
 
 
 ```
@@ -155,48 +152,95 @@ load("/projects/murray-lab/welshi/nextflow/DO_DIF/batch1_RNAseq/nf_output/star_s
 
 Sample similarity to check for contaminated samples.
 
-```{r deseq2_heatmap_prep_ss}
+```{r sample_corr_heatmap_prep_star}
 #| output: false
 
-sample_dist_ss <- dist(t(SummarizedExperiment::assay(dds,"vst"))) # 1- counts, 2-vst
-
 sample_annot <- sample_details %>%
-  filter( sample %in% ( dds$sample) ) %>% 
   separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>%
   select(sample, AP_domain,Gest_stage, strain, Harvest_date) %>%
   column_to_rownames("sample")
 
+dds_star <- DESeq2::DESeqDataSetFromMatrix( round(raw_expr_mat), design = ~1, colData = (sample_details %>%
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>%
+  select(sample, AP_domain,Gest_stage, strain, Harvest_date))
+  )
 
+vst_star <- DESeq2::varianceStabilizingTransformation(dds_star)
+SummarizedExperiment::assay(dds_star,"vst") <- SummarizedExperiment::assay(vst_star)
 
-ss_phtmp <- pheatmap(mat = as.matrix(sample_dist_ss),
-         annotation_col = sample_annot[,"strain",drop=F],
-         clustering_distance_rows = sample_dist_ss,
-         clustering_distance_cols = sample_dist_ss,
-         color = colorRampPalette((RColorBrewer::brewer.pal(n = 9, name =
+sample_dist_vst <- dist( t(SummarizedExperiment::assay(dds_star,"vst")))
+
+sample_dist <- dist(t(log1p(raw_expr_mat)))
+
+only_b6_cast <- sample_annot %>% filter(strain %in% c("B6","CAST"))
+
+phtmp <- pheatmap(mat = as.matrix(sample_dist),
+         annotation_row = sample_annot["strain",drop =F],
+         #annotation_col = sample_annot[,"strain",drop =F],
+         cluster_rows = T,
+         cluster_cols = T,
+         clustering_distance_rows = sample_dist,
+         clustering_distance_cols = sample_dist,
+         scale ="none",
+         color = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name =
   "RdYlBu")))(255),
-  legend_breaks = c(0,50,100,150,200),
+         fontsize = 4)
+
+phtmp_vst <- pheatmap(mat = as.matrix(sample_dist_vst),
+         annotation_row = sample_annot[,"strain",drop =F],
+         #annotation_col = sample_annot[,"strain",drop =F],
+         cluster_rows = T,
+         cluster_cols = T,
+         clustering_distance_rows = sample_dist_vst,
+         clustering_distance_cols = sample_dist_vst,
+         scale ="none",
+         color = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name =
+  "RdYlBu")))(255),
          fontsize = 4)
 
 ```
 
-```{r deseq2_heatmap_ss}
+```{r sample_corr_heatmap_star}
 #| fig-width: 20
 #| fig-height: 20
-heatmaply(x = as.matrix(sample_dist_ss),
+
+heatmaply(x = as.matrix(sample_dist),
           dist_method = "euclidean",
           scale = "none",
-          Rowv = ss_phtmp[[1]],
-          Colv = ss_phtmp[[2]],
+          Rowv = phtmp[[1]],
+          Colv = phtmp[[2]],
           revC = T,
           show_dendrogram = FALSE,
           plot_method = "plotly",
-          # row_side_colors = sample_annot[(ss_phtmp[[2]]$labels[ss_phtmp[[2]]$order]),"strain",drop=F], # I can't seem to get this to work! 
           fontsize_col = 8,
           fontsize_row = 8,
           colors = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name =
-  "RdYlBu")))(100),
-          limits = c(0,200), 
-          main ="STAR+SALMON normalized values (DESeq2::vst)",
+  "RdYlBu")))(255),
+          #limits=c(0,200),
+          main ="STAR raw values",
+            )
+
+```
+
+
+```{r sample_corr_heatmap_vst_star}
+#| fig-width: 20
+#| fig-height: 20
+
+heatmaply(x = as.matrix(sample_dist_vst),
+          dist_method = "euclidean",
+          scale = "none",
+          Rowv = phtmp_vst[[1]],
+          Colv = phtmp_vst[[2]],
+          revC = T,
+          show_dendrogram = FALSE,
+          plot_method = "plotly",
+          fontsize_col = 8,
+          fontsize_row = 8,
+          colors = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name =
+  "RdYlBu")))(255),
+          limits = c(0,200),
+          main ="STAR normalized values (DESeq2::vst)",
             )
 
 ```
@@ -217,7 +261,7 @@ heatmaply(x = as.matrix(sample_dist_ss),
 # select <- order(rv, decreasing=TRUE)[seq_len(min(ntop, length(rv)))]
 
 # perform a PCA on the data in assay(x) for the selected genes
-pca <- prcomp( t(SummarizedExperiment::assay(dds,"vst")[]), center = T, scale. = F)
+pca <- prcomp( t(SummarizedExperiment::assay(dds_star,"vst")[]), center = T, scale. = F)
 
 # running with DESeq2 transformed values
 #pca <- prcomp(t(SummarizedExperiment::assay(rlog_expr_mat)), center = T, scale. = T)
@@ -230,7 +274,7 @@ pca <- prcomp( t(SummarizedExperiment::assay(dds,"vst")[]), center = T, scale. =
 
 
 sample_annot <- sample_details %>%
-  filter( sample %in% colnames( SummarizedExperiment::assay(dds,2)) )%>% 
+  filter( sample %in% colnames( SummarizedExperiment::assay(dds_star,2)) )%>% 
   separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% 
   select(sample, AP_domain,Gest_stage, strain,batch) 
 
@@ -277,7 +321,7 @@ tibble(var =  var_explained[1:10]* 100, PC = paste0("PC", seq(1:10))) %>%
   xlab("Principal Component") +
   ylab("% Variation explained") +
   theme_pubclean(base_size = 14)+
-  ylim(0,45)
+  ylim(0,30)
 
 
 ```
@@ -344,21 +388,7 @@ Gene expression counts from EMASE/GBRS are read in, collated (`raw_expr_mat`). N
 #| warning: false
 
 # loading the count data
-load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts.RData") # raw_expr_mat, expr_mat
-
-# Get v84 gene annotations
-# all.genes_v84 <- batchGenes( ids = rownames(expr_mat), species = 'Mm', release = 84)
-# # Let's save these so I don't have to depend on ensimplR every time
-# write_tsv(all.genes_v84, file = here("_data","ENSMUSGid_to_symbol_v84.txt"))
-all.genes_v84 <- read_tsv( here("_data","ENSMUSGid_to_symbol_v84.txt"))
-all.genes_v84 <- all.genes_v84 %>% 
-  mutate( midpoint = (start+end)/2)
-
-
-# UQ wo filtering
-# q75 <- apply(raw_expr_mat, 2, quantile, 0.75)
-# ratio <- mean(q75)/q75
-# uq_expr_mat <- sweep(raw_expr_mat, 2, ratio, FUN="*")
+load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts_v4.RData") # raw_expr_mat
 
 ```
 
@@ -472,119 +502,6 @@ heatmaply(x = as.matrix(sample_dist_vst),
 
 ```
 
-<!-- ```{r deseq2_sampleprocessing} -->
-<!-- #| message: false -->
-<!-- #| warning: false -->
-<!-- #| include: false -->
-<!-- #| cache: true -->
-
-<!-- # let's transform using deseq2 rlog -->
-<!-- sample_annot2 <- sample_details %>% -->
-<!--   separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% -->
-<!--   select(sample, AP_domain,Gest_stage, strain) -->
-
-<!-- emase_dds     <- DESeq2::DESeqDataSetFromMatrix(countData=round(raw_expr_mat), -->
-<!--                                   colData=sample_annot2, design=~ 1) -->
-<!-- emase_dds <- DESeq2::estimateSizeFactors(emase_dds) -->
-<!-- #rlog_expr_mat <- DESeq2::rlog( dds, blind = T) -->
-<!-- vst_expr_mat <- DESeq2::varianceStabilizingTransformation( emase_dds, blind = T) -->
-<!-- SummarizedExperiment::assay( emase_dds, "vst") <- SummarizedExperiment::assay(vst_expr_mat) -->
-
-
-<!-- ``` -->
-
-<!-- ```{r deseq2_heatmap_prep} -->
-<!-- #| output: false -->
-
-<!-- sample_dist_emase_vst <- dist(t(SummarizedExperiment::assay(emase_dds,2))) -->
-
-<!-- phtmp <- pheatmap( as.matrix(sample_dist_emase_vst), -->
-<!--          annotation_row = sample_annot[,"strain",drop=F], -->
-<!--          cluster_rows = T, -->
-<!--          cluster_cols = T, -->
-<!--          clustering_distance_rows = sample_dist_emase_vst, -->
-<!--          clustering_distance_cols = sample_dist_emase_vst, -->
-<!--          scale ="none", -->
-<!--          color = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name = -->
-<!--   "RdYlBu")))(100), -->
-<!--          fontsize = 4 -->
-<!--   ) -->
-
-<!-- ``` -->
-
-<!-- ```{r deseq2_heatmap} -->
-<!-- #| fig-width: 24 -->
-<!-- #| fig-height: 20 -->
-<!-- heatmaply(x = as.matrix(sample_dist_emase_vst), -->
-<!--           dist_method = "euclidean", -->
-<!--           scale = "none", -->
-<!--           Rowv = phtmp[[1]], -->
-<!--           Colv = phtmp[[2]], -->
-<!--           revC = T, -->
-<!--           show_dendrogram = FALSE, -->
-<!--           plot_method = "plotly", -->
-<!--           #col_side_colors = sample_annot[(phtmp[[2]]$order),], # it needs them in the right order! -->
-<!--           fontsize_col = 8, -->
-<!--           fontsize_row = 8, -->
-<!--           colors = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name = -->
-<!--   "RdYlBu")))(100), -->
-<!--           main ="rlog values from DESeq2", -->
-<!--             ) -->
-
-<!-- ``` -->
-
-
-<!-- ````{r} -->
-<!-- #| eval: false -->
-
-<!-- first_batch <- colnames( SummarizedExperiment::assay(dds,1)) -->
-
-<!-- sample_dist_sub <- dist( t(log1p(raw_expr_mat[,first_batch]))) -->
-
-<!-- sample_dist_emase_vst <- dist(t(SummarizedExperiment::assay(emase_dds,2)[,first_batch] )) -->
-
-<!-- pheatmap(mat = as.matrix(sample_dist_emase_vst), -->
-<!--          annotation_row = sample_annot[first_batch,"strain",drop=F], -->
-<!--          #annotation_col = sample_annot[first_batch$sample,"strain",drop=F], -->
-<!--          clustering_distance_rows = sample_dist_emase_vst, -->
-<!--          clustering_distance_cols = sample_dist_emase_vst, -->
-<!--          color = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name = -->
-<!--   "RdYlBu")))(100), -->
-<!--          fontsize = 4) -->
-
-<!-- pheatmap(mat = as.matrix(sample_dist_sub), -->
-<!--          annotation_row = sample_annot[first_batch,"strain",drop=F], -->
-<!--          #annotation_col = sample_annot[first_batch$sample,"strain",drop=F], -->
-<!--          clustering_distance_rows = sample_dist_sub, -->
-<!--          clustering_distance_cols = sample_dist_sub, -->
-<!--          color = colorRampPalette((RColorBrewer::brewer.pal(n = 7, name = -->
-<!--   "RdYlBu")))(100), -->
-<!--          fontsize = 4) -->
-
-<!-- pca <- prcomp( t(SummarizedExperiment::assay(emase_dds,2)[,first_batch$sample] ), center = T, scale. = F) -->
-
-<!-- pca_df <- as_tibble(pca$x, rownames = "sample") %>% -->
-<!--   left_join(sample_annot2) -->
-
-<!-- var_explained <- (pca$sdev^2 / sum(pca$sdev^2)) -->
-
-<!-- pca_df %>% -->
-<!--   ggplot()+ -->
-<!--   aes( x = PC1, -->
-<!--        y = PC2, -->
-<!--        shape = strain, -->
-<!--        col = Gest_stage, -->
-<!--        label = sample, -->
-<!--        )+ -->
-<!--   geom_point(size = 4, alpha = 0.7)+ -->
-<!--   theme_pubclean()+ -->
-<!--   color_palette("npg")+ -->
-<!--   xlab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+ -->
-<!--   ylab(paste0("PC2 (",100*round(var_explained[2],2),"%)"))+ -->
-<!--   theme(legend.position = "right") -->
-
-<!-- ``` -->
-
 
 ### Principal component analysis
 
@@ -621,35 +538,35 @@ var_explained <- (pca$sdev^2 / sum(pca$sdev^2))
 # pc drivers
 pc1_drivers <- pca$rotation[,"PC1", drop = FALSE] %>% 
   as_tibble( rownames = "id") %>% 
-  left_join( all.genes_v84 %>%  
+  left_join( all.genes_v105 %>%  
                select(id, symbol)
              ) %>% 
   filter( abs(PC1) >= quantile(abs(PC1), 0.95))
 
 pc2_drivers <- pca$rotation[,"PC2", drop = FALSE] %>% 
   as_tibble( rownames = "id") %>% 
-  left_join( all.genes_v84 %>%  
+  left_join( all.genes_v105 %>%  
                select(id, symbol)
              ) %>% 
   filter( abs(PC2) >= quantile(abs(PC2), 0.95))
 
 pc3_drivers <- pca$rotation[,"PC3", drop = FALSE] %>% 
   as_tibble( rownames = "id") %>% 
-  left_join( all.genes_v84 %>%  
+  left_join( all.genes_v105 %>%  
                select(id, symbol)
              ) %>% 
   filter( abs(PC3) >= quantile(abs(PC3), 0.95))
 
 pc4_drivers <- pca$rotation[,"PC4", drop = FALSE] %>% 
   as_tibble( rownames = "id") %>% 
-  left_join( all.genes_v84 %>%  
+  left_join( all.genes_v105 %>%  
                select(id, symbol)
              ) %>% 
   filter( abs(PC4) >= quantile(abs(PC4), 0.95))
 
 pc5_drivers <- pca$rotation[,"PC5", drop = FALSE] %>% 
   as_tibble( rownames = "id") %>% 
-  left_join( all.genes_v84 %>%  
+  left_join( all.genes_v105 %>%  
                select(id, symbol)
              ) %>% 
   filter( abs(PC5) >= quantile(abs(PC5), 0.95))
@@ -784,7 +701,7 @@ tibble(var =  var_explained[1:10]* 100, PC = paste0("PC", seq(1:10))) %>%
   xlab("Principal Component") +
   ylab("% Variation explained") +
   theme_pubclean(base_size = 14)+
-  ylim(0,50)
+  ylim(0,20)
 
 
 ```
