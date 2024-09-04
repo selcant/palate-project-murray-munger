@@ -97,7 +97,7 @@ strain_colors <- c( B6 = "#555555",
 #| warning: false
 
 # loading the count data
-load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts_v3.RData") # raw_expr_mat, expr_mat_do, expr_mat_nondo 
+load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts_v4.RData") # raw_expr_mat, expr_mat_do, expr_mat_nondo 
 expr_mat <- expr_mat_nondo
 contam_samples <- c("B6_12.5_PM_1","B6_13.5_POST_3", "CAST_14.5_MAX_7", "B6_13.5_MAX_3")
 expr_mat <- expr_mat[ ,!colnames(expr_mat) %in% contam_samples]
@@ -110,14 +110,12 @@ expr_mat_all <- cbind( expr_mat[intersect(rownames(expr_mat),rownames(do_expr_ma
                        do_expr_mat[intersect(rownames(expr_mat),rownames(do_expr_mat)),,drop=F])
 rm(expr_mat_do, expr_mat_nondo)
 
-# Get v84 gene annotations
-# all.genes_v84 <- ensimplR::batchGenes( ids = rownames(raw_expr_mat), species = 'Mm', release = 84)
-# # Let's save these so I don't have to depend on ensimplR every time
-# write_tsv(all.genes_v84, file = here("_data","ENSMUSGid_to_symbol_v84.txt"))
-all.genes_v84 <- read_tsv( here("_data","ENSMUSGid_to_symbol_v84.txt"))
-all.genes_v84 <- all.genes_v84 %>%   mutate( midpoint = (start+end)/2)
+# Get v105 annotations from biomart
+all.genes_v105 <- read_tsv(here("_data","ENSMUSGid_to_symbol_v105.txt"),
+                           col_names = c("gene_id","symbol","gene_biotype","chromosome","start","end"), skip =1) |>  
+  mutate(midpoint = (start+end)/2)
 
-all_genes_palate <- all.genes_v84 %>%
+all_genes_palate <- all.genes_v105 %>%
   filter(gene_id %in% rownames(expr_mat))
 
 # sample annotations
@@ -365,51 +363,51 @@ var_explained <- (pca$sdev^2 / sum(pca$sdev^2))
 
 # pc drivers
 pc1_drivers <- pca$rotation[,"PC1", drop = FALSE] %>% 
-  as_tibble( rownames = "id") %>% 
-  left_join( all.genes_v84 %>%  
-               select(id, symbol)
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all.genes_v105 %>%  
+               select(gene_id, symbol)
              ) %>% 
   filter( abs(PC1) >= quantile(abs(PC1), 0.95))
 
 pc2_drivers <- pca$rotation[,"PC2", drop = FALSE] %>% 
-  as_tibble( rownames = "id") %>% 
-  left_join( all.genes_v84 %>%  
-               select(id, symbol)
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all.genes_v105 %>%  
+               select(gene_id, symbol)
              ) %>% 
   filter( abs(PC2) >= quantile(abs(PC2), 0.95))
 
 pc3_drivers <- pca$rotation[,"PC3", drop = FALSE] %>% 
-  as_tibble( rownames = "id") %>% 
-  left_join( all.genes_v84 %>%  
-               select(id, symbol)
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all.genes_v105 %>%  
+               select(gene_id, symbol)
              ) %>% 
   filter( abs(PC3) >= quantile(abs(PC3), 0.95))
 
 pc4_drivers <- pca$rotation[,"PC4", drop = FALSE] %>% 
-  as_tibble( rownames = "id") %>% 
-  left_join( all.genes_v84 %>%  
-               select(id, symbol)
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all.genes_v105 %>%  
+               select(gene_id, symbol)
              ) %>% 
   filter( abs(PC4) >= quantile(abs(PC4), 0.95))
 
 pc5_drivers <- pca$rotation[,"PC5", drop = FALSE] %>% 
-  as_tibble( rownames = "id") %>% 
-  left_join( all.genes_v84 %>%  
-               select(id, symbol)
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all.genes_v105 %>%  
+               select(gene_id, symbol)
              ) %>% 
   filter( abs(PC5) >= quantile(abs(PC5), 0.95))
 
 pc6_drivers <- pca$rotation[,"PC6", drop = FALSE] %>% 
-  as_tibble( rownames = "id") %>% 
-  left_join( all.genes_v84 %>%  
-               select(id, symbol)
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all.genes_v105 %>%  
+               select(gene_id, symbol)
              ) %>% 
   filter( abs(PC6) >= quantile(abs(PC6), 0.95))
 
 pc7_drivers <- pca$rotation[,"PC7", drop = FALSE] %>% 
-  as_tibble( rownames = "id") %>% 
-  left_join( all.genes_v84 %>%  
-               select(id, symbol)
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all.genes_v105 %>%  
+               select(gene_id, symbol)
              ) %>% 
   filter( abs(PC7) >= quantile(abs(PC7), 0.95))
 
@@ -458,7 +456,7 @@ g.pc5 <- gost(
   query = pc5_drivers$symbol,
   organism = "mmusculus",
   domain_scope = "custom",
-  custom_bg = all.genes_v84$symbol,
+  custom_bg = all.genes_v105$symbol,
   evcodes = TRUE,
   correction_method = "fdr"
 )
@@ -468,7 +466,7 @@ g.pc6 <- gost(
   query = pc6_drivers$symbol,
   organism = "mmusculus",
   domain_scope = "custom",
-  custom_bg = all.genes_v84$symbol,
+  custom_bg = all.genes_v105$symbol,
   evcodes = TRUE,
   correction_method = "fdr"
 )
@@ -949,7 +947,7 @@ pc4_drivers %>%
 
 ```
 
-## PC5 and PC6
+## PC5 identifies outliers
 
 ```{r pc5_pc6}
 #| message: false
@@ -960,8 +958,8 @@ pc4_drivers %>%
 pca_plot <- pca_df %>%
   filter( !is.na(sex)) %>%
   ggplot()+
-  aes( x = PC5,
-       y = PC6,
+  aes( x = PC1,
+       y = PC5,
        col = LB_stage,
        shape = strain,
        label = sample
@@ -971,8 +969,8 @@ pca_plot <- pca_df %>%
   #color_palette("npg")+
   scale_color_viridis_c(limits = c(12,16))+
   scale_shape_manual( values = c(B6="circle",CAST="diamond",DO="square"))+
-  ylab(paste0("PC6 (",100*round(var_explained[6],2),"%)"))+
-  xlab(paste0("PC5 (",100*round(var_explained[5],2),"%)"))+
+  ylab(paste0("PC5 (",100*round(var_explained[5],2),"%)"))+
+  xlab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
   theme(legend.position = "right")
 
 
@@ -980,7 +978,7 @@ ggplotly(pca_plot, tooltip = c("label"))
 
 ```
 
-Table with the full list of PC5 and PC6 driver genes:
+Table with the full list of PC5 driver genes:
 
 ```{r pc56_gene_table}
 #| message: false
@@ -990,11 +988,11 @@ Table with the full list of PC5 and PC6 driver genes:
 pc5_drivers %>% 
   mutate(PC = "PC5") |> 
   dplyr::rename( "value" = "PC5") |> 
-  rbind(
-    pc6_drivers |> 
-      mutate(PC = "PC6") |> 
-      dplyr::rename("value" = "PC6")
-  ) |> 
+  # rbind(
+  #   pc6_drivers |> 
+  #     mutate(PC = "PC6") |> 
+  #     dplyr::rename("value" = "PC6")
+  # ) |> 
   left_join(
     all_genes_palate %>% 
       select(symbol, chromosome)
@@ -1004,7 +1002,7 @@ pc5_drivers %>%
 
 ```
 
-## PC7 group samples by sex
+## PC6 and PC7 group samples by sex
 
 ```{r pc7_pc1}
 #| message: false
@@ -1016,7 +1014,7 @@ pca_plot <- pca_df %>%
   filter( !is.na(sex)) %>% 
   ggplot()+
   aes( x = PC7, 
-       y = PC1,
+       y = PC6,
        col = sex,
        shape = strain,
        label = sample
@@ -1026,7 +1024,7 @@ pca_plot <- pca_df %>%
   color_palette("npg")+
   #scale_color_viridis_d()+
   scale_shape_manual( values = c(B6="circle",CAST="diamond"))+
-  ylab(paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
+  ylab(paste0("PC6 (",100*round(var_explained[6],2),"%)"))+
   xlab(paste0("PC7 (",100*round(var_explained[7],2),"%)"))+
   theme(legend.position = "right")
 
@@ -1035,19 +1033,29 @@ ggplotly(pca_plot, tooltip = c("label"))
 
 ```
 
-Table with the full list of PC7 driver genes:
+Table with the full list of PC6 and PC7 driver genes:
 
 ```{r pc7_gene_table}
 #| message: false
 #| warning: false
 
 
-pc7_drivers %>% 
+pc6_drivers %>% 
+  mutate(PC = "PC6") |> 
+  dplyr::rename("value" = "PC6") |> 
   left_join(
     all_genes_palate %>% 
       select(symbol, chromosome)
   ) %>% 
-  arrange(desc(abs(PC7))) %>% 
+  rbind(
+    pc7_drivers |>
+      mutate(PC = "PC7") |>
+      dplyr::rename("value" = "PC7") |> 
+      left_join(
+        all_genes_palate %>% 
+          select(symbol, chromosome))
+  ) |>
+  #arrange(desc(abs(PC7))) %>% 
   mutate_if(is.numeric, round, 2) %>% 
   create_dt()
 
@@ -1372,8 +1380,9 @@ Assessing module stability by re-sampling:
 #| label: module_stability_b6
 #| warning: false
 #| message: false
-#| cache: true
+#| cache: false
 #| results: hide
+#| eval: false
  
 
 module_stability(b6_expr, net_b6, nRuns = 50)
@@ -1409,7 +1418,7 @@ for( mod_col in unique(module_genes$Modules)){
     filter(Modules ==mod_col)
   
   cat("\n####",mod_col, "module","\n")
-  p <- pheatmap(mat = log1p(t(b6_datExpr[rownames(b6_coldata_ordered),mod_genes$Genes, drop = FALSE])),
+  p <- pheatmap(mat = log1p((assay(b6_expr)[mod_genes$Genes,rownames(b6_coldata_ordered), drop = FALSE])),
          show_rownames = F,
          show_colnames = F, 
          cluster_rows = T,
@@ -1489,7 +1498,7 @@ module_eigenges <- net_b6$MEs |>
               as_tibble(rownames= "sample"))
 
 module_eigengenes_long <-  module_eigenges |> 
-  pivot_longer( MEred:MEgrey, names_to = "module",values_to = "value") |> 
+  pivot_longer( 2:MEgrey, names_to = "module",values_to = "value") |> 
   mutate( mod_col = factor(gsub("ME","",module) ))
 
 plot_eigengene_by_samples <- function(mod_name){
@@ -1854,6 +1863,7 @@ Assessing module stability by re-sampling:
 #| warning: false
 #| cache: true
 #| results: hide
+#| eval: false
 
 module_stability(cast_expr, net_cast, nRuns = 50)
 ```
@@ -1886,7 +1896,7 @@ for( mod_col in unique(module_genes$Modules)){
     filter(Modules ==mod_col)
   
   cat("\n####",mod_col, "module","\n")
-  p <- pheatmap(mat = log1p(t(cast_datExpr[rownames(cast_coldata_ordered),mod_genes$Genes, drop = FALSE])),
+  p <- pheatmap(mat = log1p((assay(cast_expr)[mod_genes$Genes,rownames(cast_coldata_ordered), drop = FALSE])),
          show_rownames = F,
          show_colnames = F, 
          cluster_rows = T,
@@ -1932,7 +1942,7 @@ module_eigenges <- net_cast$MEs |>
 
 
 module_eigengenes_long <-  module_eigenges |> 
-  pivot_longer( MElightsteelblue1:MEgrey, names_to = "module",values_to = "value") |> 
+  pivot_longer( 2:MEgrey, names_to = "module",values_to = "value") |> 
   mutate( mod_col = factor(gsub("ME","",module) ))
 
 module_eigengenes_long |> 
@@ -1966,7 +1976,7 @@ module_eigenges <- net_cast$MEs |>
               as_tibble(rownames= "sample"))
 
 module_eigengenes_long <-  module_eigenges |> 
-  pivot_longer( MEblack:MEgrey, names_to = "module",values_to = "value") |> 
+  pivot_longer(2:MEgrey, names_to = "module",values_to = "value") |> 
   mutate( mod_col = factor(gsub("ME","",module) ))
 
 plot_eigengene_by_samples <- function(mod_name){
@@ -2258,6 +2268,7 @@ Module preservation:
 #| message: false
 #| warning: false
 #| results: hide
+#| eval: false
 
 
 pres <- module_preservation(

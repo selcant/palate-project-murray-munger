@@ -142,7 +142,7 @@ load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/pa
 all.genes_v105 <- read_tsv(here("_data","ENSMUSGid_to_symbol_v105.txt"),
                            col_names = c("id","symbol","gene_biotype","chromosome","start","end"), skip =1) |>  
   mutate(midpoint = (start+end)/2) |> 
-  filter( gene_id %in% rownames(raw_expr_mat))
+  filter( id %in% rownames(raw_expr_mat))
 
 
 
