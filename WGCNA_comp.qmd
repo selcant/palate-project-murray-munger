@@ -226,26 +226,19 @@ genes <- full_join( figure_genes, skeletal_gene_table ) |>
 
 ```
 
-This notebook is comparing different ways of running WGCNA on the palate RNAseq data.
-I am only using the B6 data as the example set.
-The main point of comparison is running the analysis on the full data set versus filtering based variability.
-I am using the [BioNERO](https://almeidasilvaf.github.io/BioNERO/) package because it runs faster than the original WGCNA package.
+This notebook is comparing different ways of running WGCNA on the palate RNAseq data. First, I am only using the B6 data as the example set to test different gene subsets. The main point of comparison is running the analysis on the full data set versus filtering based variability. I am using the [BioNERO](https://almeidasilvaf.github.io/BioNERO/) package because it runs faster than the original WGCNA package.
 
-The motivation behind using the full data set is to allow the discovery of new relationships between genes and potentially new genes that are involved in our phenotype of interest.
-This also avoids any cherrypicking that might result from the chosen way of subsetting.
-However, it does bring in more noise and leads to a larger set of results that we would have to sift through to make biological sense.
-By subsetting, we would be focusing on the genes with the most biological variability, in our case over developmental time and AP domain, this might enrich our dataset with genes of interest and decrease the noise.
-The main drawback is the risk of losing potentially important genes that show low variability but are still biologically relevant and biasing the data.
-I think we can legitimize our choice either way, since there are examples in literature that have done it both ways.
-The full data set will be more exploratory and unbiased whereas the filtered set would be more targeted towards the genes and pathways of interest.
-
-Below are three different strategies I used in selecting the genes included in WGCNA, starting with the raw expression matrix of `r formatC(nrow(raw_expr_mat),big.mark=",")` genes:
+The motivation behind using the full data set is to allow the discovery of new relationships between genes and potentially new genes that are involved in our phenotype of interest. This also avoids any cherrypicking that might result from the chosen way of subsetting. However, it does bring in more noise and leads to a larger set of results that we would have to sift through to make biological sense. By subsetting, we would be focusing on the genes with the most biological variability, in our case over developmental time and AP domain, this might enrich our dataset with genes of interest and decrease the noise.The main drawback is the risk of losing potentially important genes that show low variability but are still biologically relevant and biasing the data. I think we can legitimize our choice either way, since there are examples in literature that have done it both ways. The full data set will be more exploratory and unbiased whereas the filtered set would be more targeted towards the genes and pathways of interest. Below are three different strategies I used in selecting the genes included in WGCNA, starting with the raw expression matrix of `r formatC(nrow(raw_expr_mat),big.mark=",")` genes:
 
 1.  Filter for the genes that passed our initial tpm threshold which leads to `r formatC(nrow(all_genes_palate), big.mark = ",")` genes.
 
 2.  Filter for most variable 5% of the genes which leads to around 2,500 genes. This is matching Ian's analysis. 
 
 3.  Filter for the genes that passed our initial tpm threshold and then get the top 25% of most variable genes which leads to around 4,300 genes.
+
+Looking at the results from the B6 analysis I decided to use strategy #2 to analyze CAST data and the B6/CAST data combined.
+
+
 
 ```{r}
 #| label: prep_for_wgcna_b6
@@ -326,9 +319,11 @@ b6_expr_top25 <- SummarizedExperiment(assays=list(counts=t(log1p(b6_filt_datExpr
 ```
 
 
+::: {#Strain_comparison .panel-tabset .nav-pills}
 
+# Only B6, comparing different subsets
 
-# 1. Full data set ( n = 17k)
+## 1. Full data set ( n = 17k)
 
 *SUMMARY:*
 
@@ -343,10 +338,6 @@ b6_expr_top25 <- SummarizedExperiment(assays=list(counts=t(log1p(b6_filt_datExpr
 -   6 modules (darkmagenta, coral1, navajowhite2, paleturquoise, mediumpurple2, darkred) are negatively and 6 modules (floralwhite, plum ,lightyellow, brown, coral2, orange) are positively correlated to POST domain.
 
 - Lightpink3: Decreasing over time (LB stage) across all three domains.
-
-
-
-
 
 ```{r choose_sftpower_b6_full}
 #| warning: false
@@ -409,7 +400,7 @@ Using `r formatC(nrow(b6_expr_full),big.mark=",")` genes and `r formatC(ncol(b6_
 
 ::: {#WGCNA_results .panel-tabset .nav-pills}
 
-## Module eigengenes
+### Module eigengenes
 
 ```{r}
 #| label: module_eigengenes_all_b6_full
@@ -531,16 +522,84 @@ plot_eigengene_by_samples <- function(mod_name, module_eigengenes_long){
     return(plot)
 }
 
+# module_colors_full <- unique(module_eigengenes_long_full$mod_col)
+# names(module_colors_full) <- paste0("ME",module_colors_full)
+# 
+# for(mod in names(module_colors_full)){
+#   
+#   cat("\n#####",gsub("ME","",mod), "module","\n")
+#   print(plot_eigengene_by_samples(mod, module_eigengenes_long_full))
+#   cat("\n \n")
+#   
+# }
+
+plot_eigengene_by_module_genes <- function(mod_name, module_eigengenes_long, expr, coldata,module_genes){
+    
+    df <- module_eigengenes_long |> 
+      filter( module == mod_name) |> 
+      arrange( value) |> 
+      mutate( sample = as_factor(sample))
+  
+    eigengene_plot <- df |> 
+      ggplot()+
+      aes( y = value, x= LB_stage, col = AP_domain)+
+      geom_jitter()+
+      geom_smooth( aes(col = AP_domain))+
+      scale_color_manual( values = domain_colors)+
+      theme_pubclean(base_size = 16)+
+      theme( legend.position = "top")+
+      xlab("LB stage")+
+      ylab("Module summary eigengene")
+    
+    mod_genes <- module_genes |> 
+      filter(Modules ==gsub("ME","",mod_name))
+    
+    coldata_ordered <- coldata |> 
+      as_tibble(rownames = "sample") |> 
+      arrange(LB_stage,AP_domain) |> 
+      column_to_rownames("sample") |> 
+      as.matrix()
+    
+    mat <- log1p(assay(expr)[mod_genes$Genes, rownames(coldata_ordered), drop = FALSE])
+    
+    gene_plot <- pheatmap(mat = mat,
+         show_rownames = F,
+         show_colnames = F, 
+         cluster_rows = T,
+         cluster_cols = F,
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         color = viridisLite::plasma(512, begin = 0, end = 1,direction = -1 ),
+         annotation_col = coldata[,c("AP_domain","LB_stage")],
+         annotation_colors = list( 
+                    #strain = strain_colors[c("cast","CAST")],
+                    AP_domain =domain_colors,
+                    LB_stage = viridisLite::viridis(114,begin = 0, end = 1, direction = -1, option = "D")
+                    ),
+         treeheight_row = 0, 
+         treeheight_col = 0,
+         silent = TRUE
+    )
+    
+    ggarrange( ggarrange(eigengene_plot,NULL, nrow = 1, widths = c(1, 0.2)), 
+               ggarrange( NULL, gene_plot$gtable, widths = c(0.1, 1)),
+               ncol = 1, nrow = 2, heights = c(.8,1))
+}
+
+
+module_genes_b6_full <- net_b6_full$genes_and_modules
 module_colors_full <- unique(module_eigengenes_long_full$mod_col)
 names(module_colors_full) <- paste0("ME",module_colors_full)
 
+
 for(mod in names(module_colors_full)){
   
-  cat("\n####",gsub("ME","",mod), "module","\n")
-  print(plot_eigengene_by_samples(mod, module_eigengenes_long_full))
+  cat("\n#####",gsub("ME","",mod), "module","\n")
+  print(plot_eigengene_by_module_genes(mod, module_eigengenes_long_full, b6_expr_full, b6_coldata,module_genes_b6_full))
   cat("\n \n")
   
 }
+
 
 # a <- plot_eigengene_by_samples("MEblack")
 # ggsave(a, filename = here("_figures","test.pdf"), width = 8, height = 6)
@@ -549,7 +608,7 @@ for(mod in names(module_colors_full)){
 
 :::
 
-## Module-trait correlations
+### Module-trait correlations
 
 ```{r}
 #| label: module_trait_cor_b6_full
@@ -628,7 +687,7 @@ cormat_full[,c("M","F","PM","MAX","POST","LB_stage"),drop=F]|>
 
 ```
 
-## ORA results for modules
+### ORA results for modules
 
 **Add mammalian phenotypes here using the bionero ORA function!**
 
@@ -675,7 +734,7 @@ do.call( rbind, ora_results_full) %>%
 
 
 
-# 2. Top 5% variable genes from raw expression (n = 2.4k)
+## 2. Top 5% variable genes from raw expression (n = 2.4k)
 
 ```{r choose_sftpower_b6_top5}
 #| warning: false
@@ -737,7 +796,7 @@ Using `r formatC(nrow(b6_expr_top5),big.mark=",")` genes and `r formatC(ncol(b6_
 
 ::: {#WGCNA_results .panel-tabset .nav-pills}
 
-## Module eigengenes
+### Module eigengenes
 
 ```{r}
 #| label: module_eigengenes_all_b6_top5
@@ -783,89 +842,15 @@ module_eigengenes_long_top5 |>
 #| fig-width: 8
 #| fig-height: 8
 
-plot_eigengene_by_samples <- function(mod_name, module_eigengenes_long){
-  
-  df <- module_eigengenes_long |> 
-    filter( module == mod_name) |> 
-    arrange( value) |> 
-    mutate( sample = as_factor(sample))
-  
-  eigengene_plot <- df |> 
-    ggplot()+
-    aes( y = value, x= sample, fill = mod_col)+
-    geom_bar(stat = "identity", col = "black")+
-    scale_fill_manual( values = gsub("ME","",mod_name))+
-    #scale_color_manual( values = module_colors)+
-    theme_pubclean()+
-    theme( legend.position = "none",
-           axis.text.x = element_blank(),
-          axis.ticks.x = element_blank())+
-    xlab("")+
-    ylab("Module summary eigengene")
-    #facet_wrap(~module)
-
-    # strain_annot_plot <- df |> 
-    #   ggplot()+
-    #   aes( y = 1, x= sample, fill=strain,col = strain)+
-    #   geom_tile()+
-    #   theme_pubclean(base_size = 8)+
-    #   scale_fill_manual(values = strain_colors)+
-    #   scale_color_manual(values = strain_colors)+
-    #   theme( legend.position = "bottom",
-    #          legend.key.height =  unit(0.2, 'cm'),
-    #          axis.text.x = element_blank(),
-    #          axis.ticks.x = element_blank(),
-    #          axis.text.y = element_blank(),
-    #          axis.ticks.y = element_blank())+
-    #   xlab("")+
-    #   ylab("")
-    
-    dom_annot_plot <- df|>
-        ggplot()+
-        aes( y = 1, x= sample, fill=AP_domain,col = AP_domain)+
-        geom_tile()+
-        theme_pubclean(base_size = 8)+
-        scale_fill_manual(values = domain_colors)+
-        scale_color_manual(values = domain_colors)+
-        theme( legend.position = "bottom",
-               legend.key.height =  unit(0.2, 'cm'),
-               axis.text.x = element_blank(),
-               axis.ticks.x = element_blank(),
-               axis.text.y = element_blank(),
-               axis.ticks.y = element_blank())+
-        xlab("")+
-        ylab("")
-    
-    stage_annot_plot <- df |> 
-        ggplot()+
-        aes( y = 1, x= sample, fill=LB_stage,col = LB_stage)+
-        geom_tile()+
-        theme_pubclean(base_size = 8)+
-        scale_color_viridis_c(begin = 0, end = 1, direction = -1, option = "D")+
-        scale_fill_viridis_c(begin = 0, end = 1, direction = -1, option = "D")+
-        theme( legend.position = "bottom",
-               legend.key.height =  unit(0.2, 'cm'),
-               axis.text.x = element_blank(),
-               axis.ticks.x = element_blank(),
-               axis.text.y = element_blank(),
-               axis.ticks.y = element_blank())+
-        xlab("")+
-        ylab("")
-      plot <- ggarrange(eigengene_plot, 
-                #ggarrange(NULL,strain_annot_plot, nrow =1 , widths = c(0.05,1)), 
-                ggarrange(NULL,dom_annot_plot, nrow =1 , widths = c(0.05,1)),
-                ggarrange(NULL,stage_annot_plot, nrow =1 , widths = c(0.05,1)),
-                nrow = 4, heights = c(1.5,0.5,0.5) )
-    return(plot)
-}
-
+module_genes_top5 <- net_b6_top5$genes_and_modules
 module_colors_top5 <- unique(module_eigengenes_long_top5$mod_col)
 names(module_colors_top5) <- paste0("ME",module_colors_top5)
 
+
 for(mod in names(module_colors_top5)){
   
-  cat("\n####",gsub("ME","",mod), "module","\n")
-  print(plot_eigengene_by_samples(mod, module_eigengenes_long_top5))
+  cat("\n#####",gsub("ME","",mod), "module","\n")
+  print(plot_eigengene_by_module_genes(mod, module_eigengenes_long_top5, b6_expr_top5, b6_coldata, module_genes_top5))
   cat("\n \n")
   
 }
@@ -877,7 +862,7 @@ for(mod in names(module_colors_top5)){
 
 :::
 
-## Module-trait correlations
+### Module-trait correlations
 
 ```{r}
 #| label: module_trait_cor_b6_top5
@@ -956,9 +941,7 @@ cormat_top5[,c("M","F","PM","MAX","POST","LB_stage"),drop=F]|>
 
 ```
 
-## ORA results for modules
-
-**Add mammalian phenotypes here using the bionero ORA function!**
+### ORA results for modules
 
 ```{r }
 #| label: wgcna_module_ora_b6_top5
@@ -1005,7 +988,7 @@ do.call( rbind, ora_results_top5) %>%
 
 
 
-# 3. Top 25% variable genes from filtered expression (n = 4.3k)
+## 3. Top 25% variable genes from filtered expression (n = 4.3k)
 
 ```{r choose_sftpower_b6_top25}
 #| warning: false
@@ -1067,7 +1050,7 @@ Using `r formatC(nrow(b6_expr_top25),big.mark=",")` genes and `r formatC(ncol(b6
 
 ::: {#WGCNA_results .panel-tabset .nav-pills}
 
-## Module eigengenes
+### Module eigengenes
 
 ```{r}
 #| label: module_eigengenes_all_b6_top25
@@ -1113,92 +1096,27 @@ module_eigengenes_long_top25 |>
 #| fig-width: 8
 #| fig-height: 8
 
-plot_eigengene_by_samples <- function(mod_name, module_eigengenes_long){
-  
-  df <- module_eigengenes_long |> 
-    filter( module == mod_name) |> 
-    arrange( value) |> 
-    mutate( sample = as_factor(sample))
-  
-  eigengene_plot <- df |> 
-    ggplot()+
-    aes( y = value, x= sample, fill = mod_col)+
-    geom_bar(stat = "identity", col = "black")+
-    scale_fill_manual( values = gsub("ME","",mod_name))+
-    #scale_color_manual( values = module_colors)+
-    theme_pubclean()+
-    theme( legend.position = "none",
-           axis.text.x = element_blank(),
-          axis.ticks.x = element_blank())+
-    xlab("")+
-    ylab("Module summary eigengene")
-    #facet_wrap(~module)
 
-    # strain_annot_plot <- df |> 
-    #   ggplot()+
-    #   aes( y = 1, x= sample, fill=strain,col = strain)+
-    #   geom_tile()+
-    #   theme_pubclean(base_size = 8)+
-    #   scale_fill_manual(values = strain_colors)+
-    #   scale_color_manual(values = strain_colors)+
-    #   theme( legend.position = "bottom",
-    #          legend.key.height =  unit(0.2, 'cm'),
-    #          axis.text.x = element_blank(),
-    #          axis.ticks.x = element_blank(),
-    #          axis.text.y = element_blank(),
-    #          axis.ticks.y = element_blank())+
-    #   xlab("")+
-    #   ylab("")
-    
-    dom_annot_plot <- df|>
-        ggplot()+
-        aes( y = 1, x= sample, fill=AP_domain,col = AP_domain)+
-        geom_tile()+
-        theme_pubclean(base_size = 8)+
-        scale_fill_manual(values = domain_colors)+
-        scale_color_manual(values = domain_colors)+
-        theme( legend.position = "bottom",
-               legend.key.height =  unit(0.2, 'cm'),
-               axis.text.x = element_blank(),
-               axis.ticks.x = element_blank(),
-               axis.text.y = element_blank(),
-               axis.ticks.y = element_blank())+
-        xlab("")+
-        ylab("")
-    
-    stage_annot_plot <- df |> 
-        ggplot()+
-        aes( y = 1, x= sample, fill=LB_stage,col = LB_stage)+
-        geom_tile()+
-        theme_pubclean(base_size = 8)+
-        scale_color_viridis_c(begin = 0, end = 1, direction = -1, option = "D")+
-        scale_fill_viridis_c(begin = 0, end = 1, direction = -1, option = "D")+
-        theme( legend.position = "bottom",
-               legend.key.height =  unit(0.2, 'cm'),
-               axis.text.x = element_blank(),
-               axis.ticks.x = element_blank(),
-               axis.text.y = element_blank(),
-               axis.ticks.y = element_blank())+
-        xlab("")+
-        ylab("")
-      plot <- ggarrange(eigengene_plot, 
-                #ggarrange(NULL,strain_annot_plot, nrow =1 , widths = c(0.05,1)), 
-                ggarrange(NULL,dom_annot_plot, nrow =1 , widths = c(0.05,1)),
-                ggarrange(NULL,stage_annot_plot, nrow =1 , widths = c(0.05,1)),
-                nrow = 4, heights = c(1.5,0.5,0.5) )
-    return(plot)
-}
-
+module_genes_b6_top25 <- net_b6_top25$genes_and_modules
 module_colors_top25 <- unique(module_eigengenes_long_top25$mod_col)
 names(module_colors_top25) <- paste0("ME",module_colors_top25)
 
+
 for(mod in names(module_colors_top25)){
   
-  cat("\n####",gsub("ME","",mod), "module","\n")
-  print(plot_eigengene_by_samples(mod, module_eigengenes_long_top25))
+  cat("\n#####",gsub("ME","",mod), "module","\n")
+  print(plot_eigengene_by_module_genes(mod, module_eigengenes_long_top25, b6_expr_top25, b6_coldata,module_genes_b6_top25))
   cat("\n \n")
   
 }
+
+# for(mod in names(module_colors_top25)){
+#   
+#   cat("\n#####",gsub("ME","",mod), "module","\n")
+#   print(plot_eigengene_by_samples(mod, module_eigengenes_long_top25))
+#   cat("\n \n")
+#   
+# }
 
 # a <- plot_eigengene_by_samples("MEblack")
 # ggsave(a, filename = here("_figures","test.pdf"), width = 8, height = 6)
@@ -1207,7 +1125,7 @@ for(mod in names(module_colors_top25)){
 
 :::
 
-## Module-trait correlations
+### Module-trait correlations
 
 ```{r}
 #| label: module_trait_cor_b6_top25
@@ -1286,9 +1204,7 @@ cormat_top25[,c("M","F","PM","MAX","POST","LB_stage"),drop=F]|>
 
 ```
 
-## ORA results for modules
-
-**Add mammalian phenotypes here using the bionero ORA function!**
+### ORA results for modules
 
 ```{r }
 #| label: wgcna_module_ora_b6_top25
@@ -1332,9 +1248,9 @@ do.call( rbind, ora_results_top25) %>%
 :::
 
 
-# Comparing the networks obtained from different methods
+## Comparing the networks obtained from different methods
 
-## Jaccard index
+### Jaccard index
 
 ```{r}
 #| label: compare_module_functions
@@ -1499,4 +1415,718 @@ plot_module_overlap(comparison_results, p_threshold = 0.01)+
       )
 
 ```
+
+# Only CAST
+
+```{r}
+#| message: false
+#| warning: false
+#| label: wgcna_prep_cast
+#| results: hide
+
+# Let's prep the cast samples for later use here too
+cast_samples <- sample_annot %>%
+  filter(strain %in% c("CAST")) %>%
+  separate(sample, sep = "_", into = c("s","e","d","ind","rep"), remove = F) %>%
+  select(-e,-d) %>%
+  mutate( rep = ifelse( is.na(rep),1,rep)) %>%
+  unite( "unique_sampleid" , c(s,ind,AP_domain,Gest_stage),sep ="_", remove = F) |> # adding an individual column to match the domains to the same animal/embryo and rep column for replicates
+  select(sample,unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, strain, LB_stage) %>%
+  filter(!is.na(sex) ) %>%
+  mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
+  column_to_rownames("sample")
+
+# # Using deseq2 to normalize the full gene expression matrix and collapse replicates.
+cast_cts_all <- round(raw_expr_mat[,rownames(cast_samples), drop = F])
+cast_dds_all <- DESeqDataSetFromMatrix( countData = cast_cts_all,
+                                  colData = cast_samples,
+                                  design = ~1)
+cast_dds_all <- collapseReplicates(cast_dds_all, cast_dds_all$unique_sampleid)
+cast_dds_all_norm <- vst(cast_dds_all)
+# cast_datExpr <- t(assay(cast_dds_all_norm))
+cast_coldata <- colData(cast_dds_all) |> 
+  as_tibble() |> 
+  select(unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, LB_stage) %>%
+  mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
+  column_to_rownames("unique_sampleid")
+
+
+# cast_gsg <- goodSamplesGenes(cast_datExpr)
+# summary(cast_gsg)
+cast_datTraits <- colData(cast_dds_all) %>%
+  as_tibble() |> 
+  select(unique_sampleid, sex, LB_stage, AP_domain, Gest_stage, strain) %>%
+  mutate( strain = ifelse( strain == "CAST",0,1),
+          sex = ifelse(sex == "M", 0, 1),
+          AP_domain = case_when(
+            AP_domain =="PM"~0,
+            AP_domain =="MAX"~1,
+            AP_domain =="POST"~2,
+          ),
+          Gest_stage = case_when(
+            Gest_stage == "E12.5"~0,
+            Gest_stage == "E13.5"~1,
+            Gest_stage == "E14.5"~2,
+            Gest_stage == "E15.5"~3,
+          )) %>%
+  column_to_rownames("unique_sampleid")
+cast_datTraits_alt <- colData(cast_dds_all) %>%
+  as_tibble() |> 
+  select(unique_sampleid, sex, LB_stage, AP_domain, Gest_stage, strain) %>%
+  column_to_rownames("unique_sampleid")
+# # Following Ian's analysis to get most variable genes
+CASTrv_wpn <- rowVars(assay(cast_dds_all_norm))
+# #summary(B6rv_wpn)
+# 
+# CASTq75_wpn <- quantile( rowVars(assay(cast_dds_all_norm)), .75)  # <= original
+CASTq95_wpn <- quantile( rowVars(assay(cast_dds_all_norm)), .95)  # <= changed to 95 quantile to reduce dataset
+cast_datExpr <- t(assay(cast_dds_all_norm)[ CASTrv_wpn > CASTq95_wpn, ])
+# # convert to summarized experiment object for later use in bionero functions
+cast_expr <- SummarizedExperiment(assays=list(counts=t(cast_datExpr)),
+                     colData=cast_datTraits_alt)
+# Just initially filtering to only include the genes that passed our initial tpm thresholding
+# cast_expr <- SummarizedExperiment(assays=list(counts=log1p(assay(cast_dds_all_norm)[rownames(expr_mat),,drop=F])),
+#                      colData=cast_datTraits_alt)
+
+
+```
+
+```{r choose_sftpower_cast}
+#| warning: false
+#| message: false
+#| results: hide
+
+# Choose a set of soft-thresholding powers
+cast_sft <- SFT_fit(cast_expr, net_type = "signed", cor_method = "pearson")
+
+```
+
+```{r}
+#| label: sft_power_plot_cast
+cast_sft$plot 
+```
+
+
+```{r run_wgcna_cast}
+#| warning: false
+#| message: false
+#| results: hide
+
+power_cast <- cast_sft$power
+
+net_cast <- exp2gcn(
+    cast_expr, 
+    net_type = "signed", 
+    SFTpower = power_cast, 
+    cor_method = "pearson"
+)
+
+# plot_dendro_and_colors(net_cast)
+# plot_eigengene_network(net_cast)
+# plot_ngenes_per_module(net_cast)
+
+```
+
+
+Assessing module stability by re-sampling:
+
+```{r}
+#| label: module_stability_cast
+#| message: false
+#| warning: false
+#| cache: true
+#| results: hide
+#| eval: true
+
+module_stability(cast_expr, net_cast, nRuns = 50)
+```
+
+
+Using `r formatC(nrow(cast_expr),big.mark=",")` genes and `r formatC(ncol(cast_expr),big.mark=",")` samples. This leads to `r ncol(net_cast$MEs)` modules in total which are characterized below.
+
+::: {#WGCNA_results_cast .panel-tabset .nav-pills}
+
+### Module eigengenes
+
+```{r}
+#| label: module_eigengenes_all_cast
+#| warning: false
+#| message: false
+#| results: asis
+#| fig-width: 16
+#| fig-height: 14
+
+module_eigenges_cast <- net_cast$MEs |> 
+  as_tibble( rownames = "sample") |> 
+  left_join(cast_coldata |> 
+              as_tibble(rownames= "sample"))
+
+
+module_eigengenes_long_cast <-  module_eigenges_cast |> 
+  pivot_longer( 2:MEgrey, names_to = "module",values_to = "value") |> 
+  mutate( mod_col = factor(gsub("ME","",module) ))
+
+module_eigengenes_long_cast |> 
+    # filter( mod_col %in% c("yellow","pink","red","green","turquoise","blue")) |> 
+    # mutate(mod_col = factor(mod_col, levels = c("red","pink","green","yellow","turquoise","blue"))) |> 
+    ggplot()+
+    aes( y = value, x= LB_stage, col = AP_domain)+
+    geom_jitter()+
+    geom_smooth( aes(col = AP_domain))+
+    scale_color_manual( values = domain_colors)+
+    theme_pubclean(base_size = 16)+
+    theme( legend.position = "top")+
+    xlab("LB stage")+
+    ylab("Module summary eigengene")+
+    facet_wrap(~mod_col, nrow = 3)
+
+
+```
+
+
+
+::: {#WGCNA_module_eigengenes_cast .panel-tabset .nav-pills}
+```{r}
+#| label: module_eigengene_plots_cast
+#| warning: false
+#| message: false
+#| results: asis
+#| fig-width: 8
+#| fig-height: 16
+
+module_genes_cast <- net_cast$genes_and_modules
+module_colors_cast <- unique(module_eigengenes_long_cast$mod_col)
+names(module_colors_cast) <- paste0("ME",module_colors_cast)
+
+for(mod in names(module_colors_cast)){
+  
+  cat("\n#####",gsub("ME","",mod), "module","\n")
+  print(plot_eigengene_by_module_genes(mod, module_eigengenes_long_cast, cast_expr,cast_coldata, module_genes_cast))
+  cat("\n \n")
+  
+}
+
+# a <- plot_eigengene_by_samples("MEblack")
+# ggsave(a, filename = here("_figures","test.pdf"), width = 8, height = 6)
+
+```
+
+:::
+
+### Module-trait correlations
+
+```{r}
+#| label: module_trait_cor_cast
+#| warning: false
+#| message: false
+#| results: hide
+#| fig-show: hide
+
+# module trait correlations
+# bioNERO function module_trait_cor can only handle one trait at a time! 
+# but the fact that it separates each trait and shows the directionality makes things easier to interpret so I will use that and just loop over the traits.
+cast_me_trait_cor <- c()
+for(i in 1:(ncol(cast_datTraits_alt)-1)){
+  
+  cast_me_trait_cor[[colnames(cast_datTraits_alt)[i]]] <- module_trait_cor( exp = assay(cast_expr), # get just the expression
+                                            metadata = cast_datTraits_alt[,i,drop=F], # pass metadata manually
+                                            MEs = net_cast$MEs,
+                                            continuous_trait = is.numeric(cast_datTraits_alt[1,i]),
+                                            palette = "PRGn",
+                                            cor_method = "pearson"
+                                            )
+}
+
+corandp <- reshape2::melt(cast_me_trait_cor) |> 
+  pivot_wider( names_from = variable, values_from = value) |> 
+  rename( "group"="L1") |> 
+  group_by( group) |> 
+  rstatix::adjust_pvalue( p.col = "pvalue") |> 
+  ungroup()
+# some reshaping for pheatmap
+cormat <- reshape2::dcast(corandp, ME ~ trait, value.var = "cor")
+rownames(cormat) <- cormat$ME
+cormat$ME <- NULL
+cormat <- as.matrix(cormat)
+cormat[is.na(cormat)] <- 0
+
+pmat <- reshape2::dcast(corandp, ME ~ trait, value.var = "pvalue.adj")
+rownames(pmat) <- pmat$ME
+pmat$ME <- NULL
+pmat[is.na(pmat)] <- ""
+
+```
+
+```{r}
+#| label: module_trait_cor_plot_cast
+#| fig-width: 10
+#| fig-height: 6
+corrplot(corr = cormat[,c("M","F","PM","MAX","POST","LB_stage"),drop=F],
+         p.mat = as.matrix(pmat[,c("M","F","PM","MAX","POST","LB_stage"),drop=F]),
+         sig.level = 0.05,
+         insig = "label_sig", 
+         pch.cex = 1.3, 
+         pch.col = "red",
+         #rder = 'AOE', 
+         cl.pos = 'n',
+         col = COL2('PRGn'))
+colorlegend(xlim=c(8,10), ylim=c(2,12), COL2('PRGn'), c(seq(-1,1,.5)), align="l", vertical=TRUE, addlabels=TRUE)
+
+```
+
+```{r}
+#| label: module_trait_cor_table_cast
+#| warning: false
+#| message: false
+cormat[,c("M","F","PM","MAX","POST","LB_stage"),drop=F]|> 
+  as_tibble(rownames = "module") |> 
+  pivot_longer(2:7, names_to = "effect", values_to = "Correlation") |> 
+  full_join(
+    pmat[,c("M","F","PM","MAX","POST","LB_stage"),drop=F] |> 
+      as_tibble(rownames = "module") |> 
+      pivot_longer(2:7, names_to = "effect", values_to = "Adjusted p-value")
+  ) |> 
+  filter(`Adjusted p-value` < 0.05) |> 
+  mutate_if(is.numeric, formatC, digits=2) |> 
+  create_dt()
+
+```
+
+### ORA results for modules
+
+```{r }
+#| label: wgcna_module_ora_cast
+#| message: false
+#| warning: false
+#| cache: true
+#| eval: true
+
+
+## ORA for each module
+ora_results <- c()
+modules <- unique(net_cast$genes_and_modules$Modules)
+for( mod in modules){
+  modGenes <- all_genes_palate[all_genes_palate$gene_id %in%
+                                (net_cast$genes_and_modules |> filter(Modules == mod))$Genes,]$symbol
+  
+  g.mod <- gost(query =  unique(modGenes),
+                        organism = "mmusculus",
+                        domain_scope = "custom",
+                        custom_bg = all_genes_palate$symbol,
+                        evcodes = TRUE)
+  ora_results[[mod]] <- g.mod
+}
+
+```
+
+```{r }
+#| label: wgcna_ora_restuls_table_cast
+#| eval: true
+do.call( rbind, ora_results) %>%
+  as_tibble(rownames = "module") %>%
+  select(-meta) %>%
+  unnest("result") %>%
+  select(module,  term_name, source, FDR = p_value, term_size, intersection_size,intersection) %>%
+    filter( FDR <0.05, term_size < 500) %>%
+  mutate_if( is.numeric, formatC, digits =2) %>%
+  create_dt()
+
+
+```
+:::
+
+### Compare B6 vs CAST modules
+
+```{r}
+#| label: compare_b6_top5_to_cast_top5
+#| fig-height: 6
+#| fig-width: 12
+
+network1 <- net_b6_top5$genes_and_modules |> 
+  rename(gene = Genes, module = Modules)
+network2 <- net_cast$genes_and_modules |> 
+  rename(gene = Genes, module = Modules)
+
+comparison_results <- compare_networks(network1, network2)
+comparison_results$adj_p_value <- p.adjust(comparison_results$p_value, method = "BH")
+
+# Create the plot
+plot_module_overlap(comparison_results, p_threshold = 0.01)+
+    labs(
+      x = "B6", 
+      y = "CAST"
+      )
+```
+
+# B6 and CAST
+
+```{r}
+#| warning: false
+#| message: false
+#| label: wgcna_prep_b6_and_cast
+
+# Let's prep the cast samples for later use here too
+b6_cast_samples <- sample_annot %>%
+  filter(strain %in% c("CAST","B6")) %>%
+  separate(sample, sep = "_", into = c("s","e","d","ind","rep"), remove = F) %>%
+  select(-e,-d) %>%
+  mutate( rep = ifelse( is.na(rep),1,rep)) %>%
+  unite( "unique_sampleid" , c(s,ind,AP_domain,Gest_stage),sep ="_", remove = F) |> # adding an individual column to match the domains to the same animal/embryo and rep column for replicates
+  select(sample,unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, strain, LB_stage) %>%
+  filter(!is.na(sex) ) %>%
+  mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
+  column_to_rownames("sample")
+
+# # Using deseq2 to normalize the full gene expression matrix and collapse replicates.
+b6_cast_cts_all <- round(raw_expr_mat[,rownames(b6_cast_samples), drop = F])
+b6_cast_dds_all <- DESeqDataSetFromMatrix( countData = b6_cast_cts_all,
+                                  colData = b6_cast_samples,
+                                  design = ~1)
+b6_cast_dds_all <- collapseReplicates(b6_cast_dds_all, b6_cast_dds_all$unique_sampleid)
+b6_cast_dds_all_norm <- vst(b6_cast_dds_all)
+# b6_cast_datExpr <- t(assay(b6_cast_dds_all_norm))
+b6_cast_coldata <- colData(b6_cast_dds_all) |> 
+  as_tibble() |> 
+  select(unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, LB_stage, strain) %>%
+  mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
+  column_to_rownames("unique_sampleid")
+
+
+# cast_gsg <- goodSamplesGenes(cast_datExpr)
+# summary(cast_gsg)
+b6_cast_datTraits <- colData(b6_cast_dds_all) %>%
+  as_tibble() |> 
+  select(unique_sampleid, sex, LB_stage, AP_domain, Gest_stage, strain) %>%
+  mutate( strain = ifelse( strain == "B6",0,1),
+          sex = ifelse(sex == "M", 0, 1),
+          AP_domain = case_when(
+            AP_domain =="PM"~0,
+            AP_domain =="MAX"~1,
+            AP_domain =="POST"~2,
+          ),
+          Gest_stage = case_when(
+            Gest_stage == "E12.5"~0,
+            Gest_stage == "E13.5"~1,
+            Gest_stage == "E14.5"~2,
+            Gest_stage == "E15.5"~3,
+          )) %>%
+  column_to_rownames("unique_sampleid")
+b6_cast_datTraits_alt <- colData(b6_cast_dds_all) %>%
+  as_tibble() |> 
+  select(unique_sampleid, sex, LB_stage, AP_domain, Gest_stage, strain) %>%
+  column_to_rownames("unique_sampleid")
+# # Following Ian's analysis to get most variable genes
+b6_CASTrv_wpn <- rowVars(assay(b6_cast_dds_all_norm))
+b6_CASTq95_wpn <- quantile( rowVars(assay(b6_cast_dds_all_norm)), .95)  # <= changed to 95 quantile to reduce dataset
+b6_cast_datExpr <- t(assay(b6_cast_dds_all_norm)[ b6_CASTrv_wpn > b6_CASTq95_wpn, ])
+# # convert to summarized experiment object for later use in bionero functions
+b6_cast_expr <- SummarizedExperiment(assays=list(counts=t(b6_cast_datExpr)),
+                     colData=b6_cast_datTraits_alt)
+
+```
+
+```{r }
+#| warning: false
+#| message: false
+#| results: hide
+#| label: choose_sftpower_b6_cast
+
+# Choose a set of soft-thresholding powers
+b6_cast_sft <- SFT_fit(b6_cast_expr, net_type = "signed", cor_method = "pearson")
+
+```
+
+```{r}
+#| label: sft_power_plot_b6_cast
+b6_cast_sft$plot 
+```
+
+```{r }
+#| warning: false
+#| message: false
+#| results: hide
+#| label: run_wgcna_b6_cast
+
+power_b6_cast <- b6_cast_sft$power
+
+net_b6_cast <- exp2gcn(
+    b6_cast_expr, 
+    net_type = "signed", 
+    SFTpower = power_b6_cast, 
+    cor_method = "pearson"
+)
+
+# plot_dendro_and_colors(net_b6_cast)
+# plot_eigengene_network(net_b6_cast)
+# plot_ngenes_per_module(net_b6_cast)
+
+```
+
+
+Assessing module stability by re-sampling:
+
+```{r}
+#| label: module_stability_b6_cast
+#| message: false
+#| warning: false
+#| cache: true
+#| results: hide
+#| eval: true
+
+module_stability(b6_cast_expr, net_b6_cast, nRuns = 50)
+```
+
+
+Using `r formatC(nrow(b6_cast_expr),big.mark=",")` genes and `r formatC(ncol(b6_cast_expr),big.mark=",")` samples. This leads to `r ncol(net_b6_cast$MEs)` modules in total which are characterized below.
+
+::: {#WGCNA_results_b6_cast .panel-tabset .nav-pills}
+
+### Module eigengenes
+
+```{r}
+#| label: module_eigengenes_all_b6_cast
+#| warning: false
+#| message: false
+#| results: asis
+#| fig-width: 16
+#| fig-height: 14
+
+module_eigenges_b6_cast <- net_b6_cast$MEs |> 
+  as_tibble( rownames = "sample") |> 
+  left_join(b6_cast_coldata |> 
+              as_tibble(rownames= "sample"))
+
+
+module_eigengenes_long_b6_cast <-  module_eigenges_b6_cast |> 
+  pivot_longer( 2:MEgrey, names_to = "module",values_to = "value") |> 
+  mutate( mod_col = factor(gsub("ME","",module) ))
+
+module_eigengenes_long_b6_cast |> 
+    # filter( mod_col %in% c("yellow","pink","red","green","turquoise","blue")) |> 
+    # mutate(mod_col = factor(mod_col, levels = c("red","pink","green","yellow","turquoise","blue"))) |> 
+    ggplot()+
+    aes( y = value, x= LB_stage, col = AP_domain, shape = strain)+
+    geom_jitter()+
+    geom_smooth( aes(col = AP_domain))+
+    scale_color_manual( values = domain_colors)+
+    theme_pubclean(base_size = 16)+
+    theme( legend.position = "top")+
+    xlab("LB stage")+
+    ylab("Module summary eigengene")+
+    facet_wrap(~mod_col, nrow = 3)
+
+
+```
+
+
+
+::: {#WGCNA_module_eigengenes_b6_cast .panel-tabset .nav-pills}
+```{r}
+#| label: module_eigengene_plots_b6_cast
+#| warning: false
+#| message: false
+#| results: asis
+#| fig-width: 8
+#| fig-height: 16
+
+plot_eigengene_by_module_genes <- function(mod_name, module_eigengenes_long, expr, coldata,module_genes){
+    
+    df <- module_eigengenes_long |> 
+      filter( module == mod_name) |> 
+      arrange( value) |> 
+      mutate( sample = as_factor(sample))
+  
+    eigengene_plot <- df |> 
+      ggplot()+
+      aes( y = value, x= LB_stage, col = AP_domain, shape=strain)+
+      geom_jitter()+
+      geom_smooth( aes(col = AP_domain))+
+      scale_color_manual( values = domain_colors)+
+      theme_pubclean(base_size = 16)+
+      theme( legend.position = "top")+
+      xlab("LB stage")+
+      ylab("Module summary eigengene")
+    
+    mod_genes <- module_genes |> 
+      filter(Modules ==gsub("ME","",mod_name))
+    
+    coldata_ordered <- coldata |> 
+      as_tibble(rownames = "sample") |> 
+      arrange(strain,LB_stage,AP_domain) |> 
+      column_to_rownames("sample") |> 
+      as.matrix()
+    
+    mat <- log1p(assay(expr)[mod_genes$Genes, rownames(coldata_ordered), drop = FALSE])
+    
+    gene_plot <- pheatmap(mat = mat,
+         show_rownames = F,
+         show_colnames = F, 
+         cluster_rows = T,
+         cluster_cols = T,
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         color = viridisLite::plasma(512, begin = 0, end = 1,direction = -1 ),
+         annotation_col = coldata[,c("AP_domain","LB_stage","strain")],
+         annotation_colors = list( 
+                    strain = strain_colors[c("B6","CAST")],
+                    AP_domain =domain_colors,
+                    LB_stage = viridisLite::viridis(114,begin = 0, end = 1, direction = -1, option = "D")
+                    ),
+         treeheight_row = 0, 
+         treeheight_col = 0,
+         silent = TRUE
+    )
+    
+    ggarrange( ggarrange(eigengene_plot,NULL, nrow = 1, widths = c(1, 0.2)), 
+               ggarrange( NULL, gene_plot$gtable, widths = c(0.1, 1)),
+               ncol = 1, nrow = 2, heights = c(.8,1))
+}
+
+module_genes_b6_cast <- net_b6_cast$genes_and_modules
+module_colors_b6_cast <- unique(module_eigengenes_long_b6_cast$mod_col)
+names(module_colors_b6_cast) <- paste0("ME",module_colors_b6_cast)
+
+for(mod in names(module_colors_b6_cast)){
+  
+  cat("\n#####",gsub("ME","",mod), "module","\n")
+  print(plot_eigengene_by_module_genes(mod, module_eigengenes_long_b6_cast, b6_cast_expr,b6_cast_coldata, module_genes_b6_cast))
+  cat("\n \n")
+  
+}
+
+# a <- plot_eigengene_by_samples("MEblack")
+# ggsave(a, filename = here("_figures","test.pdf"), width = 8, height = 6)
+
+```
+
+:::
+
+### Module-trait correlations
+
+```{r}
+#| label: module_trait_cor_b6_cast
+#| warning: false
+#| message: false
+#| results: hide
+#| fig-show: hide
+
+# module trait correlations
+# bioNERO function module_trait_cor can only handle one trait at a time! 
+# but the fact that it separates each trait and shows the directionality makes things easier to interpret so I will use that and just loop over the traits.
+b6_cast_me_trait_cor <- c()
+for(i in 1:(ncol(b6_cast_datTraits_alt))){
+  
+  b6_cast_me_trait_cor[[colnames(b6_cast_datTraits_alt)[i]]] <- module_trait_cor( exp = assay(b6_cast_expr), # get just the expression
+                                            metadata = b6_cast_datTraits_alt[,i,drop=F], # pass metadata manually
+                                            MEs = net_b6_cast$MEs,
+                                            continuous_trait = is.numeric(b6_cast_datTraits_alt[1,i]),
+                                            palette = "PRGn",
+                                            cor_method = "pearson"
+                                            )
+}
+
+corandp <- reshape2::melt(b6_cast_me_trait_cor) |> 
+  pivot_wider( names_from = variable, values_from = value) |> 
+  rename( "group"="L1") |> 
+  group_by( group) |> 
+  rstatix::adjust_pvalue( p.col = "pvalue") |> 
+  ungroup()
+# some reshaping for pheatmap
+cormat <- reshape2::dcast(corandp, ME ~ trait, value.var = "cor")
+rownames(cormat) <- cormat$ME
+cormat$ME <- NULL
+cormat <- as.matrix(cormat)
+cormat[is.na(cormat)] <- 0
+
+pmat <- reshape2::dcast(corandp, ME ~ trait, value.var = "pvalue.adj")
+rownames(pmat) <- pmat$ME
+pmat$ME <- NULL
+pmat[is.na(pmat)] <- ""
+
+```
+
+```{r}
+#| label: module_trait_cor_plot_b6_cast
+#| fig-width: 10
+#| fig-height: 6
+corrplot(corr = cormat[,c("B6","CAST","M","F","PM","MAX","POST","LB_stage"),drop=F],
+         p.mat = as.matrix(pmat[,c("B6","CAST","M","F","PM","MAX","POST","LB_stage"),drop=F]),
+         sig.level = 0.05,
+         insig = "label_sig", 
+         pch.cex = 1.3, 
+         pch.col = "red",
+         #rder = 'AOE', 
+         cl.pos = 'n',
+         col = COL2('PRGn'))
+colorlegend(xlim=c(10,12), ylim=c(2,12), COL2('PRGn'), c(seq(-1,1,.5)), align="l", vertical=TRUE, addlabels=TRUE)
+
+```
+
+```{r}
+#| label: module_trait_cor_table_b6_cast
+#| warning: false
+#| message: false
+cormat[,c("B6","CAST","M","F","PM","MAX","POST","LB_stage"),drop=F]|> 
+  as_tibble(rownames = "module") |> 
+  pivot_longer(2:9, names_to = "effect", values_to = "Correlation") |> 
+  full_join(
+    pmat[,c("B6","CAST","M","F","PM","MAX","POST","LB_stage"),drop=F] |> 
+      as_tibble(rownames = "module") |> 
+      pivot_longer(2:9, names_to = "effect", values_to = "Adjusted p-value")
+  ) |> 
+  filter(`Adjusted p-value` < 0.05) |> 
+  mutate_if(is.numeric, formatC, digits=2) |> 
+  create_dt()
+
+```
+
+### ORA results for modules
+
+```{r }
+#| label: wgcna_module_ora_b6_cast
+#| message: false
+#| warning: false
+#| cache: true
+#| eval: true
+
+
+## ORA for each module
+ora_results <- c()
+modules <- unique(net_b6_cast$genes_and_modules$Modules)
+for( mod in modules){
+  modGenes <- all_genes_palate[all_genes_palate$gene_id %in%
+                                (net_b6_cast$genes_and_modules |> filter(Modules == mod))$Genes,]$symbol
+  
+  g.mod <- gost(query =  unique(modGenes),
+                        organism = "mmusculus",
+                        domain_scope = "custom",
+                        custom_bg = all_genes_palate$symbol,
+                        evcodes = TRUE)
+  ora_results[[mod]] <- g.mod
+}
+
+```
+
+```{r }
+#| label: wgcna_ora_restuls_table_b6_cast
+#| eval: true
+do.call( rbind, ora_results) %>%
+  as_tibble(rownames = "module") %>%
+  select(-meta) %>%
+  unnest("result") %>%
+  select(module,  term_name, source, FDR = p_value, term_size, intersection_size,intersection) %>%
+    filter( FDR <0.05, term_size < 500) %>%
+  mutate_if( is.numeric, formatC, digits =2) %>%
+  create_dt()
+
+
+```
+:::
+
+
+
+
+
+
+:::
 
