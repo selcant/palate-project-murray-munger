@@ -117,7 +117,7 @@ all.genes_v105 <- read_tsv(here("_data","ENSMUSGid_to_symbol_v105.txt"),
   mutate(midpoint = (start+end)/2)
 
 all_genes_palate <- all.genes_v105 %>%
-  filter(gene_id %in% rownames(expr_mat))
+  filter(gene_id %in% rownames(raw_expr_mat))
 
 # sample annotations
 sample_annot <- sample_details %>% 
