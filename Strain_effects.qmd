@@ -116,7 +116,7 @@ all.genes_v105 <- read_tsv(here("_data","ENSMUSGid_to_symbol_v105.txt"),
   mutate(midpoint = (start+end)/2)
 
 all_genes_palate <- all.genes_v105 %>%
-  filter(gene_id %in% rownames(expr_mat))
+  filter(gene_id %in% rownames(raw_expr_mat))
 
 # sample annotations
 sample_annot <- sample_details %>% 
@@ -309,7 +309,7 @@ Raw data was processed as follows:
 -   Genes with a median transcript per million (TPM) lower than 0.5 were filtered while samples were grouped by gestational stage.
     The grouping is necessary because there are uniquely expressed genes in each stage.
 
--   Counts were upper quantile normalized.
+-   Counts were normalized using variance stablizing transformation as implemented in DESeq2::vst() function..
 
 In the final data set we have `r formatC(nrow(expr_mat_all), big.mark=",")` genes expressed across `r nrow(sample_annot_all)` samples.
 
