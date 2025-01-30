@@ -97,7 +97,7 @@ strain_colors <- c( B6 = "#555555",
 #| warning: false
 
 # loading the count data
-load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts_v3.RData") # raw_expr_mat, expr_mat_do, expr_mat_nondo 
+load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts_v4.RData") # raw_expr_mat, expr_mat_do, expr_mat_nondo , new genome assembly
 expr_mat <- expr_mat_nondo
 contam_samples <- c("B6_12.5_PM_1","B6_13.5_POST_3", "CAST_14.5_MAX_7", "B6_13.5_MAX_3")
 expr_mat <- expr_mat[ ,!colnames(expr_mat) %in% contam_samples]
@@ -110,14 +110,13 @@ expr_mat_all <- cbind( expr_mat[intersect(rownames(expr_mat),rownames(do_expr_ma
                        do_expr_mat[intersect(rownames(expr_mat),rownames(do_expr_mat)),,drop=F])
 rm(expr_mat_do, expr_mat_nondo)
 
-# Get v84 gene annotations
-# all.genes_v84 <- ensimplR::batchGenes( ids = rownames(raw_expr_mat), species = 'Mm', release = 84)
-# # Let's save these so I don't have to depend on ensimplR every time
-# write_tsv(all.genes_v84, file = here("_data","ENSMUSGid_to_symbol_v84.txt"))
-all.genes_v84 <- read_tsv( here("_data","ENSMUSGid_to_symbol_v84.txt"))
-all.genes_v84 <- all.genes_v84 %>%   mutate( midpoint = (start+end)/2)
+# Get v105 gene annotations
+# reading in gene annotations
+all.genes_v105 <- read_tsv(here("_data","ENSMUSGid_to_symbol_v105.txt"),
+                           col_names = c("gene_id","symbol","gene_biotype","chromosome","start","end"), skip =1) |>  
+  mutate(midpoint = (start+end)/2)
 
-all_genes_palate <- all.genes_v84 %>%
+all_genes_palate <- all.genes_v105 %>%
   filter(gene_id %in% rownames(expr_mat))
 
 # sample annotations
@@ -1860,6 +1859,10 @@ pres <- module_preservation( b6_and_cast,
                             algorithm = "netrep")
 
 
+tibble( gene_id = intersect(rownames(b6_expr_top5), rownames(cast_expr))) |> 
+  left_join(all.genes_v84) |> 
+  select(gene_id, symbol, chromosome) |> 
+  create_dt()
 ```
 
 
