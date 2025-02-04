@@ -1271,6 +1271,33 @@ simplifyGO( mat = GO_similarity(gsva_domain_terms$Category, ont = "BP"))
 # Weighted gene co-expression network analysis (WGCNA) 
 
 ```{r}
+#| label: wgcna_prep_all
+#| warning: false 
+#| message: false
+
+# I am going to collapse replicates + normalize the full data set then subset per strain instead of subsetting and processing after
+all_samples <- sample_annot_all |> 
+  separate(sample, sep = "_", into = c("s","e","d","ind","rep"), remove = F) %>%
+  select(-e,-d) %>%
+  mutate( rep = ifelse( is.na(rep),1,rep)) %>%
+  unite( "unique_sampleid" , c(s,ind,AP_domain,Gest_stage),sep ="_", remove = F) |> # adding an individual column to match the domains to the same animal/embryo and rep column for replicates
+  select(sample,unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, strain, LB_stage,Palate_ori) %>%
+  filter(!is.na(sex) ) %>%
+  mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
+  column_to_rownames("sample")
+
+# # Using deseq2 to normalize the full gene expression matrix and collapse replicates.
+cts_all <- round(raw_expr_mat[, rownames(all_samples),drop=F])
+dds_all <- DESeqDataSetFromMatrix( countData = cts_all,
+                                  colData = all_samples,
+                                  design = ~1)
+dds_all <- collapseReplicates(dds_all, dds_all$unique_sampleid)
+dds_all_norm <- vst(dds_all)
+
+```
+
+
+```{r}
 #| label: wgcna_prep_b6
 #| warning: false
 #| message: false
@@ -1286,23 +1313,25 @@ b6_samples <- sample_annot %>%
   mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
   column_to_rownames("sample")
 
-# # Using deseq2 to normalize the full gene expression matrix and collapse replicates.
-b6_cts_all <- round(raw_expr_mat[,rownames(b6_samples), drop = F])
-b6_dds_all <- DESeqDataSetFromMatrix( countData = b6_cts_all,
-                                  colData = b6_samples,
-                                  design = ~1)
-b6_dds_all <- collapseReplicates(b6_dds_all, b6_dds_all$unique_sampleid)
-b6_dds_all_norm <- vst(b6_dds_all)
+# # # Using deseq2 to normalize the full gene expression matrix and collapse replicates.
+# b6_cts_all <- round(raw_expr_mat[,rownames(b6_samples), drop = F])
+# b6_dds_all <- DESeqDataSetFromMatrix( countData = b6_cts_all,
+#                                   colData = b6_samples,
+#                                   design = ~1)
+# b6_dds_all <- collapseReplicates(b6_dds_all, b6_dds_all$unique_sampleid)
+# b6_dds_all_norm <- vst(b6_dds_all)
 # b6_datExpr <- t(assay(b6_dds_all_norm))
-b6_coldata <- colData(b6_dds_all) |> 
+b6_coldata <- colData(dds_all) |> 
   as_tibble() |> 
+  filter( strain == "B6") |> 
   select(unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, LB_stage, Palate_ori) %>%
   mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
   column_to_rownames("unique_sampleid")
 # b6_gsg <- goodSamplesGenes(b6_datExpr)
 # summary(b6_gsg)
-b6_datTraits <- colData(b6_dds_all) %>%
+b6_datTraits <- colData(dds_all) |> 
   as_tibble() |> 
+  filter( strain == "B6") |> 
   select(unique_sampleid, sex, LB_stage, AP_domain, Gest_stage, Palate_ori,strain) %>%
   mutate( strain = ifelse( strain == "B6",0,1),
           sex = ifelse(sex == "M", 0, 1),
@@ -1318,15 +1347,16 @@ b6_datTraits <- colData(b6_dds_all) %>%
             Gest_stage == "E15.5"~3,
           )) %>%
   column_to_rownames("unique_sampleid")
-b6_datTraits_alt <- colData(b6_dds_all) %>%
+b6_datTraits_alt <- colData(dds_all) |> 
   as_tibble() |> 
+  filter( strain == "B6") |> 
   select(unique_sampleid, sex, LB_stage, AP_domain, Gest_stage, Palate_ori, strain) %>%
   column_to_rownames("unique_sampleid")
 
 # 2. Following Ian's analysis to get most variable genes
-B6rv_wpn <- rowVars(assay(b6_dds_all_norm))
-B6q90_wpn <- quantile( rowVars(assay(b6_dds_all_norm)), .9)  # <= changed to 95 quantile to reduce dataset
-b6_datExpr <- t(assay(b6_dds_all_norm)[ B6rv_wpn > B6q90_wpn, ])
+B6rv_wpn <- rowVars(assay(dds_all_norm)[, rownames(b6_coldata),drop=F])
+B6q90_wpn <- quantile( rowVars(assay(dds_all_norm)[, rownames(b6_coldata),drop=F]), .9)  # <= changed to 95 quantile to reduce dataset
+b6_datExpr <- t(assay(dds_all_norm)[ B6rv_wpn > B6q90_wpn, rownames(b6_coldata)])
 b6_expr <- SummarizedExperiment(assays=list(counts=t(log1p(b6_datExpr))),
                                                  colData=b6_datTraits_alt)
 
@@ -1352,16 +1382,17 @@ cast_samples <- sample_annot %>%
   mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
   column_to_rownames("sample")
 
-# # Using deseq2 to normalize the full gene expression matrix and collapse replicates.
-cast_cts_all <- round(raw_expr_mat[,rownames(cast_samples), drop = F])
-cast_dds_all <- DESeqDataSetFromMatrix( countData = cast_cts_all,
-                                  colData = cast_samples,
-                                  design = ~1)
-cast_dds_all <- collapseReplicates(cast_dds_all, cast_dds_all$unique_sampleid)
-cast_dds_all_norm <- vst(cast_dds_all)
+# # # Using deseq2 to normalize the full gene expression matrix and collapse replicates.
+# cast_cts_all <- round(raw_expr_mat[,rownames(cast_samples), drop = F])
+# cast_dds_all <- DESeqDataSetFromMatrix( countData = cast_cts_all,
+#                                   colData = cast_samples,
+#                                   design = ~1)
+# cast_dds_all <- collapseReplicates(cast_dds_all, cast_dds_all$unique_sampleid)
+# cast_dds_all_norm <- vst(cast_dds_all)
 # cast_datExpr <- t(assay(cast_dds_all_norm))
-cast_coldata <- colData(cast_dds_all) |> 
+cast_coldata <- colData(dds_all) |> 
   as_tibble() |> 
+  filter( strain == "CAST") |> 
   select(unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, LB_stage,Palate_ori) %>%
   mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
   column_to_rownames("unique_sampleid")
@@ -1369,8 +1400,9 @@ cast_coldata <- colData(cast_dds_all) |>
 
 # cast_gsg <- goodSamplesGenes(cast_datExpr)
 # summary(cast_gsg)
-cast_datTraits <- colData(cast_dds_all) %>%
+cast_datTraits <- colData(dds_all) |> 
   as_tibble() |> 
+  filter( strain == "CAST") |> 
   select(unique_sampleid, sex, LB_stage, AP_domain, Gest_stage,Palate_ori, strain) %>%
   mutate( strain = ifelse( strain == "CAST",0,1),
           sex = ifelse(sex == "M", 0, 1),
@@ -1386,15 +1418,16 @@ cast_datTraits <- colData(cast_dds_all) %>%
             Gest_stage == "E15.5"~3,
           )) %>%
   column_to_rownames("unique_sampleid")
-cast_datTraits_alt <- colData(cast_dds_all) %>%
+cast_datTraits_alt <- colData(dds_all) |> 
   as_tibble() |> 
+  filter( strain == "CAST") |> 
   select(unique_sampleid, sex, LB_stage, AP_domain, Gest_stage, Palate_ori,strain) %>%
   column_to_rownames("unique_sampleid")
 # # Following Ian's analysis to get most variable genes
-CASTrv_wpn <- rowVars(assay(cast_dds_all_norm))
+CASTrv_wpn <- rowVars(assay(dds_all_norm)[, rownames(cast_coldata),drop=F])
 # CASTq75_wpn <- quantile( rowVars(assay(cast_dds_all_norm)), .75)  # <= original
-CASTq90_wpn <- quantile( rowVars(assay(cast_dds_all_norm)), .90)  # <= changed to 95 quantile to reduce dataset
-cast_datExpr <- t(assay(cast_dds_all_norm)[ CASTrv_wpn > CASTq90_wpn, ])
+CASTq90_wpn <- quantile( rowVars(assay(dds_all_norm)[, rownames(cast_coldata),drop=F]), .90)  # <= changed to 95 quantile to reduce dataset
+cast_datExpr <- t(assay(dds_all_norm)[ CASTrv_wpn > CASTq90_wpn,rownames(cast_coldata) ])
 # # convert to summarized experiment object for later use in bionero functions
 cast_expr <- SummarizedExperiment(assays=list(counts=t(cast_datExpr)),
                      colData=cast_datTraits_alt)
@@ -1420,22 +1453,24 @@ do_samples <- sample_annot_all %>%
   mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
   column_to_rownames("sample")
 
-# # Using deseq2 to normalize the full gene expression matrix and collapse replicates.
-do_cts_all <- round(raw_expr_mat[,rownames(do_samples), drop = F])
-do_dds_all <- DESeqDataSetFromMatrix( countData = do_cts_all,
-                                  colData = do_samples,
-                                  design = ~1)
-do_dds_all <- collapseReplicates(do_dds_all, do_dds_all$unique_sampleid)
-do_dds_all_norm <- vst(do_dds_all)
+# # # Using deseq2 to normalize the full gene expression matrix and collapse replicates.
+# do_cts_all <- round(raw_expr_mat[,rownames(do_samples), drop = F])
+# do_dds_all <- DESeqDataSetFromMatrix( countData = do_cts_all,
+#                                   colData = do_samples,
+#                                   design = ~1)
+# do_dds_all <- collapseReplicates(do_dds_all, do_dds_all$unique_sampleid)
+# do_dds_all_norm <- vst(do_dds_all)
 # cast_datExpr <- t(assay(cast_dds_all_norm))
-do_coldata <- colData(do_dds_all) |> 
+do_coldata <- colData(dds_all) |> 
   as_tibble() |> 
+  filter(strain == "DO") |> 
   select(unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, LB_stage,Palate_ori) %>%
   mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
   column_to_rownames("unique_sampleid")
 
-do_datTraits <- colData(do_dds_all) %>%
+do_datTraits <- colData(dds_all) |> 
   as_tibble() |> 
+  filter(strain == "DO") |> 
   select(unique_sampleid, sex, LB_stage, AP_domain, Gest_stage,Palate_ori, strain) %>%
   mutate( strain = ifelse( strain == "CAST",0,1),
           sex = ifelse(sex == "M", 0, 1),
@@ -1451,15 +1486,15 @@ do_datTraits <- colData(do_dds_all) %>%
             Gest_stage == "E15.5"~3,
           )) %>%
   column_to_rownames("unique_sampleid")
-do_datTraits_alt <- colData(do_dds_all) %>%
+do_datTraits_alt <- colData(dds_all) |> 
   as_tibble() |> 
+  filter(strain == "DO") |> 
   select(unique_sampleid, sex, LB_stage, AP_domain, Gest_stage, Palate_ori,strain) %>%
   column_to_rownames("unique_sampleid")
 # # Following Ian's analysis to get most variable genes
-DOrv_wpn <- rowVars(assay(do_dds_all_norm))
-# CASTq75_wpn <- quantile( rowVars(assay(cast_dds_all_norm)), .75)  # <= original
-DOq90_wpn <- quantile( rowVars(assay(do_dds_all_norm)), .9)  # <= changed to 95 quantile to reduce dataset
-do_datExpr <- t(assay(do_dds_all_norm)[ DOrv_wpn > DOq90_wpn, ])
+DOrv_wpn <- rowVars(assay(dds_all_norm)[,rownames(do_coldata), drop = F])
+DOq90_wpn <- quantile( rowVars(assay(dds_all_norm)[,rownames(do_coldata), drop = F]), .9)  # <= changed to 95 quantile to reduce dataset
+do_datExpr <- t(assay(dds_all_norm)[ DOrv_wpn > DOq90_wpn, rownames(do_coldata)])
 # # convert to summarized experiment object for later use in bionero functions
 do_expr <- SummarizedExperiment(assays=list(counts=t(do_datExpr)),
                      colData=do_datTraits_alt)
@@ -1475,7 +1510,7 @@ do_expr <- SummarizedExperiment(assays=list(counts=t(do_datExpr)),
 b6_expr_final <- b6_expr[ intersect(rownames(b6_expr), rownames(cast_expr)),,drop=F]
 cast_expr_final <- cast_expr[ intersect(rownames(b6_expr), rownames(cast_expr)),,drop=F]
 do_expr_final <- SummarizedExperiment(
-  assays = list((assay(do_dds_all_norm)[ intersect(rownames(b6_expr), rownames(cast_expr)),,drop=F ])),
+  assays = list((assay(dds_all_norm)[ intersect(rownames(b6_expr), rownames(cast_expr)),rownames(do_coldata),drop=F ])),
   colData = do_datTraits_alt)
 
 ```
@@ -2751,110 +2786,12 @@ pres$p.values |>
 
 ```
 
-```{r}
-#| label: compare_module_functions
-
-calculate_overlap <- function(module1, module2, genes1, genes2) {
-  intersection <- length(intersect(module1, module2))
-  union <- length(unique(c(module1, module2)))
-  jaccard <- if (union > 0) intersection / union else 0
-  
-  # Fisher's exact test
-  m1_size <- length(module1)
-  m2_size <- length(module2)
-  total_genes <- length(union(genes1, genes2))
-  
-  # Create the contingency table
-  contingency <- matrix(c(intersection, 
-                          m1_size - intersection,
-                          m2_size - intersection, 
-                          total_genes - m1_size - m2_size + intersection),
-                        nrow = 2)
-  
-  # Only perform Fisher's test if there's an overlap
-  if (intersection > 0) {
-    fisher_p <- fisher.test(contingency)$p.value
-  } else {
-    fisher_p <- 1  # No overlap means no significance
-  }
-  
-  return(c(jaccard = jaccard, p_value = fisher_p, overlap = intersection))
-}
-
-compare_networks <- function(network1, network2) {
-  modules1 <- split(network1$gene, network1$module)
-  modules2 <- split(network2$gene, network2$module)
-  genes1 <- unique(network1$gene)
-  genes2 <- unique(network2$gene)
-  
-  results <- expand.grid(module1 = names(modules1), module2 = names(modules2))
-  results$jaccard <- 0
-  results$p_value <- 1
-  results$overlap_count <- 0
-  
-  for (i in 1:nrow(results)) {
-    m1 <- modules1[[results$module1[i]]]
-    m2 <- modules2[[results$module2[i]]]
-    overlap <- calculate_overlap(m1, m2, genes1, genes2)
-    results$jaccard[i] <- overlap["jaccard"]
-    results$p_value[i] <- overlap["p_value"]
-    results$overlap_count[i] <- overlap["overlap"]
-  }
-  
-  # Add module sizes
-  results$size1 <- lengths(modules1)[results$module1]
-  results$size2 <- lengths(modules2)[results$module2]
-  
-  return(results)
-}
-
-plot_module_overlap <- function(comparison_results, p_threshold = 0.05, highlight_modules = NULL) {
-  # Prepare data for plotting
-  plot_data <- comparison_results %>%
-    arrange(desc(overlap_count)) %>%
-    mutate(
-      text_color = ifelse(adj_p_value < p_threshold, "cyan", "black"),
-      module1 = factor(module1, levels = unique(module1)),
-      module2 = factor(module2, levels = unique(module2)),
-      highlight_color = ifelse(module1 %in% highlight_modules, "red", "black")
-    )
-
-  # Create the heatmap
-  ggplot(plot_data, aes(x = module1, y = module2, fill = jaccard)) +
-    geom_tile(color = "white") +
-    scale_fill_viridis_b(
-      option = "plasma",  # This gives a nice blue to yellow gradient
-      name = "Jaccard Index"
-    ) +
-    geom_text(
-      aes(label = overlap_count, color = text_color),
-      size = 3
-    ) +
-    scale_color_identity() +
-    theme_minimal() +
-    theme(
-      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, color = plot_data$highlight_color),
-      axis.title = element_text(face = "bold"),
-      legend.position = "right",
-      panel.grid.major = element_blank(),
-      panel.grid.minor = element_blank()
-    ) +
-    labs(
-      x = "Network 1 Modules", 
-      y = "Network 2 Modules", 
-      title = "Module Overlap between Networks",
-      subtitle = paste("Cyan text indicates significant overlap (adj. p <", p_threshold, ")")
-    ) +
-    coord_fixed()  # This ensures that the tiles are square
-}
-
-```
 
 Let's compare modules by calculating the # of genes that overlap between modules and the Jaccard Index. The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets.
 
 
 ```{r}
-#| label: compare_b6_to_cast
+#| label: compare_b6_to_do
 #| fig-height: 6
 #| fig-width: 12
 
@@ -2876,7 +2813,15 @@ plot_module_overlap(comparison_results, p_threshold = 0.01)+
 ```
 :::
 
+# Using MEFISTO to identify temporal gene expression
 
+```{r}
+#| eval: false
+#| label: mefisto_setup
+
+library(MOFA2)
+
+```
 
 
 
