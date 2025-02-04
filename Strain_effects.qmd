@@ -1326,7 +1326,7 @@ b6_datTraits_alt <- colData(b6_dds_all) %>%
 # 2. Following Ian's analysis to get most variable genes
 B6rv_wpn <- rowVars(assay(b6_dds_all_norm))
 B6q90_wpn <- quantile( rowVars(assay(b6_dds_all_norm)), .9)  # <= changed to 95 quantile to reduce dataset
-b6_datExpr <- t(assay(b6_dds_all_norm)[ B6rv_wpn > B6q95_wpn, ])
+b6_datExpr <- t(assay(b6_dds_all_norm)[ B6rv_wpn > B6q90_wpn, ])
 b6_expr <- SummarizedExperiment(assays=list(counts=t(log1p(b6_datExpr))),
                                                  colData=b6_datTraits_alt)
 
@@ -1498,7 +1498,7 @@ Based on previous analyses, we settled on running WGCNA:
 #| results: hide
 
 # Choose a set of soft-thresholding powers
-b6_sft <- SFT_fit(b6_expr_final, net_type = "unsigned", cor_method = "biweight")
+b6_sft <- SFT_fit(b6_expr_final, net_type = "unsigned", cor_method = "pearson")
 ```
 
 ```{r}
@@ -1515,14 +1515,14 @@ b6_sft$plot
 #| message: false
 #| results: hide
 
-power_b6 <- 17 # b6_sft$power
+power_b6 <- 16 # b6_sft$power
 
 net_b6 <- exp2gcn(
     b6_expr_final, 
     net_type = "unsigned", 
-    module_merging_threshold = 0.75,
+    #module_merging_threshold = 0.75,
     SFTpower = power_b6, 
-    cor_method = "biweight"
+    cor_method = "pearson"
 )
 
 plot_dendro_and_colors(net_b6)
@@ -1542,14 +1542,23 @@ Assessing module stability by re-sampling:
 #| cache: true
 #| results: hide
  
-
-module_stability(b6_expr_final, net_b6, nRuns = 50)
+#net_b6$params$cor_method <- "bicor"
+module_stability(b6_expr_final, net_b6, nRuns = 5)
 
 
 ```
 
 
-Using `r formatC(nrow(b6_expr_final),big.mark=",")` genes and `r formatC(ncol(b6_expr_final),big.mark=",")` samples. This leads to `r ncol(net_b6$MEs)` modules in total which are characterized below. Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
+Using `r formatC(nrow(b6_expr_final),big.mark=",")` genes and `r formatC(ncol(b6_expr_final),big.mark=",")` samples. For gene coexpression network inference I am using the `exp2gcn` function in BioNero with the following options:
+
+  -   `net_type = "unsigned"` : I chose this option so that we can treat positive and negative correlations equally and focus on the strength of the relationship rather than the sign.
+  
+  -   `cor_method = "pearson"`: I chose Pearson correlation because our data is relatively clean.
+  
+  -   `SFTpower = 16`: I chose 16 as the thresholding power since it is the power where the scale free topology fit R2 value reaches 0.79. 
+  
+  
+This leads to `r ncol(net_b6$MEs)` modules in total which are characterized below. Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
 
 
 ::: {#WGCNA_results .panel-tabset .nav-pills}
@@ -1560,7 +1569,6 @@ Using `r formatC(nrow(b6_expr_final),big.mark=",")` genes and `r formatC(ncol(b6
 #| label: module_genes_table_b6
 #| message: false
 #| warning: false
-
 
 net_b6$genes_and_modules |> 
   left_join( all_genes_palate |> 
@@ -1756,11 +1764,11 @@ colorlegend(xlim=c(10,12), ylim=c(2,12), COL2('PRGn'), c(seq(-1,1,.5)), align="l
 #| label: module_trait_cor_table_b6
 #| warning: false
 #| message: false
-cormat[,c("M","F","PM","MAX","POST","LB_stage","Left","Right"),drop=F]|> 
+cormat_b6[,c("M","F","PM","MAX","POST","LB_stage","Left","Right"),drop=F]|> 
   as_tibble(rownames = "module") |> 
   pivot_longer(2:9, names_to = "effect", values_to = "Correlation") |> 
   full_join(
-    pmat[,c("M","F","PM","MAX","POST","LB_stage","Left","Right"),drop=F] |> 
+    pmat_b6[,c("M","F","PM","MAX","POST","LB_stage","Left","Right"),drop=F] |> 
       as_tibble(rownames = "module") |> 
       pivot_longer(2:9, names_to = "effect", values_to = "Adjusted p-value")
   ) |> 
@@ -1811,6 +1819,58 @@ do.call( rbind, ora_results) %>%
 
 
 ```
+
+
+### Hub genes
+
+Hub genes are often identified using two different metrics: module membership (MM) (i.e., correlation of a gene to its module eigengene) and degree (i.e., sum of connection weights of a gene to all other genes in the module). Some researchers consider the top 10% genes with the highest degree as hubs, while others consider those with MM > 0.8. To avoid false positives, BioNERO’s algorithm combines both metrics and defines hub genes as the top 10% genes with highest degree that have MM > 0.8. Hubs are identigied with the function `get_hubs_gcn()` below.
+
+```{r}
+#| label: get_hub_genes_b6
+#net_b6$params$cor_method <- "biweight"
+hubs_b6 <- get_hubs_gcn(b6_expr_final, net_b6)
+
+hubs_b6 |> 
+  left_join( all_genes_palate |> 
+               select( Gene = gene_id, symbol)) |> 
+  select( Gene, Symbol = symbol, Module, kWithin) |> 
+  mutate( kWithin = round(kWithin , 2)) |> 
+  create_dt()
+
+```
+
+
+Get sub-networks within modules and visualize:
+
+```{r}
+#| label: get_subnetworks
+#| results: hide
+#| warning: false
+#| message: false
+
+
+modules <- unique(net_b6$genes_and_modules$Modules)
+edges_filt <- list()
+for(mod in modules){
+  # Remove edges based on optimal scale-free topology fit
+  edges_filtered <- get_edge_list(net_b6, module = mod, filter = TRUE)  
+  edges_filt[[mod]] <- edges_filtered
+}
+
+```
+
+```{r}
+#| eval: false
+plot_gcn(
+    edgelist_gcn = edges_filt$blue, 
+    net = net_b6, 
+    hubs = hubs_b6
+)
+
+
+```
+
+
 :::
 
 
@@ -1824,7 +1884,7 @@ do.call( rbind, ora_results) %>%
 #| results: hide
 
 # Choose a set of soft-thresholding powers
-cast_sft <- SFT_fit(cast_expr_final, net_type = "unsigned", cor_method = "biweight")
+cast_sft <- SFT_fit(cast_expr_final, net_type = "unsigned", cor_method = "pearson")
 ```
 
 ```{r}
@@ -1841,19 +1901,19 @@ cast_sft$plot
 #| message: false
 #| results: hide
 
-power_cast <- cast_sft$power
+power_cast <- 13 #cast_sft$power
 
 net_cast <- exp2gcn(
     cast_expr_final, 
     net_type = "unsigned", 
-    #module_merging_threshold = 0.75,
+  #  module_merging_threshold = 0.75,
     SFTpower = power_cast, 
-    cor_method = "biweight"
+    cor_method = "pearson"
 )
 
-# plot_dendro_and_colors(net_cast)
-# plot_eigengene_network(net_cast)
-# plot_ngenes_per_module(net_cast)
+plot_dendro_and_colors(net_cast)
+plot_eigengene_network(net_cast)
+plot_ngenes_per_module(net_cast)
 
 
 ```
@@ -1868,14 +1928,22 @@ Assessing module stability by re-sampling:
 #| cache: true
 #| results: hide
  
-
+#net_cast$params$cor_method <- "bicor"
 module_stability(cast_expr_final, net_cast, nRuns = 50)
 
 
 ```
 
 
-Using `r formatC(nrow(cast_expr_final),big.mark=",")` genes and `r formatC(ncol(cast_expr_final),big.mark=",")` samples. This leads to `r ncol(net_cast$MEs)` modules in total which are characterized below. Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
+Using `r formatC(nrow(cast_expr_final),big.mark=",")` genes and `r formatC(ncol(cast_expr_final),big.mark=",")` samples. 
+
+  -   `net_type = "unsigned"` : I chose this option so that we can treat positive and negative correlations equally and focus on the strength of the relationship rather than the sign.
+  
+  -   `cor_method = "pearson"`: I chose Pearson correlation because our data is relatively clean.
+  
+  -   `SFTpower = 13`: I chose 16 as the thresholding power since it is the power where the scale free topology fit R2 value reaches 0.79. 
+  
+This leads to `r ncol(net_cast$MEs)` modules in total which are characterized below. Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
 
 
 ::: {#WGCNA_results .panel-tabset .nav-pills}
@@ -2139,6 +2207,39 @@ do.call( rbind, ora_results) %>%
 
 ## Comparison of B6 and CAST modules
 
+Module preservation: The B6 modules named below are preserved in the CAST data. 
+```{r}
+#| label: b6_cast_mod_preservation
+#| warning: false
+#| message: false
+
+
+b6_and_cast <- c(b6=b6_expr_final, 
+                 cast = cast_expr_final)
+# net_b6$params$cor_method <- "biweight"
+# net_cast$params$cor_method <- "biweight"
+pres <- module_preservation( b6_and_cast,
+                            ref_net = net_b6, 
+                            test_net = net_cast, 
+                            algorithm = "netrep",
+                            nThreads = 40)
+
+preserved_modules_b6_cast <- pres$p.values |> 
+  as_tibble( rownames = "Module") |> 
+  #filter(if_all(everything(),  ~  . < 0.05))
+  filter( coherence < 0.05)
+
+pres$p.values |> 
+  as_tibble( rownames = "Module") |> 
+  #filter(if_all(everything(),  ~  . < 0.05))
+  filter( coherence < 0.05) |> 
+  mutate_if( is.numeric, formatC, digits =2 ) |> 
+  create_dt()
+
+
+
+```
+
 ```{r}
 #| label: compare_module_functions
 
@@ -2196,14 +2297,15 @@ compare_networks <- function(network1, network2) {
   return(results)
 }
 
-plot_module_overlap <- function(comparison_results, p_threshold = 0.05) {
+plot_module_overlap <- function(comparison_results, p_threshold = 0.05, highlight_modules = NULL) {
   # Prepare data for plotting
   plot_data <- comparison_results %>%
     arrange(desc(overlap_count)) %>%
     mutate(
       text_color = ifelse(adj_p_value < p_threshold, "cyan", "black"),
       module1 = factor(module1, levels = unique(module1)),
-      module2 = factor(module2, levels = unique(module2))
+      module2 = factor(module2, levels = unique(module2)),
+      highlight_color = ifelse(module1 %in% highlight_modules, "red", "black")
     )
 
   # Create the heatmap
@@ -2220,7 +2322,7 @@ plot_module_overlap <- function(comparison_results, p_threshold = 0.05) {
     scale_color_identity() +
     theme_minimal() +
     theme(
-      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, color = plot_data$highlight_color),
       axis.title = element_text(face = "bold"),
       legend.position = "right",
       panel.grid.major = element_blank(),
@@ -2237,7 +2339,9 @@ plot_module_overlap <- function(comparison_results, p_threshold = 0.05) {
 
 ```
 
-Overlap, Jaccard Index:
+Let's compare modules by calculating the # of genes that overlap between modules and the Jaccard Index. The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets.
+
+
 ```{r}
 #| label: compare_b6_to_cast
 #| fig-height: 6
@@ -2252,44 +2356,21 @@ comparison_results <- compare_networks(network1, network2)
 comparison_results$adj_p_value <- p.adjust(comparison_results$p_value, method = "BH")
 
 # Create the plot
-plot_module_overlap(comparison_results, p_threshold = 0.01)+
+plot_module_overlap(comparison_results, p_threshold = 0.01, highlight_modules = preserved_modules_b6_cast$Module)+
     labs(
       x = "B6", 
       y = "CAST"
       )
-```
-
-
-Module preservation:
-```{r}
-#| label: b6_cast_mod_preservation
-#| warning: false
-#| message: false
-
-
-b6_and_cast <- c(b6=b6_expr_final, 
-                 cast = cast_expr_final)
-
-pres <- module_preservation( b6_and_cast,
-                            ref_net = net_b6, 
-                            test_net = net_cast, 
-                            algorithm = "netrep",
-                            nThreads = 40)
-
-pres$p.values |> 
-  as_tibble( rownames = "Module") |> 
-  filter( `avg.weight` < 0.05 ) |> 
-  mutate_if( is.numeric, formatC, digits =2 ) |> 
-  create_dt()
-
-
 
 ```
 
 
-```{r}
 
-consensus <- consensus_modules(b6_and_cast, power = c(20,20), cor_method = "biweight", net_type = "unsigned")
+
+
+```{r}
+#| eval: false
+consensus <- consensus_modules(b6_and_cast, power = c(20,20), cor_method = "pearson", net_type = "unsigned")
 
 names(consensus)
 
@@ -2302,6 +2383,7 @@ head(consensus_trait)
 ```
 
 :::
+
 ## DO - only MAX domain
 
 
@@ -2312,7 +2394,7 @@ head(consensus_trait)
 #| results: hide
 
 # Choose a set of soft-thresholding powers
-do_sft <- SFT_fit(do_expr_final, net_type = "unsigned", cor_method = "biweight")
+do_sft <- SFT_fit(do_expr_final, net_type = "unsigned", cor_method = "pearson")
 ```
 
 ```{r}
@@ -2329,19 +2411,19 @@ do_sft$plot
 #| message: false
 #| results: hide
 
-power_do <- do_sft$power
+power_do <- 7 #do_sft$power
 
 net_do <- exp2gcn(
     do_expr_final, 
     net_type = "unsigned", 
     #module_merging_threshold = 0.75,
     SFTpower = power_do, 
-    cor_method = "biweight"
+    cor_method = "pearson"
 )
 
-plot_dendro_and_colors(net_do)
-plot_eigengene_network(net_do)
-plot_ngenes_per_module(net_do)
+# plot_dendro_and_colors(net_do)
+# plot_eigengene_network(net_do)
+# plot_ngenes_per_module(net_do)
 
 
 ```
@@ -2363,7 +2445,15 @@ module_stability(do_expr_final, net_do, nRuns = 50)
 ```
 
 
-Using `r formatC(nrow(do_expr_final),big.mark=",")` genes and `r formatC(ncol(do_expr_final),big.mark=",")` samples. This leads to `r ncol(net_do$MEs)` modules in total which are characterized below. Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
+Using `r formatC(nrow(do_expr_final),big.mark=",")` genes and `r formatC(ncol(do_expr_final),big.mark=",")` samples. 
+  
+  -   `net_type = "unsigned"` : I chose this option so that we can treat positive and negative correlations equally and focus on the strength of the relationship rather than the sign.
+  
+  -   `cor_method = "pearson"`: I chose Pearson correlation because our data is relatively clean.
+  
+  -   `SFTpower = 7`: I chose 16 as the thresholding power since it is the power where the scale free topology fit R2 value reaches 0.79. 
+  
+This leads to `r ncol(net_do$MEs)` modules in total which are characterized below. Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
 
 
 ::: {#WGCNA_results .panel-tabset .nav-pills}
@@ -2393,8 +2483,8 @@ net_do$genes_and_modules |>
 #| warning: false
 #| message: false
 #| results: asis
-#| fig-width: 16
-#| fig-height: 5
+#| fig-width: 12
+#| fig-height: 10
 
 module_eigenges_do <- net_do$MEs |> 
   as_tibble( rownames = "sample") |> 
@@ -2403,7 +2493,7 @@ module_eigenges_do <- net_do$MEs |>
 
 
 module_eigengenes_long_do <-  module_eigenges_do |> 
-  pivot_longer( 2:MEblue, names_to = "module",values_to = "value") |> 
+  pivot_longer( 2:MEgreen, names_to = "module",values_to = "value") |> 
   mutate( mod_col = factor(gsub("ME","",module) ))
 
 module_eigengenes_long_do |> 
@@ -2418,7 +2508,7 @@ module_eigengenes_long_do |>
     theme( legend.position = "top")+
     xlab("LB stage")+
     ylab("Module summary eigengene")+
-    facet_wrap(~mod_col, nrow = 1)
+    facet_wrap(~mod_col, nrow = 2)
 
 
 ```
@@ -2560,7 +2650,7 @@ corrplot(corr = cormat_do[,c("M","F","LB_stage","Left","Right"),drop=F],
          #rder = 'AOE', 
          cl.pos = 'n',
          col = COL2('PRGn'))
-colorlegend(xlim=c(5.6,6.6), ylim=c(1,4), COL2('PRGn'), c(seq(-1,1,.5)), align="l", vertical=TRUE, addlabels=TRUE)
+colorlegend(xlim=c(5.7,6.7), ylim=c(1,5), COL2('PRGn'), c(seq(-1,1,.5)), align="l", vertical=TRUE, addlabels=TRUE)
 
 ```
 
@@ -2628,90 +2718,163 @@ do.call( rbind, ora_results) %>%
 
 ## Comparison of DO modules with B6 and CAST
 
-
-# Differential gene expression analysis using maSigPro
-
-```{r masigpro_setup}
+Module preservation: The B6 modules named below are preserved in the DO data. 
+```{r}
+#| label: do_b6_cast_mod_preservation
+#| warning: false
+#| message: false
 #| eval: false
-library(maSigPro)
-# Similar to Deseq, I am converting to counts
-# The recommended analysis to deal with RNA-Seq data is the GLM with negative.binomial
-# family. θ must be specified and it can be computed by using available methods as edgeR
-# ((Robinson et al., 2010)). The application of maSigPro with several values of θ to the same
-# datasets did not reveal significant differences in gene selection. Taking this into consideration
-# we have put by default θ = 10 for being an average value. Moreover we give to the user the
-# option of applying whatever exponential family to explore other possibilities.
-# Data must be normalized before the application of maSigPro as it is not integrated any
-# normalized method
-# data: Gene by samples
-b6_data <- round(assay(b6_dds_all_norm) )
-b6_data <- b6_data[all_genes_palate$gene_id,,drop=F]
-b6_design_data <- b6_coldata |> 
-  as_tibble( rownames = "unique_sampleid") |> 
-  left_join( b6_samples |> 
-               as_tibble( rownames = "sample") |> 
-               select(unique_sampleid, sample) |> 
-               left_join(
-                 sample_annot |> 
-                   select(sample, LB_stage_binned)
-               ) |> 
-               select(unique_sampleid, LB_stage_binned) |> 
-               distinct()
-             ) |> 
-  filter( LB_stage_binned != "exclude") |> 
-  mutate(
-    ind = as.numeric(ind),
-    AP_domain_value = 1,
-    Gest_stage = case_when(
-            Gest_stage == "E12.5"~12.5,
-            Gest_stage == "E13.5"~13.5,
-            Gest_stage == "E14.5"~14.5,
-            Gest_stage == "E15.5"~15.5,
-          ),
-    # I am doing the replicates as below to match the description in the user guide that says:" Replicates column is an index column that indicates the replicated arrays: all arrays belonging to the same experimental condition must be given the same number."
-    Replicate = case_when(
-      Gest_stage ==12.5 & AP_domain =="MAX"~1,
-      Gest_stage ==13.5 & AP_domain =="MAX"~2,
-      Gest_stage ==14.5 & AP_domain =="MAX"~3,
-      Gest_stage ==15.5 & AP_domain =="MAX"~4,
-      Gest_stage ==12.5 & AP_domain =="PM"~5,
-      Gest_stage ==13.5 & AP_domain =="PM"~6,
-      Gest_stage ==14.5 & AP_domain =="PM"~7,
-      Gest_stage ==15.5 & AP_domain =="PM"~8,
-      Gest_stage ==12.5 & AP_domain =="POST"~9,
-      Gest_stage ==13.5 & AP_domain =="POST"~10,
-      Gest_stage ==14.5 & AP_domain =="POST"~11,
-      Gest_stage ==15.5 & AP_domain =="POST"~12
-      )
-    ) |> 
-  pivot_wider( id_cols = c("unique_sampleid","Gest_stage","Replicate"), names_from= "AP_domain", values_from="AP_domain_value") |> 
-  mutate(
-    MAX = ifelse(is.na(MAX),0, MAX),
-    PM = ifelse(is.na(PM),0, PM),
-    POST = ifelse(is.na(POST),0, POST)
-  ) |> 
-  mutate( Time = Gest_stage) |> 
-  arrange(Time,Replicate) |> 
-  column_to_rownames("unique_sampleid")
-
-b6_design <- make.design.matrix(b6_design_data[,c("Time","Replicate","MAX","PM","POST")], degree = 3, time.col = 1, group.cols = c(3:5), repl.col = 2)
-
-#b6_design$groups.vector
-fit <- p.vector(b6_data, b6_design, counts = TRUE)
-tstep <- T.fit(fit)
-get<-get.siggenes(tstep, vars="all")
-library(mclust)
-cluster_genes <- see.genes(get$sig.genes, 
-                           k.mclust = TRUE, 
-                           cluster.method = "Mclust")
 
 
-unique(cluster_genes$cut)
+b6_and_do <- c(b6=b6_expr_final, 
+                 cast = do_expr_final)
+
+pres_do <- module_preservation( b6_and_do,
+                            ref_net = net_b6, 
+                            test_net = net_do, 
+                            algorithm = "netrep",
+                            nThreads = 40)
+
+preserved_modules_b6_do <- pres_do$p.values |> 
+  as_tibble( rownames = "Module") |> 
+  #filter(if_all(everything(),  ~  . < 0.05))
+  filter( coherence < 0.05)
+
+pres$p.values |> 
+  as_tibble( rownames = "Module") |> 
+  #filter(if_all(everything(),  ~  . < 0.05))
+  filter( coherence < 0.05) |> 
+  mutate_if( is.numeric, formatC, digits =2 ) |> 
+  create_dt()
+
+
+
 ```
 
+```{r}
+#| label: compare_module_functions
+
+calculate_overlap <- function(module1, module2, genes1, genes2) {
+  intersection <- length(intersect(module1, module2))
+  union <- length(unique(c(module1, module2)))
+  jaccard <- if (union > 0) intersection / union else 0
+  
+  # Fisher's exact test
+  m1_size <- length(module1)
+  m2_size <- length(module2)
+  total_genes <- length(union(genes1, genes2))
+  
+  # Create the contingency table
+  contingency <- matrix(c(intersection, 
+                          m1_size - intersection,
+                          m2_size - intersection, 
+                          total_genes - m1_size - m2_size + intersection),
+                        nrow = 2)
+  
+  # Only perform Fisher's test if there's an overlap
+  if (intersection > 0) {
+    fisher_p <- fisher.test(contingency)$p.value
+  } else {
+    fisher_p <- 1  # No overlap means no significance
+  }
+  
+  return(c(jaccard = jaccard, p_value = fisher_p, overlap = intersection))
+}
+
+compare_networks <- function(network1, network2) {
+  modules1 <- split(network1$gene, network1$module)
+  modules2 <- split(network2$gene, network2$module)
+  genes1 <- unique(network1$gene)
+  genes2 <- unique(network2$gene)
+  
+  results <- expand.grid(module1 = names(modules1), module2 = names(modules2))
+  results$jaccard <- 0
+  results$p_value <- 1
+  results$overlap_count <- 0
+  
+  for (i in 1:nrow(results)) {
+    m1 <- modules1[[results$module1[i]]]
+    m2 <- modules2[[results$module2[i]]]
+    overlap <- calculate_overlap(m1, m2, genes1, genes2)
+    results$jaccard[i] <- overlap["jaccard"]
+    results$p_value[i] <- overlap["p_value"]
+    results$overlap_count[i] <- overlap["overlap"]
+  }
+  
+  # Add module sizes
+  results$size1 <- lengths(modules1)[results$module1]
+  results$size2 <- lengths(modules2)[results$module2]
+  
+  return(results)
+}
+
+plot_module_overlap <- function(comparison_results, p_threshold = 0.05, highlight_modules = NULL) {
+  # Prepare data for plotting
+  plot_data <- comparison_results %>%
+    arrange(desc(overlap_count)) %>%
+    mutate(
+      text_color = ifelse(adj_p_value < p_threshold, "cyan", "black"),
+      module1 = factor(module1, levels = unique(module1)),
+      module2 = factor(module2, levels = unique(module2)),
+      highlight_color = ifelse(module1 %in% highlight_modules, "red", "black")
+    )
+
+  # Create the heatmap
+  ggplot(plot_data, aes(x = module1, y = module2, fill = jaccard)) +
+    geom_tile(color = "white") +
+    scale_fill_viridis_b(
+      option = "plasma",  # This gives a nice blue to yellow gradient
+      name = "Jaccard Index"
+    ) +
+    geom_text(
+      aes(label = overlap_count, color = text_color),
+      size = 3
+    ) +
+    scale_color_identity() +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, color = plot_data$highlight_color),
+      axis.title = element_text(face = "bold"),
+      legend.position = "right",
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank()
+    ) +
+    labs(
+      x = "Network 1 Modules", 
+      y = "Network 2 Modules", 
+      title = "Module Overlap between Networks",
+      subtitle = paste("Cyan text indicates significant overlap (adj. p <", p_threshold, ")")
+    ) +
+    coord_fixed()  # This ensures that the tiles are square
+}
+
+```
+
+Let's compare modules by calculating the # of genes that overlap between modules and the Jaccard Index. The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets.
 
 
+```{r}
+#| label: compare_b6_to_cast
+#| fig-height: 6
+#| fig-width: 12
 
+network1 <- net_b6$genes_and_modules |> 
+  rename(gene = Genes, module = Modules)
+network2 <- net_do$genes_and_modules |> 
+  rename(gene = Genes, module = Modules)
+
+comparison_results <- compare_networks(network1, network2)
+comparison_results$adj_p_value <- p.adjust(comparison_results$p_value, method = "BH")
+
+# Create the plot
+plot_module_overlap(comparison_results, p_threshold = 0.01)+
+    labs(
+      x = "B6", 
+      y = "DO"
+      )
+
+```
+:::
 
 
 
