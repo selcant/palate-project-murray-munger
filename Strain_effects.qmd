@@ -255,105 +255,13 @@ This notebook is analyzing the palate gene expression from different genetic bac
 This first notebook includes:
 
   -   Principal component analysis using the filtered and normalized gene expression counts from DO, B6 and CAST mice to look at sources of variation.
-  -   Gene set variation analysis using filtered and normalized counts to identify biological processes and mammalian phenotypes that vary between B6 and CAST, across domains and over developmental time.
-  -   Weighted gene coexpression network analysis using 
+  -   Weighted gene coexpression network analysis using BioNERO package.
+  -   Consensus gene regulatory network inference with GENIE3, ARACNE and CLR using BioNERO package.
+  -   Use of MEFISTO to identify factors that change gradually along developmental time and other sources of variation that are independent of time.
   
 Differential gene expression analysis is in the second notebook called `Strain_effects_degenes_GRCm39.html`. The genetic characterization of gene expression and developmental phenotypes using the DO strains can be found in `Palate_qtl_mapping.html` notebook.
 
-```{r save_data_for_ian}
-#| warning: false
-#| message: false
-#| eval: false
-# loading the count data
-load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts_v3.RData") # raw_expr_mat, expr_mat_do, expr_mat_nondo 
-
-sample_annot <- sample_details %>% 
-  filter( !sample %in% contam_samples ) %>% 
-  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% 
-  select(sample,sex, AP_domain,Gest_stage, strain,batch, Harvest_date,LB_stage, palate_closure) %>% 
-  mutate( strain = case_when(strain =="B6J"~"B6",
-                             strain !="B6J"~strain)) 
-
-expr_mat <- expr_mat_do |> 
-  as_tibble(rownames = "gene_id") |> 
-  full_join(
-    expr_mat_nondo |> 
-      as_tibble(rownames = "gene_id")
-  ) |> 
-  #select( any_of(c("gene_id",sample_annot$sample))) |> 
-  column_to_rownames("gene_id") |> 
-  as.matrix()
-
-list( "normalized_gene_counts" = as_tibble(expr_mat[,sample_annot$sample,drop=F], rownames = "gene_id"),
-      "raw_gene_counts" = as_tibble(raw_expr_mat[,sample_annot$sample,drop=F], rownames = "gene_id") ,
-     "sample_annotations"=sample_annot,
-     "gene_annotations" = all_genes_palate
-     ) %>%
-  openxlsx::write.xlsx(., file = here("_data","Gene_counts_for_Ian_12052023.xlsx"))
-
-note <- paste0("Data saved on ", Sys.Date(), " by SA in rstudio Strain effects.qmd script.")
-expr_mat <- expr_mat[,sample_annot$sample,drop=F]
-raw_expr_mat <- raw_expr_mat[,sample_annot$sample,drop=F]
-save( expr_mat,
-      raw_expr_mat,
-      sample_annot,
-      all_genes_palate,
-      note,
-      file = here("_data","Gene_counts_for_Ian_12052023.RData")
-     )
-
-# downloadthis::download_file(
-#   path = system.file(here("_data","Gene_counts_for_Ian_10162023.xlsx"),
-#                           package = "downloadthis"),
-#   output_name = "Gene counts for Ian",
-#   button_label = "Download gene counts",
-#   button_type = "primary",
-#   has_icon = TRUE,
-#   icon = "fa fa-save",
-#   self_contained = FALSE
-# )
-
-pca <- prcomp( t( log1p( expr_mat[,sample_annot$sample,drop = F])), center = T, scale = F)
-pca_df <- as_tibble(pca$x, rownames = "sample") %>% 
-  left_join(sample_annot)
-var_explained <- (pca$sdev^2 / sum(pca$sdev^2))
-note <- paste0("Data saved on ", Sys.Date(), " by SA in rstudio Strain effects.qmd script.")
-# saving RData files so he can run PCA and other things
-save(
-  pca,
-  pca_df,
-  var_explained,
-  expr_mat,
-  sample_annot,
-  all_genes_palate,
-  note,
-  file = here("_data","Data_for_Ian_01302024.RData")
-)
-
-```
-
 # Principal component analysis
-
-Raw data was processed as follows:
-
--   Genes with a median transcript per million (TPM) lower than 0.5 were filtered while samples were grouped by gestational stage.
-    The grouping is necessary because there are uniquely expressed genes in each stage.
-
--   Counts were normalized using variance stablizing transformation as implemented in DESeq2::vst() function.
-
-In the final data set we have `r formatC(nrow(expr_mat_all), big.mark=",")` genes expressed across `r nrow(sample_annot_all)` samples.
-
-Brief summary of PCA results:
-
--   First principal component (PC1) groups samples by developmental time.
-
--   PC2 groups samples by strain background.
-
--   PC3 and PC4 groups samples by domain with PC4 specifically separating the POST domain from the others.
-
--   PC5 is highlighting outlier samples that are mostly DO. I included a follow up analysis on these samples in that tab.
-
--   PC6 groups samples based on sex of the animals.
 
 ```{r pca_b6_cast_do}
 #| message: false
@@ -387,6 +295,30 @@ pca_df <- as_tibble(pca$x, rownames = "sample") %>%
 var_explained <- (pca$sdev^2 / sum(pca$sdev^2))
 
 ```
+
+Raw data was processed as follows:
+
+-   Genes with a median transcript per million (TPM) lower than 0.5 were filtered while samples were grouped by gestational stage. The grouping is necessary because there are uniquely expressed genes in each stage.
+
+-   The replicates in the data due to re-sequencing are merged using the `DESeq2::collapseReplicates()` function.
+
+-   Counts were normalized using variance stablizing transformation as implemented in DESeq2::vst() function.
+
+
+In the final data set we have `r formatC(nrow(assay( dds_all_norm)[rownames(expr_mat_all),,drop=F]), big.mark=",")` genes expressed across `r ncol(assay( dds_all_norm))` samples.
+
+Brief summary of PCA results:
+
+-   First principal component (PC1) groups samples by developmental time.
+
+-   PC2 groups samples by strain background.
+
+-   PC3 and PC4 groups samples by domain with PC4 specifically separating the POST domain from the others.
+
+-   PC5 is highlighting outlier samples that are mostly DO. I included a follow up analysis on these samples in that tab.
+
+-   PC6 groups samples based on sex of the animals.
+
 
 ```{r pca_ora}
 #| cache: true
@@ -1042,11 +974,9 @@ pc5_drivers %>%
 
 ```
 
-Visualize driver genes in a 3D plot:
 ```{r}
 #| label: pc5_3d_loadings
-
-
+#| eval: false
 
 p <- plot_ly(pca_df, 
                x = ~PC1, 
@@ -1269,202 +1199,6 @@ pc6_drivers %>%
 
 ```
 :::
-
-# Gene set variation analysis
-
-Running GSVA with only the B6 and CAST samples, filtering out DO. 
-```{r run_gsva}
-#| warning: false
-#| message: false
-#| results: hide
-#| cache: true
-
-# reading in the GO + mgi downloaded from: http://www.informatics.jax.org/gotools/data/input/MGIgenes_by_GOid.txt
-go_terms <- read_tsv( "http://www.informatics.jax.org/gotools/data/input/MGIgenes_by_GOid.txt") %>% 
-  mutate( genes = str_split(genes, ",")) %>% 
-  unnest() # separete the symbols, note the overlap: length(intersect(unique(go_terms$genes), npc.genes$mgi_symbol) ) = 11806
-
-
-slim_go_terms <- read_tsv( "http://www.informatics.jax.org/gotools/data/input/map2MGIslim.txt") %>% 
-  select(-term) %>% 
-  mutate( ONT = case_when( aspect == "P" ~  "BP",
-                     aspect == "F" ~ "MF",
-                     aspect == "C" ~ "CC"
-                     )
-          ) %>% 
-  select(-aspect)
-
-genesbygo <- split(go_terms$genes, go_terms$GO_id)
-
-go_terms_annot <- go_terms %>%  
-  select(GO_id) %>% 
-  distinct() %>% 
-  left_join( slim_go_terms %>%  select( GO_id, ONT) %>% distinct())
-
-goannot_wdef <- AnnotationDbi::select(GO.db::GO.db, keys= unique(go_terms$GO_id), columns=c("GOID","DEFINITION","ONTOLOGY","TERM")) %>%
-  left_join( slim_go_terms, by=c("GOID"="GO_id")) %>% 
-  mutate( ONTOLOGY = ONT) %>% 
-  select(-ONT)
-
-go_bp <- goannot_wdef %>% filter( ONTOLOGY == "BP") %>% 
-  select(GOID) %>%  distinct()
-
-# adding mammalian phenotypes!
-genesbyMP <- split(mp_genes$symbol, mp_genes$mp_id)
-
-# expr - change gene id's to symbols for GSVA with GO
-expr.upd <- assay( dds_all_norm)[all_genes_palate_filtered$gene_id, !startsWith(colnames(assay( dds_all_norm)[all_genes_palate_filtered$gene_id,,drop=F]),"DO"),drop=F]
-rownames(expr.upd) <- all_genes_palate_filtered$symbol
-
-# run gsva
-gsva_go <- GSVA::gsva(  expr = expr.upd,
-                   gset.idx.list = genesbygo,
-                    method ="gsva",
-                    kcdf = "none",
-                    min.sz = 5,
-                    max.sz = 1000,
-                    mx.diff = TRUE
-                   )
-
-gsva_mp <- GSVA::gsva(  expr = expr.upd,
-                   gset.idx.list = genesbyMP,
-                    method ="gsva",
-                    kcdf = "none",
-                    min.sz = 5,
-                    max.sz = 5000, # setting to 1000 only removes 6 gene sets
-                    mx.diff = TRUE
-                   )
-
-# following up on rna results
-gsva_go %>% 
-  as_tibble(rownames = "Category") %>% 
-  filter( Category %in% go_bp$GOID) %>% #filtering for BP
-  rbind( gsva_mp |> 
-           as_tibble( rownames = "Category")) |> 
-  pivot_longer( cols = colnames(expr.upd),
-                values_to = "Enrichment_Score",
-                names_to = "sample") %>% 
-  # add covariates 
-  left_join( colData(dds_all_norm) %>%
-               as_tibble( rownames = "sample") |> 
-               select(sample, sex, strain, AP_domain,LB_stage_binned)) -> gsva_results
-
-gsva_results %>% 
-  group_by( Category) %>% 
-  rstatix::anova_test( Enrichment_Score ~ strain+AP_domain+LB_stage_binned) %>% 
-  rstatix::adjust_pvalue( method = "BH") %>%
-  rstatix::add_significance("p.adj") %>% 
-  ungroup() -> gsva_aov
-
-gsva_results %>% 
-  group_by(Category) %>% 
-  rstatix::tukey_hsd( Enrichment_Score ~ strain+AP_domain+LB_stage_binned) %>% 
-  ungroup() %>% 
-  as_tibble() -> gsva_tukey
-
-gsva_aov %>% 
-  as_tibble() %>% 
-  filter( p.adj.signif != "ns" & !is.na(p.adj) ) -> signif_eff_terms
-
-gsva_tukey %>% 
-  inner_join( ., select( signif_eff_terms, Category, term = Effect)) -> signif_results_tukey
-
-```
-
-
-### GO BP terms and mammalian phenotypes showing significant differences 
-
-Below is a table of Mammalian Phenotypes that show significant differences between strain, domain or over developmental time (adjusted p-value \< 0.01). There are too many go terms to display, instead I made the plots below to summarize the results for each effect.
-
-```{r gsva_results_table}
-#| warning: false
-#| message: false
-#| eval: true
-
-
-signif_eff_terms %>% 
-  filter( p.adj<0.01) %>% 
-  filter( str_detect(Category, "GO:")) |> 
-  left_join( goannot_wdef |> 
-               select(Category = GOID, TERM) |> 
-               distinct()) |> 
-  rbind(
-    signif_eff_terms |> 
-      filter( p.adj < 0.01) |> 
-      filter(str_detect(Category, "MP:")) |> 
-      left_join( mp_defs |> 
-                   select(Category = mp_id,
-                          TERM = term_name))
-  ) |> 
-  select(Effect, Category, TERM,p.adj) %>% 
-  filter(str_detect(Category, "MP:")) |> 
-  #filter( p.adj < 0.01) %>% 
-  distinct() %>% 
-  mutate( "Adjusted p-value" = formatC(p.adj, digits=2, format ="e")) %>% 
-  select(-p.adj) %>% 
-  create_dt()
-
-
-
-  
-```
-
-
-
-Let's simplify the GO terms that show significant differences between LB stage bins (adjusted p-value \< 0.01):
-
-```{r simplify_gsva_lb}
-#| warning: false
-#| message: false
-#| fig-height: 8
-#| fig-width: 16
-#| cache: true
-
-
-gsva_lb_stage_terms <- signif_eff_terms %>% 
-  filter( p.adj<0.01, Effect == "LB_stage_binned", str_detect(Category, "GO")) 
-
-simplifyGO( mat = GO_similarity(gsva_lb_stage_terms$Category, ont = "BP"))
-
-#compare_clustering_methods(GO_similarity(gsva_pn_go_terms$Category, ont = "BP"))
-
-```
-
-strain:
-```{r simplify_gsva_strain}
-#| warning: false
-#| message: false
-#| fig-height: 8
-#| fig-width: 16
-#| cache: true
-
-
-gsva_strain_terms <- signif_eff_terms %>% 
-  filter( p.adj<0.01, Effect == "strain", str_detect(Category, "GO")) 
-
-simplifyGO( mat = GO_similarity(gsva_strain_terms$Category, ont = "BP"))
-
-
-
-```
-
-AP domain:
-```{r simplify_gsva_domain}
-#| warning: false
-#| message: false
-#| fig-height: 8
-#| fig-width: 16
-#| cache: true
-
-
-gsva_domain_terms <- signif_eff_terms %>% 
-  filter( p.adj<0.01, Effect == "AP_domain", str_detect(Category, "GO")) 
-
-simplifyGO( mat = GO_similarity(gsva_domain_terms$Category, ont = "BP"))
-
-
-```
-
 
 
 # Weighted gene co-expression network analysis (WGCNA) 
@@ -3972,6 +3706,7 @@ plot_grn( edgelist_grn = do_genie3, gene_annots = all_genes_palate, interactive 
 
 ```
 
+The table is too big to display here as well. I am getting >100k interactions.
 ```{r}
 #| label: grn_table_do
 #| warning: false
@@ -4057,6 +3792,12 @@ outfile <- ("/projects/munger-lab/projects/palate-project-murray-munger/analysis
 MOFAobject <- MOFA2::run_mofa(MOFAobject_untrained, outfile = outfile)
 
 ```
+
+Here is what MEFISTO does from their [website](https://biofam.github.io/MOFA2/MEFISTO.html):
+
+"MEFISTO provides an unsupervised approach to integrate multi-modal data with continuous structures among the samples, e.g. given by spatial or temporal relationships. The aim of MEFISTO is to exploit such relationships between samples in the dimensionality reduction and disentangle smooth sources of variation given by factors that change gradually along the covariate and other source of variation that are independent of the covariate. Furthermore, it enables to interpolate/extrapolate to unseen timepoints or locations.
+
+If multiple groups of samples are present, e.g. timecourses from different individuals, MEFISTO furthermore models the heterogeneity of the temporal or spatial patterns across groups and allows to align timepoints across the groups in cases where there are no clear or imperfect correspondences between groups."
 
 ::: {#Mefisto_results .panel-tabset .nav-pills}
 
