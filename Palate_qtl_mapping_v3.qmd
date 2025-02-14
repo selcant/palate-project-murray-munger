@@ -1,0 +1,4701 @@
+---
+title: "Genetic characterization of the developmental kinetics of secondary palate morphogenesis and midfacial outgrowth"
+author: "Selcan Aydin"
+date: "`r Sys.Date()`"
+format: 
+  html:
+      embed-resources: true
+      standalone: true
+include-in-header:
+  - text: |
+      <style>
+      .panel-tabset > .nav-tabs,
+      .panel-tabset > .tab-content {
+        border: none;
+      }
+      </style>
+code-fold: true
+toc: true
+editor: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup}
+#| message: false
+#| warning: false
+
+# load packages
+library(tidyverse)
+library(Hmisc)
+library(ppcor)
+
+library(pheatmap)
+library(plotly)
+library(GGally)
+library(ggpubr)
+library(ggplot2)
+library(corrplot)
+
+library(gprofiler2)
+set_base_url("https://biit.cs.ut.ee/gprofiler_archive3/e108_eg55_p17/")
+library(WGCNA)
+library(simplifyEnrichment)
+
+library(qtl2)
+library(intermediate)
+
+library(DT)
+
+library(here)
+
+select <- dplyr::select # I am adding this explicitly
+rename <- dplyr::rename # I am adding this explicitly
+filter <- dplyr::filter # I am adding this explicitly
+summarize <- dplyr::summarize # I am adding this explicitly
+# functions
+
+# rankZ
+rankZ <- function (x) {
+  x <- rank(x, na.last = "keep", ties.method = "average")/(sum(!is.na(x)) + 1)
+  qnorm(x)
+}
+
+create_dt <- function(x){
+  DT::datatable(x,
+                extensions = 'Buttons',
+                rownames = FALSE, 
+                filter="top",
+                options = list(dom = 'Blfrtip',
+                               buttons = c('copy', 'csv', 'excel'),
+                               pageLength = 5, 
+                               scrollX= TRUE
+                               ))
+  
+}
+
+interp_bp <- function(df) {
+  chroms <- c(as.character(1:19), "X")
+  df <- arrange(df, peak_chr, peak_cM)
+  peak_gpos <- select(df, peak_chr, peak_cM)
+  chr <- peak_gpos$peak_chr
+  f <- factor(chr, chroms)
+  peak_gcoord_list <- split(peak_gpos$peak_cM, f)
+  peak_pcoord_list <- qtl2::interp_map(peak_gcoord_list, gmap, pmap)
+  df$interp_bp_peak <- unsplit(peak_pcoord_list, f)
+  df
+}
+
+# Running mediation locally for transbands
+do_global_mediation <- function(gene.name,p.chr, peak.info, probs, expr.target, expr.mediator, covar, genes){
+  
+  gene <- filter(peak.info, symbol==gene.name & peak_chr==p.chr)[1,]
+  if(dim(gene)[1] >1){ print("check the peaks!")}
+  meds <- genes 
+  meds <- meds[meds$gene_id %in% colnames(expr.mediator),]    
+  mediator <- expr.mediator[ ,meds$gene_id, drop=FALSE ]
+  target   <- expr.target[ ,gene$gene_id,drop=FALSE ]
+  marker   <- map_dat2 %>% filter(pos_cM == gene$peak_cM)
+  annot    <- meds %>% mutate(chr=chromosome,pos=abs(end+start)/2)
+  geno     <- pull_genoprobpos(probs,marker$marker)
+
+  med.scan <- mediation.scan(target= target,
+                            mediator = mediator,
+                            annotation = annot,
+                            covar =  covar,
+                            qtl.geno = geno, verbose=FALSE) 
+  med.scan <- med.scan %>% 
+    select(-chr) %>% 
+    mutate(target   = gene.name,
+           peak_chr = p.chr) %>% 
+    left_join(.,genes) %>% 
+    rename("mediator"="symbol")
+  return(med.scan)
+}
+
+# domain colors
+domain_colors <- c(MAX=rgb(163,82,157, maxColorValue = 255), 
+                   POST=rgb(158,156,201, maxColorValue = 255),
+                   PM=rgb(252,206,93, maxColorValue = 255))
+
+# strain colors
+strain_colors <- c( B6 = "#555555", 
+                    CAST = "#009E73",
+                    DO = rgb(163,82,157, maxColorValue = 255))
+
+# founder colors
+founder_colors <- c(AJ = "#F0E442", B6 = "#555555", `129` = "#E69F00", NOD = "#0072B2",
+   NZO = "#56B4E9", CAST = "#009E73", PWK = "#D55E00", WSB = "#CC79A7")
+
+```
+
+```{r load_data}
+#| message: false
+#| warning: false
+
+# reading in the sample details + some phenotypes
+sample_details <- readr::read_csv("/projects/munger-lab/projects/palate-project-murray-munger/samplesheet.csv") 
+# remove contaminated samples then filter for only DO@13.5
+contam_samples <- c("B6_12.5_PM_1","B6_13.5_POST_3", "CAST_14.5_MAX_7", "DO_13.5_MAX_6", "DO_13.5_MAX_14", "DO_13.5_MAX_14_2", "B6_13.5_MAX_3")
+
+sample_annot <- sample_details %>% 
+  filter( !sample %in% contam_samples) %>% 
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% 
+  filter( strain =="DO") %>% 
+  filter(!( strain =="DO" & Gest_stage == "E12.5") )  |> 
+  mutate( LB_stage_binned = case_when(
+    ( LB_stage < 13 )~"1",
+    #(between(LB_stage, 12.5, 13))~"1",
+    (between(LB_stage, 13,13.5))~"2",
+    (between(LB_stage, 13.5, 14))~"3",
+    (between(LB_stage, 14, 14.5))~"4",
+    (between(LB_stage, 14.5, 15))~"5",
+    (between(LB_stage, 15, 15.5))~"6"
+  ))
+
+# sample_annot |>
+#   mutate( LB_stage_binned = case_when(
+#     ( LB_stage < 13 )~"1",
+#     #(between(LB_stage, 12.5, 13))~"1",
+#     (between(LB_stage, 13,13.5))~"2",
+#     (between(LB_stage, 13.5, 14))~"3",
+#     (between(LB_stage, 14, 14.5))~"4",
+#     (between(LB_stage, 14.5, 15))~"5",
+#     (between(LB_stage, 15, 15.5))~"6"
+#   ))
+#   mutate( LB_stage_binned = as_factor(LB_stage_binned)) |>
+#   #dplyr::count(new_bin, strain)
+#   ggplot()+
+#   aes(x = LB_stage,
+#       y = Gest_stage,
+#       col = LB_stage_binned,
+#       shape = strain)+
+#   #geom_point()+
+#   geom_jitter(size = 3, alpha = .7)+
+#   #scale_color_manual(values = strain_colors)+
+#   color_palette("Dark2")+
+#   ggtitle("Bin = 0.5 day")+
+#   ylab("Gestational Stage")+
+#   labs( color = "Bins", shape = "Strain")+
+#   scale_x_continuous( name = "LB stage",
+#                     #breaks = c(12,12.25,12.75, 13.5, 14,14.25, 14.75, 15.1, 15.6, 16)
+#                     breaks = seq(from = 12, to =17, by = 0.25)
+#                     )+
+#   theme_pubclean(flip = TRUE)
+
+
+# reading in gene annotations
+all.genes_v105 <- read_tsv(here("_data","ENSMUSGid_to_symbol_v105.txt"),
+                           col_names = c("gene_id","symbol","gene_biotype","chromosome","start","end"), skip =1) |>  
+  mutate(midpoint = (start+end)/2)
+
+# load data used in mapping
+load(here("../qtl_mapping/DO_Palate_eQTL_forMapping_v4.RData")) # expr, exprZ, genoprobs ..etc.
+
+# load eQTL peaks lod > 5
+# load(here("../qtl_mapping/DO_Palate_paired_eQTL_peaks.RData")) # peaks
+# don't need the one above since the effects has the peaks as well.
+
+# load eQTL peak effects lod >7
+load(here("../qtl_mapping/DO_Palate_eQTL_effs_lod7_v4.RData")) # effects_blup, effects_std, peaks
+
+all_genes_palate <- all.genes_v105 %>%
+  filter(gene_id %in% rownames(expr))
+
+
+# Genes from Ian:
+pheno_gene_list <- readxl::read_xlsx(here("_data","Supp6_BoneGeneList.xlsx")) |> 
+  select( symbol = gene_name) |> 
+  distinct() |> 
+  mutate(type = "pheno", type_long = "bone phenotype gene list (Sabik et al 2020, Table S6)")
+
+skeletal_gene_table <- readxl::read_xlsx(here("_data","Skeletal_stem_progenitor_markers.xlsx")) |> 
+  dplyr::rename("symbol" = "gene") |> 
+  mutate(type = "MSC", type_long = "MSC/skeletal progenitor markers")
+
+figure_genes <- c(MSC =c("Axin2","Gli1","Meis2","Lepr","Prrx1"),
+           skeletal = c("Sox9","Runx2","Sp7","Nfatc1","Bcl11b","Msx2","Msx1","Egr1","Egr2"),
+           osteoclast = c("Spi1","Tnfsf11","Tnfrsf11","PParg","Fos","Junb","Csf1","Csf1r","Ostf1",
+                          "Acp5","Mmp9","Ctsk","Timp1","Atp6v0d2","Adgre1","Sfrp4","Dcstamp","Ocstamp","Htra1","Tcirg1","Itgb3","Gnptab"),
+           osteoblast = c("Alpl","Ibsp","Phospho1","Vdr","Sparc","Panx3","Enpp1","Bglap","Bglap2","Clecl11a","Sost","Dmp1","Col1a1","Col1a2","Bgn","Dcn","Thbs2")
+           
+           ) |> 
+  as_tibble(rownames = "type" ) |> 
+  rename( symbol = value  ) |> 
+  mutate(type = gsub("[0-9]","",type)) |> 
+  mutate( type_long = case_when(type =="MSC"~"MSC/skeletal progenitor markers",
+                                type =="skeletal"~"Skeletal speciation markers",
+                                type =="osteoclast"~"Osteoclast markers",
+                                type =="osteoblast"~"osteoblast/osteocyte markers"
+                                )) 
+
+morpho_genes <- readxl::read_xlsx(path = here("_data","abnormal craniofacial morphology-MGIBatchReport.xlsx")) |> 
+  select(symbol = Symbol, mgi_id = `MGI Gene/Marker ID`, gene_biotype = `Feature Type`) 
+
+# add gene names to MGI ids for genes
+# checked the overlap
+# length(intersect(mgi_id_annots$symbol, all_genes_palate$symbol)) # 16958/17146
+# most of the missing ones are RPXX-YY genes or Gms
+mgi_id_annots <- read_delim( file = here("_data","MRK_List1.rpt"),
+                             #MGI Marker Accession ID	Chromosome	cM Position	Genome Coordinate Start	Genome Coordinate End	Genome Strand	Marker Symbol	Status	Marker Name	Marker Type	Feature Types (|-delimted)	Marker Synonyms (|-delimited)
+                             col_names = c("mgi_id",
+                                           "chromosome",
+                                           "pos_cM",
+                                           "start",
+                                           "end",
+                                           "strand",
+                                           "symbol",
+                                           "status",
+                                           "marker_name",
+                                           "marker_type",
+                                           "feature_types",
+                                           "marker_synms"), skip = 1) 
+
+# getting the gene list for mammalian phenotypes
+mp_genes <- read_delim( file = here("_data","MGI_PhenoGenoMP.rpt"),
+                        # Allelic Composition	Allele Symbol(s)	Genetic Background	Mammalian Phenotype ID	PubMed ID	MGI Marker Accession ID (comma-delimited)
+                        col_names = c("allelic_comp",
+                                      "allele_symbol",
+                                      "genetic_background",
+                                      "mp_id",
+                                      "pubmed_id",
+                                      "mgi_id")) |> 
+  select(mp_id, mgi_id) |> 
+  distinct() |> 
+  separate_longer_delim( mgi_id, delim = "|") |> 
+  left_join(mgi_id_annots |> 
+              select(mgi_id, symbol)) 
+# add mammalian phenotype definitions
+mp_defs <- read_delim( file = here("_data","VOC_MammalianPhenotype.rpt"),
+                       col_names = c("mp_id","term_name","term_details")) 
+
+
+
+# # This is dirtier than I thought so I am leaving it as is! We are not gaining a lot of genes from this to make this worth my time. 
+# # I want to add all the synonoms to mgi ids
+# mgi_id_annots_all <- mgi_id_annots |> 
+#   filter( !is.na(marker_synms)) |> 
+#   select( mgi_id, marker_synms) |> 
+#   separate_longer_delim( marker_synms, delim = "|") |> 
+#   rename( symbol = marker_synms) |> 
+#   filter( !symbol %in% (mgi_id_annots |> 
+#                           filter(is.na(marker_synms)))$marker_symbol ) |> # there are some synonoms with an identical gene name to others! ex:H19 & Igs40. I assume those are old and incorrect
+#   rbind(
+#     mgi_id_annots |> 
+#       select(mgi_id, symbol = marker_symbol)
+#   ) |> 
+#   distinct()
+
+
+
+# load and
+# some stuff for plotting:
+uchr <- c(as.character(1:19), "X")
+cl <- dplyr::select(map_dat2, chr, pos_bp) %>% 
+  group_by(chr) %>%
+  summarize(len=max(pos_bp))
+clp <- with(cl, setNames(len, chr))
+chrom_lens <- setNames(as.numeric(clp[uchr]), uchr)
+chrom_lens_offset <- cumsum(chrom_lens) - chrom_lens
+chrom_lens_midpt <- chrom_lens_offset + chrom_lens/2
+
+
+# annotate peaks
+peaks_annotated <- peaks %>% 
+  cbind(effects_blup) %>% # add effects
+  rename( gene_id = phenotype) %>% 
+  #filter( !gene_id %in% low_genes$gene_id) %>% 
+  left_join( ., all_genes_palate) %>% # add gene information
+  mutate( same_chrom = (peak_chr ==chromosome ),
+          bp_diff = abs(interp_bp_peak - midpoint)) %>% 
+  mutate( local = ifelse(
+    same_chrom ==FALSE, FALSE, ifelse( bp_diff < 10e06, TRUE , FALSE)
+  ) ) # add local/distant
+
+
+## adding cc_variants for association mapping
+query_variants <- create_variant_query_func("/projects/omics_share/mouse/GRCm39/supporting_files/qtl2/fv.2021.snps.db3", 
+                                            id_field="variants_id")
+query_genes <- create_gene_query_func("/projects/omics_share/mouse/GRCm39/supporting_files/qtl2/fv.2021.snps.db3", 
+                                      chr_field="chromosome", 
+                                      name_field="symbol",
+                                      start_field="start_position", 
+                                      stop_field="end_position")
+
+
+```
+
+
+# Variation in gene expression in maxilla domain of E13.5 embryos
+
+There are `r formatC(nrow(all_genes_palate),big.mark=",")` genes measured across `r ncol(expr)` samples. As it can be seen below (first tab), the maxilla transcriptomes show variation across samples with similar distributions in males and females.  
+
+  -   I performed principal component analysis (PC) to investigate the sources of variation observed in gene expression. 
+  -   To further study how differences in gene expression are related to the differences in phenotypic traits such as LB stage and palate closure I used gene set variation analysis (GSVA). GSVA summarizes gene sets into enrichment scores, read out of activity (expression), for each sample which allows comparison across different groups. I compared the enrichment scores between embryos across LB stage bins and embryos with a variety of palate closure phenotypes. I also performed QTL mapping with the enrichment scores and I am higlighting some of the interesting ones.
+  -   Next, I used the DO WGCNA network obtained in the `Strain_effects_GRCm39.html` notebook to perform QTL mapping with the eigengenes. 
+
+
+
+::: panel-tabset
+
+## Overview
+
+```{r expr_var}
+#| warning: false
+#| message: false
+
+var.palate <- expr %>% 
+  t() %>% 
+  as_tibble(.) %>%
+  summarise_all(list(~ var(., na.rm = T))) %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column() %>%
+  rename(gene_id = rowname, var = V1) %>%
+  arrange(desc(var))
+
+n.palate <- expr %>%
+  t() %>% 
+  as_tibble(.) %>%
+  summarise_all(list(~ sum(!is.na(.)))) %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column() %>%
+  rename(gene_id = rowname, n = V1) %>%
+  arrange(desc(n))
+
+mean.palate <- expr %>%
+  t() %>% 
+  as_tibble(.) %>%
+  summarise_all(list(~ mean(., na.rm = T))) %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column() %>%
+  rename(gene_id = rowname, mean = V1) %>%
+  arrange(desc(mean))
+
+var.palate <- inner_join(var.palate, mean.palate) %>%
+  inner_join(., n.palate) %>%
+  left_join(., select(all_genes_palate, gene_id, symbol, chromosome)) %>%
+  mutate(sd = sqrt(var)) %>%
+  mutate(cv.palate = 100 * sd / (mean)) %>%
+  rename(mean.palate = mean, sd.palate = sd, n.palate=n, var.palate=var)
+
+# npc stats per sample
+var_per_sample <- expr %>% 
+  as_tibble( rownames = "gene_id") %>%
+  summarise( across( where(is.numeric),  var , na.rm=T )) %>% 
+  pivot_longer( 1:ncol(.), names_to = "sample", values_to ="var_sample") %>% 
+  left_join( select(covarTidy, sample, sex))
+  
+
+mean_per_sample <- expr %>%
+  as_tibble( rownames = "gene_id") %>%
+  summarise( across( where(is.numeric),  mean , na.rm=T )) %>% 
+  pivot_longer( 1:ncol(.), names_to = "sample", values_to ="mean_sample") %>% 
+  left_join( select(covarTidy, sample, sex))
+
+
+```
+
+Here are the distributions of mean and variation of the DO line transcriptomes.
+
+```{r var_plots_per_sample}
+#| warning: false
+#| message: false
+#| fig-width: 16
+#| fig-height: 4
+
+var_per_sample %>% 
+  ggplot() +
+  aes(x = var_sample, col = sex, fill =sex) +
+  geom_histogram(bins = 50 ) +
+  xlab("Variance") +
+  theme_pubclean(base_size = 14)+
+  scale_x_log10()+
+  color_palette("npg")+
+  fill_palette("npg") -> p.var_sample.hist
+
+mean_per_sample %>% 
+  ggplot() +
+  aes(x = mean_sample, col = sex, fill =sex) +
+  geom_histogram(bins = 50 ) +
+  xlab("Mean") +
+  theme_pubclean(base_size = 14)+
+  scale_x_log10()+
+  color_palette("npg")+
+  fill_palette("npg") -> p.mean_sample.hist
+
+full_join(var_per_sample, mean_per_sample) %>% 
+  mutate(cv_sample = 100*(sqrt(var_sample))/mean_sample) %>%
+  ggscatter(
+    .,
+  x = "mean_sample", y = "var_sample", size = 3, alpha = 0.6,
+  add = "reg.line", # Add regression line
+  conf.int = TRUE, # Add confidence interval
+  col = "sex",
+  add.params = list(color = "blue", fill = "lightgray"),
+  show.legend.text = FALSE
+  #yscale = "log10", xscale = "log10"
+) +
+  #stat_cor(method = "pearson", label.x = 10, label.y = 21) + # Add correlation coefficient
+  xlab("Mean per sample") +
+  ylab("Variance per sample") +
+  theme_pubclean(base_size = 14) +
+  color_palette("npg")+
+  fill_palette("npg")+
+  facet_wrap(~sex)+
+  theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank()
+  )-> p.var.mean_sample
+
+ggarrange( p.mean_sample.hist, p.var_sample.hist,  p.var.mean_sample, nrow = 1, widths = c(0.5,0.5,1))
+
+```
+
+Below are the distributions of mean and variation of individual transcripts across DO lines.
+
+```{r var_plots_per_gene}
+#| warning: false
+#| message: false
+#| fig-width: 14
+#| fig-height: 4
+
+var.palate %>%
+  ggplot() +
+  aes(x = mean.palate) +
+  geom_histogram(bins = 200) +
+  xlab("Mean") +
+  theme_pubclean(base_size = 14)+
+  scale_x_log10() -> p.mean.hist
+
+var.palate %>%
+  ggplot() +
+  aes(x = var.palate) +
+  geom_histogram(bins = 200 ) +
+  xlab("Variance") +
+  theme_pubclean(base_size = 14)+
+  scale_x_log10()  -> p.var.hist
+
+var.palate %>%
+  ggplot() +
+  aes(x = cv.palate) +
+  geom_histogram(bins = 200 ) +
+  xlab("% Coefficient of variation") +
+  theme_pubclean(base_size = 14)+
+  scale_x_log10()  -> p.cv.hist
+
+ggscatter(var.palate,
+  x = "mean.palate", y = "var.palate", size = 3, alpha = 0.6,
+  add = "reg.line", # Add regression line
+  conf.int = TRUE, # Add confidence interval
+  add.params = list(color = "blue", fill = "lightgray"), show.legend.text = FALSE,
+  #yscale = "log10", xscale = "log10"
+) +
+  stat_cor(method = "pearson", label.x =9, label.y = 18) + # Add correlation coefficient
+  xlab("Mean") +
+  ylab("Variance") +
+  theme_pubclean(base_size = 14) +
+  rremove("legend") -> p.var.mean
+
+ggarrange( p.mean.hist, p.var.hist, p.var.mean, nrow = 1)
+
+```
+
+
+## Principal component analysis
+
+```{r do_pca}
+#| warning: false
+#| message: false
+
+
+pca <- prcomp( t(log1p(expr)), center = T, scale. = F)
+
+
+pca_df <- as_tibble(pca$x, rownames = "sample") %>% 
+  left_join(sample_annot)
+
+var_explained <- (pca$sdev^2 / sum(pca$sdev^2))
+
+```
+
+```{r scree_plot}
+#| message: false
+#| warning: false
+#| fig-width: 5
+#| fig-height: 4
+#| eval: false  
+
+tibble(var =  var_explained[1:10]* 100, PC = paste0("PC", seq(1:10))) %>%
+  arrange(desc(var)) %>%
+  mutate(label = factor(PC, levels = PC)) %>%
+  ggplot(aes(x = label, y = var)) +
+  geom_col() +
+  xlab("Principal Component") +
+  ylab("% Variation explained") +
+  theme_pubclean(base_size = 14)+
+  ylim(0,25)
+
+
+```
+
+```{r first_ten_pcs_lb_stage}
+#| eval: false
+#| message: false
+#| warning: false
+#| fig-width: 14
+#| fig-height: 14
+
+pca$x %>%
+  as_tibble(rownames = "sample") %>% 
+  left_join(sample_annot) %>%
+  ggpairs(.,
+    columns = 2:11, progress = FALSE, ggplot2::aes(color =LB_stage),
+    upper = list(continuous = "density", combo = "box_no_facet"),
+    lower = list(continuous = "points", combo = "dot_no_facet")
+  ) + 
+  theme_pubclean(base_size = 14) +
+  # scale_color_manual( values = strain_colors)+
+  # scale_fill_manual( values = strain_colors)+
+  scale_color_viridis_c()+
+  scale_fill_viridis_c()+
+  #color_palette("npg")+
+  #fill_palette("npg")+
+  theme(legend.position = "right")
+
+```
+
+```{r pc123_3dplot}
+#| message: false
+#| warning: false
+#| fig-width: 8
+#| fig-height: 6
+
+fig <- plot_ly(pca_df, 
+               x = ~PC1, 
+               y = ~PC2, 
+               z = ~PC3,
+               symbol = ~sex,
+               # symbol = ~strain,
+               symbols = c("circle","square"),
+               text = ~sample,
+               color = ~LB_stage,
+               colors = viridisLite::viridis(100,begin = 0, end = 1, direction = -1, option = "D"),
+               mode = "markers",
+               type = "scatter3d"
+)
+fig <- fig %>% 
+  layout(scene = list(xaxis = list(title = paste0("PC1 (",100*round(var_explained[1],2),"%)")),
+                                   yaxis = list(title = paste0("PC2 (",100*round(var_explained[2],2),"%)")),
+                                   zaxis = list(title = paste0("PC3 (",100*round(var_explained[3],2),"%)")))
+)
+
+fig
+
+```
+
+
+```{r pc1_pc2_plot}
+#| warning: false
+#| message: false
+
+pca_df |> 
+  ggplot()+
+  aes( x= PC1,
+       y = PC2,
+       col = LB_stage,
+       shape = sex)+
+  geom_point( size = 3, alpha = 0.7)+
+  scale_color_viridis_c(option = "D", direction = -1)+
+  theme_pubclean()+
+  xlab( paste0("PC1 (",100*round(var_explained[1],2),"%)"))+
+  ylab( paste0("PC2 (",100*round(var_explained[2],2),"%)"))+
+  scale_shape_manual(values = c("circle","square"))
+  
+  
+
+```
+
+<!-- Sample highlights: -->
+
+<!-- ```{r pca_highlight_3dplot} -->
+<!-- #| message: false -->
+<!-- #| warning: false -->
+<!-- #| fig-width: 8 -->
+<!-- #| fig-height: 6 -->
+
+<!-- samples <- c("DO_13.5_MAX_16", -->
+<!--                        "DO_13.5_MAX_38", -->
+<!--                        "DO_13.5_MAX_46", -->
+<!--                        "DO_13.5_MAX_47", -->
+<!--                        "DO_13.5_MAX_80", -->
+<!--                        "DO_13.5_MAX_83", -->
+<!--                        "DO_13.5_MAX_89") -->
+
+<!-- pca_df_highlight <- pca_df |> -->
+<!--   mutate( label = ifelse( sample %in% samples, "Yes", "No")) -->
+
+<!-- fig <- plot_ly(pca_df_highlight, -->
+<!--                x = ~PC1, -->
+<!--                y = ~PC2, -->
+<!--                z = ~PC5, -->
+<!--                # symbol = ~strain, -->
+<!--                # symbols = c("circle","diamond","square"), -->
+<!--                text = ~sample, -->
+<!--                color = ~label, -->
+<!--                mode = "markers", -->
+<!--                type = "scatter3d" -->
+<!-- ) -->
+<!-- fig <- fig %>% -->
+<!--   layout(scene = list(xaxis = list(title = paste0("PC1 (",100*round(var_explained[1],2),"%)")), -->
+<!--                                    yaxis = list(title = paste0("PC2 (",100*round(var_explained[2],2),"%)")), -->
+<!--                                    zaxis = list(title = paste0("PC5 (",100*round(var_explained[5],2),"%)"))) -->
+<!-- ) -->
+
+<!-- fig -->
+
+<!-- ``` -->
+
+<!-- ```{r pca_highlights_pairs} -->
+
+
+<!-- pca$x %>% -->
+<!--   as_tibble(rownames = "sample") %>% -->
+<!--   left_join(sample_annot) %>% -->
+<!--   mutate( label = ifelse( sample %in% samples, "Yes", "No")) |> -->
+<!--   ggpairs( -->
+<!--     columns = 2:6, progress = FALSE, ggplot2::aes(color =label), -->
+<!--     upper = list(continuous = "density", combo = "box_no_facet"), -->
+<!--     lower = list(continuous = "points", combo = "dot_no_facet") -->
+<!--   ) + -->
+<!--   theme_pubclean(base_size = 14) + -->
+<!--   # scale_color_manual( values = strain_colors)+ -->
+<!--   # scale_fill_manual( values = strain_colors)+ -->
+<!--   # scale_color_viridis_d()+ -->
+<!--   # scale_fill_viridis_d()+ -->
+<!--   color_palette("npg")+ -->
+<!--   fill_palette("npg")+ -->
+<!--   theme(legend.position = "right") -->
+
+
+<!-- ``` -->
+
+<!-- CLustering of samples based on PC1 and PC2: -->
+<!-- ```{r pc1_pc2_cluster} -->
+<!-- clust <- kmeans( pca$x[,c(1,2),drop=F], centers = 2) -->
+
+<!-- pca_df |>  -->
+<!--   left_join(enframe(clust$cluster), by = c("sample"="name")) |>  -->
+<!--   rename(cluster= value) |>  -->
+<!--   ggplot()+ -->
+<!--   aes( -->
+<!--     x = PC1, -->
+<!--     y = PC2, -->
+<!--     col = as.factor(cluster) -->
+<!--   )+ -->
+<!--   geom_point()+ -->
+<!--   theme_pubclean() -->
+
+<!-- ``` -->
+
+What biological processes and pathway are overrepresented in drivers of PC1 and PC2?
+
+```{r ora_pca}
+#| warning: false
+#| message: false
+#| cache: true
+
+
+# pc drivers
+pc1_drivers <- pca$rotation[,"PC1", drop = FALSE] %>% 
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all_genes_palate %>%  
+               select(gene_id, symbol)
+             ) %>% 
+  filter( abs(PC1) >= quantile(abs(PC1), 0.95))
+
+pc2_drivers <- pca$rotation[,"PC2", drop = FALSE] %>% 
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all_genes_palate %>%  
+               select(gene_id, symbol)
+             ) %>% 
+  filter( abs(PC2) >= quantile(abs(PC2), 0.95))
+
+pc3_drivers <- pca$rotation[,"PC3", drop = FALSE] %>% 
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all_genes_palate %>%  
+               select(gene_id, symbol)
+             ) %>% 
+  filter( abs(PC3) >= quantile(abs(PC3), 0.95))
+
+pc4_drivers <- pca$rotation[,"PC4", drop = FALSE] %>% 
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all_genes_palate %>%  
+               select(gene_id, symbol)
+             ) %>% 
+  filter( abs(PC4) >= quantile(abs(PC4), 0.95))
+
+pc5_drivers <- pca$rotation[,"PC5", drop = FALSE] %>% 
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all_genes_palate %>%  
+               select(gene_id, symbol)
+             ) %>% 
+  filter( abs(PC5) >= quantile(abs(PC5), 0.95))
+
+
+g.pc1 <- gost(
+  query = pc1_drivers$symbol,
+  organism = "mmusculus",
+  domain_scope = "custom",
+  custom_bg = all_genes_palate$symbol,
+  evcodes = TRUE
+)
+g.pc1$result <- g.pc1$result %>% filter(term_size < 660)
+
+g.pc2 <- gost(
+  query = pc2_drivers$symbol,
+  organism = "mmusculus",
+  domain_scope = "custom",
+  custom_bg = all_genes_palate$symbol,
+  evcodes = TRUE
+)
+g.pc2$result <- g.pc2$result %>% filter(term_size < 660)
+
+g.pc3 <- gost(
+  query = pc3_drivers$symbol,
+  organism = "mmusculus",
+  domain_scope = "custom",
+  custom_bg = all_genes_palate$symbol,
+  evcodes = TRUE
+)
+g.pc3$result <- g.pc3$result %>% filter(term_size < 660)
+
+g.pc4 <- gost(
+  query = pc4_drivers$symbol,
+  organism = "mmusculus",
+  domain_scope = "custom",
+  custom_bg = all_genes_palate$symbol,
+  evcodes = TRUE
+)
+g.pc4$result <- g.pc4$result %>% filter(term_size < 660)
+
+g.pc5 <- gost(
+  query = pc5_drivers$symbol,
+  organism = "mmusculus",
+  domain_scope = "custom",
+  custom_bg = all_genes_palate$symbol,
+  evcodes = TRUE
+)
+g.pc5$result <- g.pc5$result %>% filter(term_size < 660)
+
+
+```
+
+
+```{r pc1_2_drivers_table}
+#| warning: false
+#| message: false
+pc1_drivers %>% 
+  mutate(PC = "PC1") |> 
+  dplyr::rename( "value" = "PC1") |> 
+  rbind(
+    pc2_drivers |> 
+      mutate(PC = "PC2") |> 
+      dplyr::rename("value" = "PC2")
+  ) |> 
+  left_join(
+    all_genes_palate %>% 
+      select(gene_id, chromosome)
+  ) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  create_dt()
+
+```
+
+```{r ora_pca_table}
+#| warning: false
+#| message: false
+g.pc1$result %>% 
+  mutate( PC = "PC1") %>% 
+  select( PC, term_name, source, FDR = p_value, term_size, intersection_size,intersection) %>%  # intersecion: adding the list of genes identified as overlapping with each category
+  filter( FDR <0.05) %>% 
+  rbind(
+    g.pc2$result %>% 
+  mutate( PC = "PC2") %>% 
+  select( PC, term_name, source, FDR = p_value, term_size, intersection_size,intersection) %>% 
+    filter( FDR <0.05) 
+  ) %>% 
+  #   rbind(
+  #   g.pc3$result %>% 
+  # mutate( PC = "PC3") %>% 
+  # select( PC, term_name, source, FDR = p_value, term_size, intersection_size,intersection) %>% 
+  #   filter( FDR <0.05) 
+  # ) %>% 
+  #     rbind(
+  #   g.pc4$result %>% 
+  # mutate( PC = "PC4") %>% 
+  # select( PC, term_name, source, FDR = p_value, term_size, intersection_size,intersection) %>% 
+  #   filter( FDR <0.05) 
+  # ) %>% 
+  # rbind(
+  #   g.pc5$result %>% 
+  # mutate( PC = "PC5") %>% 
+  # select( PC, term_name, source, FDR = p_value, term_size, intersection_size,intersection) %>% 
+  #   filter( FDR <0.05) 
+  # ) %>% 
+  mutate_if( is.numeric, formatC, digits =2) %>% 
+  create_dt()
+
+```
+
+
+## Correlation
+
+Looking at the correlation of the transcriptomes between individual samples. 
+
+```{r sample_corr}
+#| message: false
+#| warning: false
+#| cache: true
+
+palate_sample_cor <- rcorr(expr, type = "pearson")
+palate_sample_cor_sp <- rcorr(t(exprZ), type = "spearman")
+
+
+sample_cor_df <- palate_sample_cor$r |> 
+  as_tibble( rownames = "sampleid_row") |> 
+  pivot_longer(
+    cols = 2:97,
+    names_to = "sampleid_col",
+    values_to = "cor_p"
+  ) |> 
+  left_join(
+    palate_sample_cor_sp$r |> 
+      as_tibble( rownames = "sampleid_row") |> 
+      pivot_longer(
+        cols = 2:97,
+        names_to = "sampleid_col",
+        values_to = "cor_sp"
+    )
+  )
+  
+
+```
+
+
+```{r sample_cor_heatmaps}
+#| warning: false
+#| message: false
+#| fig-height: 16
+#| fig-width: 20
+#
+samples <- c("DO_13.5_MAX_46",
+             "DO_13.5_MAX_47",
+             "DO_13.5_MAX_80",
+             "DO_13.5_MAX_83",
+             "DO_13.5_MAX_89")
+highlight_samples <- sample_annot |> 
+  mutate( label = ifelse( sample %in% samples, sample, "")) |> 
+  select(label, sample) |> 
+  column_to_rownames("sample")
+
+# pheatmap(palate_sample_cor$r,
+#          labels_row = highlight_samples[rownames(palate_sample_cor$r),],
+#          labels_col = highlight_samples[colnames(palate_sample_cor$r),],
+#          clustering_distance_rows = "euclidean",
+#          clustering_distance_cols = "euclidean",
+#          scale = "none",
+#          main = "Pearson correlation of gene counts"
+#          )
+
+pheatmap(palate_sample_cor_sp$r,
+         labels_row = highlight_samples[rownames(palate_sample_cor$r),],
+         labels_col = highlight_samples[colnames(palate_sample_cor$r),],
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         scale = "none",
+         main = "Spearman correlation of rankZ transformed gene counts"
+         )
+```
+
+
+
+
+## Sex effects
+
+```{r sex_eff}
+#| warning: false
+#| message: false
+#| cache: true
+
+# doing an anova first and then tukey's 
+# reporting ones with significance on both as genes with sex effects
+
+# updating the code to use anova followed by tukey's hsd:
+expr %>%
+  as_tibble(rownames = "gene_id") %>%
+  pivot_longer( cols = colnames(expr),
+                values_to = "gene_expr",
+                names_to = "sample") %>% 
+  left_join(., select(covarTidy, sample, sex)) %>% 
+  group_by(gene_id) %>% 
+  rstatix::anova_test( gene_expr ~ sex) %>% 
+  rstatix::adjust_pvalue( method = "BH") %>% 
+  rstatix::add_significance("p.adj") %>% 
+  as_tibble() -> palate_sex_aov
+
+# passing the full data to tukey's then filtering
+expr %>%
+  as_tibble(rownames = "gene_id") %>% 
+  pivot_longer( cols = colnames(expr),
+                values_to = "gene_expr",
+                names_to = "sample") %>% 
+  left_join(., select(covarTidy, sample, sex)) %>% 
+  group_by(gene_id) %>% 
+  rstatix::tukey_hsd(gene_expr ~ sex) %>% 
+  filter( gene_id %in% (filter(palate_sex_aov, p.adj.signif != "ns"))$gene_id & # filtering to only include genes with signif aov + tukeys
+            p.adj.signif != "ns") -> palate_sex_tukeys
+
+
+# get the medians for later
+expr %>%
+  as_tibble(rownames = "gene_id") %>%
+  pivot_longer( cols = colnames(expr),
+                values_to = "gene_expr",
+                names_to = "sample") %>% 
+  left_join(., select(covarTidy, sample, sex)) %>% 
+  group_by(gene_id,sex) %>% 
+  summarize( med = median(gene_expr, na.rm =T)) %>% 
+  pivot_wider( id_cols = "gene_id",
+               names_from = "sex",
+               values_from = "med")-> palate_sex_med
+
+
+
+```
+
+```{r sex_eff_table}
+#| warning: false
+#| message: false
+
+palate_sex_tukeys %>%
+  left_join( all_genes_palate) %>% 
+  left_join( palate_sex_med) %>% 
+  arrange(p.adj) %>%
+  mutate_if( is.numeric, round, 2) %>%
+  select(
+    `Gene ID` = gene_id,
+    `MGI Symbol`= symbol, 
+    `Gene location (chr)` = chromosome,
+    `Female median`=`F`,
+    `Male median`= M
+   ) %>%
+  create_dt()
+
+
+```
+
+## Closer look at some gene sets
+
+Ian asked for a heatmap with the set of genes that are associated with "abnormal craniofacial morphology" obtained from MGI.
+
+```{r heatmap_morpho_genes}
+#| warning: false
+#| message: false
+#| fig-width: 18
+#| fig-height: 20
+
+samples <- c("DO_13.5_MAX_46",
+             "DO_13.5_MAX_47",
+             "DO_13.5_MAX_80",
+             "DO_13.5_MAX_83",
+             "DO_13.5_MAX_89")
+highlight_samples <- sample_annot |> 
+  mutate( label = ifelse( sample %in% samples, sample, "")) |> 
+  select(label, sample) |> 
+  column_to_rownames("sample")
+morpho_gene_set <- all_genes_palate |> 
+  filter( symbol %in% morpho_genes$symbol)
+  
+pheatmap( mat = log1p(expr[morpho_gene_set$gene_id,]), 
+          scale = "none",
+          cluster_rows = TRUE,
+          cluster_cols = TRUE,
+          clustering_distance_rows = "euclidean",
+          clustering_distance_cols = "correlation",
+          #show_rownames = FALSE,
+          #show_colnames = FALSE,
+          labels_col = highlight_samples[colnames(expr),"label"],
+          labels_row = morpho_gene_set$symbol,
+          main = "Abnormal craniofacial morphology genes",
+          fontsize_col = 6,
+          fontsize_row = 3
+          
+          )
+
+```
+
+## Gene set variation analysis (GSVA)
+
+```{r run_gsva}
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# reading in the GO + mgi downloaded from: http://www.informatics.jax.org/gotools/data/input/MGIgenes_by_GOid.txt
+go_terms <- read_tsv( "http://www.informatics.jax.org/gotools/data/input/MGIgenes_by_GOid.txt") %>% 
+  mutate( genes = str_split(genes, ",")) %>% 
+  unnest() # separete the symbols, note the overlap: length(intersect(unique(go_terms$genes), npc.genes$mgi_symbol) ) = 11806
+
+
+slim_go_terms <- read_tsv( "http://www.informatics.jax.org/gotools/data/input/map2MGIslim.txt") %>% 
+  select(-term) %>% 
+  mutate( ONT = case_when( aspect == "P" ~  "BP",
+                     aspect == "F" ~ "MF",
+                     aspect == "C" ~ "CC"
+                     )
+          ) %>% 
+  select(-aspect)
+
+genesbygo <- split(go_terms$genes, go_terms$GO_id)
+
+go_terms_annot <- go_terms %>%  
+  select(GO_id) %>% 
+  distinct() %>% 
+  left_join( slim_go_terms %>%  select( GO_id, ONT) %>% distinct())
+
+goannot_wdef <- AnnotationDbi::select(GO.db::GO.db, keys= unique(go_terms$GO_id), columns=c("GOID","DEFINITION","ONTOLOGY","TERM")) %>%
+  left_join( slim_go_terms, by=c("GOID"="GO_id")) %>% 
+  mutate( ONTOLOGY = ONT) %>% 
+  select(-ONT)
+
+go_bp <- goannot_wdef %>% filter( ONTOLOGY == "BP") %>% 
+  select(GOID) %>%  distinct()
+
+# adding mammalian phenotypes!
+genesbyMP <- split(mp_genes$symbol, mp_genes$mp_id)
+
+# expr - change gene id's to symbols for GSVA with GO
+expr.upd <- expr[all_genes_palate$gene_id,]
+rownames(expr.upd) <- all_genes_palate$symbol
+
+# run gsva
+gsva_go <- GSVA::gsva(  expr = expr.upd,
+                   gset.idx.list = genesbygo,
+                    method ="gsva",
+                    kcdf = "none",
+                    min.sz = 5,
+                    max.sz = 1000,
+                    mx.diff = TRUE
+                   )
+
+gsva_mp <- GSVA::gsva(  expr = expr.upd,
+                   gset.idx.list = genesbyMP,
+                    method ="gsva",
+                    kcdf = "none",
+                    min.sz = 5,
+                    max.sz = 5000, # setting to 1000 only removes 6 gene sets
+                    mx.diff = TRUE
+                   )
+
+# following up on rna results
+gsva_go %>% 
+  as_tibble(rownames = "Category") %>% 
+  filter( Category %in% go_bp$GOID) %>% #filtering for BP
+  rbind( gsva_mp |> 
+           as_tibble( rownames = "Category")) |> 
+  pivot_longer( cols = colnames(expr.upd),
+                values_to = "Enrichment_Score",
+                names_to = "sample") %>% 
+  # add covariates 
+  left_join( sample_annot %>% 
+               select(sample, sex, palate_closure,LB_stage_binned)) -> gsva_results
+
+gsva_results %>% 
+  group_by( Category) %>% 
+  rstatix::anova_test( Enrichment_Score ~ sex+LB_stage_binned+palate_closure) %>% 
+  rstatix::adjust_pvalue( method = "BH") %>%
+  rstatix::add_significance("p.adj") %>% 
+  ungroup() -> gsva_aov
+
+gsva_results %>% 
+  group_by(Category) %>% 
+  rstatix::tukey_hsd( Enrichment_Score ~ sex+LB_stage_binned+palate_closure) %>% 
+  ungroup() %>% 
+  as_tibble() -> gsva_tukey
+
+gsva_aov %>% 
+  as_tibble() %>% 
+  filter( p.adj.signif != "ns" & !is.na(p.adj) ) -> signif_eff_terms
+
+gsva_tukey %>% 
+  inner_join( ., select( signif_eff_terms, Category, term = Effect)) -> signif_results_tukey
+
+```
+
+Below are the list of GO Biological processes that show significant differences by sex, palate closure and presence of pinky nub (adjusted p-value \< 0.01).
+
+::: panel-tabset
+
+### GO BP terms and mammalian phenotypes showing significant differences 
+
+```{r gsva_results_table}
+#| warning: false
+#| message: false
+
+
+signif_eff_terms %>% 
+  filter( p.adj<0.05) %>% 
+  filter( str_detect(Category, "GO:")) |> 
+  left_join( goannot_wdef |> 
+               select(Category = GOID, TERM) |> 
+               distinct()) |> 
+  rbind(
+    signif_eff_terms |> 
+      filter( p.adj < 0.05) |> 
+      filter(str_detect(Category, "MP:")) |> 
+      left_join( mp_defs |> 
+                   select(Category = mp_id,
+                          TERM = term_name))
+  ) |> 
+  select(Effect, Category, TERM,p.adj) %>% 
+  #filter( p.adj < 0.01) %>% 
+  distinct() %>% 
+  mutate( "Adjusted p-value" = formatC(p.adj, digits=2, format ="e")) %>% 
+  select(-p.adj) %>% 
+  create_dt()
+
+
+
+  
+```
+
+Let's simplify the GO terms that show significant differences between LB stage bins:
+
+```{r simplify_gsva_pn}
+#| warning: false
+#| message: false
+#| fig-height: 8
+#| fig-width: 16
+#| cache: true
+
+
+gsva_lb_stage_terms <- signif_eff_terms %>% 
+  filter( p.adj<0.05, Effect == "LB_stage_binned", str_detect(Category, "GO")) 
+
+simplifyGO( mat = GO_similarity(gsva_lb_stage_terms$Category, ont = "BP"))
+
+#compare_clustering_methods(GO_similarity(gsva_pn_go_terms$Category, ont = "BP"))
+
+```
+
+
+
+### GO BP terms and mammalian phenotypes with QTL
+
+```{r gsva_qtl_mapping}
+#| warning: false
+#| message: false
+
+gsva_results %>%
+  select(Category, sample, Enrichment_Score) %>%
+  pivot_wider( id_cols = sample , names_from = Category, values_from = Enrichment_Score) %>%
+  column_to_rownames("sample") %>%
+  as.matrix() -> gsva_results_mat
+
+# rankZ
+gsva_results_mat_rankZ <- apply(gsva_results_mat, 2,rankZ )
+
+# # # qtl mapping
+# nbatch <- round(ncol(gsva_results_mat_rankZ)/1000)
+# nn <- ncol(gsva_results_mat_rankZ)
+# ss <- round(seq(0, nn, length.out=nbatch + 1))
+# gsva_qtl <- list()
+# for (i in 1:nbatch) {
+#     start <- ss[i] + 1
+#     end <- ss[i + 1]
+# 
+#     gsva_scan <- scan1( genoprobs = genoprobs,
+#                    pheno = gsva_results_mat_rankZ[,start:end,drop=FALSE],
+#                    kinship = kinship_loco,
+#                    addcovar = covar[,"sex",drop=F],
+#                    cores = 32
+#                    )
+#   gsva_qtl[[i]]<- gsva_scan
+# }
+# save( gsva_qtl, file = here("_data","GSVA_qtl_scans_v4.RData")) # I've changed the normalization of the data so re-running and saving as v4
+
+load(here("_data","GSVA_qtl_scans_v4.RData"))
+gsva_qtl_peaks <- lapply(gsva_qtl, find_peaks, threshold = 6, map = gmap)
+gsva_qtl_peaks_merged <- do.call(rbind, gsva_qtl_peaks)
+# add interp_peak_bp, before, after
+gsva_qtl_peaks_merged_annot <- gsva_qtl_peaks_merged %>%
+  filter( str_detect(lodcolumn, "GO:")) |> 
+  left_join( goannot_wdef |> 
+               select(lodcolumn = GOID, TERM) |> 
+               distinct()) |> 
+  mutate( TERM = ifelse( is.na(TERM), lodcolumn, TERM)) %>%
+  rbind(
+    gsva_qtl_peaks_merged |> 
+      filter(str_detect(lodcolumn, "MP:")) |> 
+      left_join( mp_defs |> 
+                   select(lodcolumn = mp_id,
+                          TERM = term_name))
+  ) |> 
+  mutate(phenotype=lodcolumn) %>%
+  mutate( peak_chr = chr,
+          peak_cM = pos) %>%
+  interp_bp(.) #add bp location for peaks
+
+```
+
+```{r gsva_qtl_plot}
+#| warning: false
+#| message: false
+#| fig-width: 12
+#| fig-height: 6
+
+
+plot_lodpeaks( gsva_qtl_peaks_merged |> filter(lod >9), gmap, main = "Peaks LOD > 9")
+
+```
+
+```{r gsva_qtl_peaks_table}
+
+gsva_qtl_peaks_merged_annot %>% 
+  select( TERM, lod, chr, interp_bp_peak) %>% 
+  filter(lod > 9) %>% 
+  arrange(chr) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  create_dt()
+
+```
+
+### Follow up on QTL with the highest LOD score
+
+```{r gsva_qtl_follow_up}
+
+# aromatic compound catabolic process has a QTL with a LOD > 16
+# get the genes within this GO term + do they have local eQTL?
+# allele effects plot + mediation
+highest_lod_peak <- gsva_qtl_peaks_merged_annot %>% slice_max(lod)
+highest_lod_scan <-scan1( genoprobs = genoprobs,
+                    pheno = gsva_results_mat_rankZ[,highest_lod_peak$lodcolumn,drop = F],
+                    kinship = kinship_loco,
+                    addcovar = covar[,"sex",drop=F],
+                     cores = 32
+                    )
+highest_lod_eff <- scan1blup( genoprobs = genoprobs[,highest_lod_peak$chr],
+                    pheno = gsva_results_mat_rankZ[,highest_lod_peak$lodcolumn,drop = F],
+                    kinship = kinship_loco[[highest_lod_peak$chr]],
+                    addcovar = covar[,"sex",drop=F]
+                    )
+
+# # chr 2 hotspot: 107870660 - 115487435
+# # chr 13 hotspot: 101771192 - 107092075
+# # genes within each category - do they have distant eQTL within the hotspots?
+# # get allele effects + mediation
+# gsva_highlight_qtl <- gsva_qtl_peaks_merged_annot %>%
+#   filter(
+#     (peak_chr == 2 &
+#        between(interp_bp_peak, left = 107870660, right = 115487435)) |
+#            (peak_chr == 13 & between(interp_bp_peak, left = 101771192, right = 107092075) )
+#           ) %>%
+#   filter( lod > 9)
+# 
+# # gsva_highlight_qtl |>
+# #   select(TERM, peak_chr, lod, interp_bp_peak) |>
+# #   mutate_if( is.numeric, round, 2) |>
+# #   create_dt()
+```
+
+`r highest_lod_peak$TERM` has a strong QTL on chromosome `r highest_lod_peak$chr` that seems to be driven by two genes in this category with local eQTL.
+
+```{r highest_lod_plot}
+#| warning: false
+#| message: false
+#| fig-width: 12
+#| fig-height: 5
+
+
+plot_coefCC( highest_lod_eff, pmap, scan1_output = highest_lod_scan, legend = "bottomright",
+             main = paste0( highest_lod_peak$TERM))
+
+```
+
+```{r highest_lod_genes}
+
+go_terms %>%
+  filter( GO_id == highest_lod_peak$lodcolumn, genes %in% all_genes_palate$symbol) %>%
+  left_join(., peaks_annotated %>%
+              filter( lod > 8.4) %>%
+              select( genes = symbol, chromosome, peak_chr, lod, interp_bp_peak, LETTERS[1:8])) %>%
+  select( -GO_id) %>%
+  distinct() %>%
+  filter(peak_chr == highest_lod_peak$chr) %>%
+  mutate_if(is.numeric, round ,2) %>%
+  create_dt()
+
+```
+
+<!-- ### Follow up on QTL co-mapping to eQTL hotspots -->
+
+<!-- Biological processes that co-map to chromosome 2 or 13 eQTL hotspots and show similar allele effects: -->
+
+<!-- -   protein retention in ER lumen -->
+<!-- -   ossification -->
+<!-- -   positive regulation of osteoblast differentiation -->
+<!-- -   osteoporosis -->
+<!-- -   decreased osteoclast cell number -->
+
+<!-- ```{r gsva_chr2_13_qtl} -->
+<!-- #| results: asis -->
+<!-- #| echo: false -->
+<!-- #| eval: true -->
+<!-- #| cache: true -->
+<!-- #| message: false -->
+<!-- #| fig-height: 6 -->
+<!-- #| fig-width: 12 -->
+
+<!-- haps <- LETTERS[1:8] -->
+
+<!-- gsva_highlight_qtl <- filter(gsva_highlight_qtl, -->
+<!--                              TERM %in% c("protein retention in ER lumen", -->
+<!--                                          "ossification", -->
+<!--                                          "positive regulation of osteoblast differentiation", -->
+<!--                                          "osteoporosis", -->
+<!--                                          "decreased osteoclast cell number" -->
+<!--                                          ) -->
+<!--                              ) -->
+
+<!-- for( i in 1:nrow(gsva_highlight_qtl)){ -->
+<!--   peak_chr <- gsva_highlight_qtl$peak_chr[i] -->
+<!--   lodcolumn <- gsva_highlight_qtl$lodcolumn[i] -->
+
+<!--   #pQTL scan -->
+<!--   qtl_scan <- scan1(genoprobs = genoprobs, -->
+<!--                  pheno = gsva_results_mat_rankZ[,lodcolumn,drop = F], -->
+<!--                  kinship = kinship_loco, -->
+<!--                  addcovar = covar[,"sex",drop=F]) -->
+<!--   qtl_effs <- scan1blup(genoprobs =genoprobs[,peak_chr], -->
+<!--                    pheno = gsva_results_mat_rankZ[,lodcolumn,drop = F], -->
+<!--                    kinship = kinship_loco[[peak_chr]], -->
+<!--                    addcovar = covar[,"sex",drop=F]) -->
+<!--   cat('### ',gsva_highlight_qtl$TERM[i],'peak on', peak_chr ,' \n') -->
+<!--   plot_coefCC(qtl_effs, -->
+<!--                             pmap, -->
+<!--                             scan1_output = qtl_scan, -->
+<!--                             main=paste0(gsva_highlight_qtl$TERM[i]," plot"), -->
+<!--               xlim = c(gsva_highlight_qtl$interp_bp_peak[i]-20e06, -->
+<!--                        gsva_highlight_qtl$interp_bp_peak[i]+20e06) ) -->
+<!--   abline(v=gsva_highlight_qtl$interp_bp_peak[i],col="red",lwd=2,lty=3) -->
+<!--   cat(' \n \n') -->
+<!-- } -->
+
+
+
+<!-- ``` -->
+
+
+<!-- Mediation of these QTL: -->
+
+<!-- ```{r gsva_qtl_mediation} -->
+<!-- #| warning: false -->
+<!-- #| message: false -->
+<!-- #| results: hide -->
+
+<!-- # mediate with RNA data -->
+<!-- gsva_highlight_qtl <- gsva_highlight_qtl %>% -->
+<!--   left_join( map_dat2 %>% select(pos, marker) %>% mutate(pos = as.numeric(pos))) -->
+
+<!-- gsva_peak_meds <- c() -->
+<!-- for(i in 1:nrow(gsva_highlight_qtl)){ -->
+<!--   qtl_geno <- pull_genoprobpos(genoprobs, gsva_highlight_qtl$marker[i]) -->
+
+<!--   meds <- mediation.scan( target =as.matrix(gsva_results_mat_rankZ[,gsva_highlight_qtl$lodcolumn[i]]), -->
+<!--                                mediator = exprZ[rownames(gsva_results_mat_rankZ),all_genes_palate$gene_id,drop=F], -->
+<!--                                annotation =  all_genes_palate %>% -->
+<!--                                  mutate(chr=chromosome,pos=abs(end+start)/2), -->
+<!--                                qtl.geno = qtl_geno[rownames(gsva_results_mat_rankZ),], -->
+<!--                                covar = covar[rownames(gsva_results_mat_rankZ),"sex",drop=FALSE]) -->
+
+<!--   meds <- meds %>% -->
+<!--       mutate( -->
+<!--         TERM = gsva_highlight_qtl$TERM[i], -->
+<!--         qtl_lod = gsva_highlight_qtl$lod[i], -->
+<!--               peak_chr = gsva_highlight_qtl$chr[i], -->
+<!--               interp_bp_peak = gsva_highlight_qtl$interp_bp_peak[i]) -->
+
+<!--   gsva_peak_meds[[i]] <- meds -->
+<!-- } -->
+
+<!-- gsva_peak_meds_merged <- do.call(rbind, gsva_peak_meds) %>% -->
+<!--   filter( peak_chr == chromosome & -->
+<!--           interp_bp_peak >=pos-10e06 & -->
+<!--             interp_bp_peak <= pos+10e06 & -->
+<!--             LOD < qtl_lod) -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+
+<!-- gsva_peak_meds_merged %>% -->
+<!--   group_by(TERM, peak_chr, qtl_lod) %>% -->
+<!--   slice_min( LOD, n = 5) %>% -->
+<!--   ungroup() %>% -->
+<!--   select(TERM, mediator = symbol, mediator_chr = chromosome, peak_chr, qtl_lod, mediation_lod = LOD) %>% -->
+<!--   mutate_if(is.numeric, round, 2) %>% -->
+<!--   create_dt() -->
+
+<!-- ``` -->
+
+
+:::
+
+## Weighted gene co-expression network analysis
+
+```{r}
+#| label: load_do_wgcna
+
+# I ran this already in the Strain_effects.qmd notebook and will load here.
+load( here("_data/DO_WGCNA_network_2025-02-12.RData")) # net_do
+
+```
+
+### Module QTL
+
+```{r}
+#| label: map_wgcna_qtl
+#| warning: false
+#| message: false
+#| cache: true
+
+wgcna_rankz <- apply(net_do$MEs, 2, rankZ)
+# need to update the sample ids
+transform_string <- function(x) {
+  number <- sub("DO_(\\d+)_MAX_E13.5", "\\1", x)
+  
+  if( number == 6){
+    paste(paste0("DO_13.5_MAX_", number,"_2"))
+  }
+  else paste0("DO_13.5_MAX_", number)
+}
+sample_ids <- unlist(lapply(rownames(wgcna_rankz), transform_string)  )
+rownames(wgcna_rankz) <- sample_ids
+
+wgcna_qtl_scan <- scan1( genoprobs = genoprobs, 
+                         pheno = wgcna_rankz, 
+                         kinship = kinship_loco, 
+                         addcovar = covar,
+                         cores = 32)
+
+```
+
+```{r wgcna_qtl_map_plot}
+#| message: false
+#| warning: false
+#| fig-width: 12
+#| fig-height: 6
+
+plot_lodpeaks(find_peaks(wgcna_qtl_scan, threshold = 7, pmap), pmap, main = "Peaks LOD > 6")
+
+```
+
+```{r wgcna_qtl_table}
+
+wgcna_qtl_peaks <- find_peaks(wgcna_qtl_scan, threshold = 7, gmap, peakdrop = 1) |> 
+  filter( lodcolumn != "MEgrey") 
+wgcna_qtl_peaks %>% 
+  mutate(phenotype=lodcolumn) %>%
+  mutate( peak_chr = chr,
+          peak_cM = pos) %>%
+  interp_bp(.) %>% 
+  select( Module = lodcolumn, lod, chr, interp_bp_peak) %>% 
+  arrange(chr) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  create_dt()
+
+```
+
+Here are the QTL plots for the ones listed above, note that some do overlap with the eQTL hotspot on Chr 13.
+
+::: panel-tabset
+
+```{r wgcna_chr13_qtl}
+#| results: asis
+#| echo: false
+#| eval: true
+#| cache: true
+#| message: false
+#| fig-height: 6
+#| fig-width: 12
+
+haps <- LETTERS[1:8]
+
+
+
+wgcna_highlight_qtl <- wgcna_qtl_peaks %>%
+  mutate(peak_chr = chr, peak_cM = pos) %>%
+  interp_bp() %>%
+  select(-pos)|>   
+  mutate( pos = interp_bp_peak) |> 
+  left_join( map_dat2 %>%
+               select(pos, marker) %>%
+               mutate(pos = as.numeric(pos))
+             )
+
+
+
+for( i in 1:nrow(wgcna_highlight_qtl)){
+  peak_chr <- wgcna_highlight_qtl$peak_chr[i]
+  lodcolumn <- wgcna_highlight_qtl$lodcolumn[i]
+
+  #pQTL scan
+  qtl_scan <- scan1(genoprobs = genoprobs,
+                 pheno = wgcna_rankz[,lodcolumn,drop = F],
+                 kinship = kinship_loco,
+                 addcovar = covar[,"sex",drop=F],
+                     cores = 32)
+  qtl_effs <- scan1blup(genoprobs =genoprobs[,peak_chr],
+                   pheno = wgcna_rankz[,lodcolumn,drop = F],
+                   kinship = kinship_loco[[peak_chr]],
+                   addcovar = covar[,"sex",drop=F])
+  cat('####',wgcna_highlight_qtl$lodcolumn[i],'peak on', peak_chr ,' \n')
+  plot_coefCC(qtl_effs,
+                            pmap,
+                            scan1_output = qtl_scan,
+                            main=paste0(wgcna_highlight_qtl$lodcolumn[i]," plot"),
+              xlim = c(wgcna_highlight_qtl$pos[i]-10e06,
+                       wgcna_highlight_qtl$pos[i]+10e06) )
+  abline(v=wgcna_highlight_qtl$pos[i],col="red",lwd=2,lty=3)
+  cat(' \n \n')
+}
+
+
+
+```
+
+:::
+
+Mediation results:
+
+```{r wgcna_qtl_mediation}
+#| warning: false
+#| message: false
+#| results: hide
+
+# mediate with RNA data
+
+wgcna_peak_meds <- c()
+for(i in 1:nrow(wgcna_highlight_qtl)){
+  qtl_geno <- pull_genoprobpos(genoprobs, wgcna_highlight_qtl$marker[i])
+
+  meds <- mediation.scan( target =as.matrix(wgcna_rankz[,wgcna_highlight_qtl$lodcolumn[i]]),
+                               mediator = exprZ[rownames(wgcna_rankz),all_genes_palate$gene_id,drop=F],
+                               annotation =  all_genes_palate %>%
+                                 mutate(chr=chromosome,pos=abs(end+start)/2),
+                               qtl.geno = qtl_geno[rownames(wgcna_rankz),],
+                               covar = covar[rownames(wgcna_rankz),"sex",drop=FALSE])
+
+  meds <- meds %>%
+      mutate(
+        module = wgcna_highlight_qtl$lodcolumn[i],
+        qtl_lod = wgcna_highlight_qtl$lod[i],
+              peak_chr = wgcna_highlight_qtl$chr[i],
+              interp_bp_peak = wgcna_highlight_qtl$pos[i])
+
+  wgcna_peak_meds[[i]] <- meds
+}
+
+wgcna_peak_meds_merged <- do.call(rbind, wgcna_peak_meds) %>%
+  filter( peak_chr == chromosome &
+          interp_bp_peak >=pos-10e06 &
+            interp_bp_peak <= pos+10e06 &
+            LOD < qtl_lod)
+
+```
+
+```{r}
+
+wgcna_peak_meds_merged %>%
+  group_by(module, peak_chr, qtl_lod) %>%
+  slice_min( LOD, n = 5) %>%
+  ungroup() %>%
+  select(module, mediator = symbol, mediator_chr = chromosome, peak_chr, qtl_lod, mediation_lod = LOD) %>%
+  mutate_if(is.numeric, round, 2) %>%
+  create_dt()
+
+```
+
+:::
+
+# Genetic mapping with transcript abundance
+
+```{r est_herit}
+#| warning: false
+#| message: false
+
+kinship_palate <- calc_kinship(genoprobs, type ="overall" )
+herit_palate <- est_herit( 
+  pheno = exprZ, 
+  kinship = kinship_palate, 
+  addcovar = covar[,"sex",drop=F]
+  )
+
+```
+
+Out of `r formatC(nrow(expr),big.mark =",")` transcripts, `r formatC(herit_palate %>% as_tibble(rownames= "gene_id") %>% filter(value >0) %>% nrow(), big.mark=",")` has non-zero heritability and the median heritability is `r round((herit_palate %>% as_tibble(rownames= "gene_id") %>% summarize( mean = median(value)))$mean,2)`.
+We have identified `r formatC( nrow(filter(peaks_annotated, lod > 8.4)), big.mark = ",")` significant eQTL from `r formatC( length(unique(filter(peaks_annotated, lod > 8.4)$gene_id)), big.mark = ",")` genes where `r formatC(nrow(filter(peaks_annotated, lod > 8.4, local)), big.mark = ",")` are local and `r formatC(nrow(filter(peaks_annotated, lod > 8.4, !local)), big.mark = ",")` distant (LOD \> 8.4, alpha = 0.05). The distant eQTL forms two hotspots on chromosome 13. 
+
+The first hotspot of interest on chromosome 13 shows a genetic effect primarily driven by ancestry from the NZO founder strain. Mediation analysis can't identify a good mediator within the hotspot boundaries that also contains a local eQTL with similar genetic effects. Association mapping identifies three SNPs, one intron variant and one downstream variant of *Pik3r1* gene, and one intergenic variant. 
+
+The second hotspot of interest in chromosome 13 is overrepresentated for genes involved in bone development and extracellular matrix organization. Target eQTL allele effects show a 3:5 pattern where the laboratory strains NZO group with the wild-derived strains CAST and PWK while the laboratory strains A/J, B6, 129, and NOD group with the wild-derived strain WSB. Mediation analysis wasn't able to identify a good mediator. Association mapping in the region identified many SNPs showing the 3:5 pattern, including SNPs within and around the gene *Adamts6*. 
+
+
+```{r get_trans_bands}
+#| warning: false
+#| message: false
+
+
+# eQTL map for Palate data
+# prep the objects
+map_dat2$chromF <- factor(map_dat2$chrom, levels = c(as.character(1:19), "X"))
+chrom_markers <- select(map_dat2, chromF, n) %>%
+  rename(chrom = chromF) %>%
+  group_by(chrom) %>%
+  summarize(start = min(n), end = max(n)) %>%
+  GenomicRanges::GRanges()
+windows <- unlist(GenomicRanges::slidingWindows(chrom_markers, width = 50, step = 10))
+markers_bynum <- select(map_dat2, chrom, n) %>%
+  dplyr::rename(start = n) %>%
+  mutate(end = start) %>%
+  GenomicRanges::GRanges()
+
+distant_rna <- filter(peaks_annotated, lod > 8.4 & !local, !is.na(local) ) %>%
+  select(peak_chr, interp_bp_peak) %>%
+  dplyr::rename(chrom = peak_chr, end = interp_bp_peak) %>%
+  mutate(start = end) %>%
+  GenomicRanges::GRanges()
+distant_rna_sugg <- filter(peaks_annotated, lod > 7, !is.na(local) , !local) %>%
+  select(peak_chr, interp_bp_peak) %>%
+  dplyr::rename(chrom = peak_chr, end = interp_bp_peak) %>%
+  mutate(start = end) %>%
+  GenomicRanges::GRanges()
+
+markers <- select(map_dat2, chrom, pos_bp) %>%
+  dplyr::rename(start = pos_bp) %>%
+  mutate(end = start) %>%
+  GenomicRanges::GRanges() # length 69,005
+hotspot <- GenomicRanges::nearest(distant_rna, markers)
+hotspot_sugg <- GenomicRanges::nearest(distant_rna_sugg, markers)
+
+windows$distant_rna <- GenomicRanges::countOverlaps(windows, markers_bynum[hotspot])
+windows$distant_rna_sugg <- GenomicRanges::countOverlaps(windows, markers_bynum[hotspot_sugg])
+
+window_counts <- tibble(
+  chrom = as.character(GenomicRanges::seqnames(windows)),
+  start = GenomicRanges::start(windows),
+  end = GenomicRanges::end(windows),
+  distant_rna = windows$distant_rna, 
+  distant_rna_sugg = windows$distant_rna_sugg
+)
+
+# plotting
+map_dat2 <- map_dat2 %>% mutate( pos_cM = as.numeric(cM))
+mm <- match(window_counts$start, map_dat2$n)
+m2 <- match(window_counts$end, map_dat2$n)
+window_counts$pos_cM_start <- map_dat2$pos_cM[mm]
+window_counts$pos_bp_start <- map_dat2$pos_bp[mm]
+window_counts$pos_cM_end <- map_dat2$pos_cM[m2]
+window_counts$pos_bp_end <- map_dat2$pos_bp[m2]
+window_counts <- window_counts %>%
+  mutate(midpoint = (pos_cM_end + pos_cM_start) / 2, 4)
+
+x <- select(window_counts, chrom, starts_with("pos_bp"), starts_with("distant")) %>%
+  filter(
+           distant_rna >= quantile(distant_rna,0.995) )
+bands.rna <- x %>%
+  rename(start = pos_bp_start, end = pos_bp_end) %>%
+  GenomicRanges::GRanges() %>%
+  GenomicRanges::reduce()
+# reduce collapses overlapping windows into one big window. Works perfectly here.
+bands.rna$distant_rna <- GenomicRanges::countOverlaps(bands.rna, distant_rna)
+bands.rna$distant_rna_sugg <- GenomicRanges::countOverlaps(bands.rna, distant_rna_sugg)
+
+
+```
+
+::: panel-tabset
+
+## Kinship
+
+Here is the genetic relatedness between all the DO samples.
+
+```{r kinship_matrix_plot}
+#| warning: false
+#| message: false
+#| fig-height: 14
+#| fig-width: 16
+
+# plotting kinship matrix
+# highlight the samples Ian wanted to look at closer
+samples <- c(
+                       "DO_13.5_MAX_46",
+                       "DO_13.5_MAX_47",
+                       "DO_13.5_MAX_80",
+                       "DO_13.5_MAX_83",
+                       "DO_13.5_MAX_89")
+highlight_samples <- sample_annot |> 
+  mutate( label = ifelse( sample %in% samples, sample, "")) |> 
+  select(label, sample) |> 
+  column_to_rownames("sample")
+
+pheatmap(kinship_palate,
+         labels_row = highlight_samples[rownames(kinship_palate),],
+         labels_col = highlight_samples[colnames(kinship_palate),]
+         )
+  
+
+```
+
+
+## Heritability of transcript abundance
+
+```{r herit_plot}
+#| warning: false
+#| message: false
+#| fig-width: 8
+#| fig-height: 4
+
+
+# plot heritability histogram
+herit_palate %>%
+  as_tibble(rownames= "gene_id") %>%
+  left_join( all_genes_palate) %>%
+  ggplot()+
+  aes(
+    x = value
+    )+
+  geom_histogram( alpha = 0.6, binwidth  = 0.01)+
+  theme_pubclean(base_size = 14)+
+  ylab("") +
+  xlab("Heritability of transcript abundance")
+
+```
+
+## eQTL map
+
+```{r eqtl_map}
+#| warning: false
+#| message: false
+#| fig-width: 7
+#| fig-height: 10
+
+
+peaks_annotated$cumsum_bp_peak <- peaks_annotated$interp_bp_peak + chrom_lens_offset[peaks_annotated$peak_chr]
+peaks_annotated$cumsum_bp_gene <- peaks_annotated$midpoint + chrom_lens_offset[peaks_annotated$chromosome]
+
+chroms <-names(chrom_lens)
+chrom_segments <- tibble( start = 0, 
+                          end = chrom_lens,
+                          chr = chroms,
+                          type = as.character(rep(c(0,1),10)))
+chrom_segments$start <- chrom_segments$start+ chrom_lens_offset[chrom_segments$chr]
+chrom_segments$end <- chrom_segments$end+ chrom_lens_offset[chrom_segments$chr]
+
+eqtl_map <- ggplot()+
+  geom_rect( data = chrom_segments, aes( xmin =start, xmax = end, ymin = 0, ymax = max(end), fill = type), 
+             inherit.aes = FALSE, alpha = 0.2, show.legend = FALSE)+
+  scale_fill_manual(values = c("dark gray","white"))+
+  geom_point(data = peaks_annotated %>% 
+            filter( lod > 8.4), 
+            aes( x = cumsum_bp_peak, y = cumsum_bp_gene),
+            size = 2, 
+            col = strain_colors[[3]],
+             inherit.aes = FALSE )+
+  theme_pubclean(base_size = 16)+
+  scale_x_discrete( name = "eQTL peak",
+                    limits = chrom_lens_midpt, 
+                    labels = names(chrom_lens), 
+                    expand = expansion( mult = 0.02))+
+  scale_y_discrete( name = "Gene midpoint",limits = chrom_lens_midpt, labels = names(chrom_lens), expand = expansion( mult = 0.02))+
+  theme( axis.text = element_text(size = 10),
+          panel.grid.major.x = element_blank(),
+          panel.grid.major.y = element_blank()) 
+
+eqtl_counts <- bands.rna %>% 
+  as_tibble() %>% 
+  select( chrom = seqnames, start, end, distant_rna) %>% 
+  mutate( chrom = factor(chrom, levels = c(seq(1:19),"X"))) |> 
+  mutate( hotspot_midpoint = (start+end)/2 ) %>% 
+  # adding all the marker locations to match axes
+  rbind( (map_dat2 %>% 
+              select( chrom, start = pos_bp, end =pos_bp) %>% 
+              mutate( distant_rna = 0,
+                      hotspot_midpoint = start))) %>% 
+  mutate( chrom = factor(chrom, levels = c(seq(1:19),"X")) ) 
+
+# adding all the markers with 0 hotspot values to match the axes
+eqtl_counts$midpoint_offset <- eqtl_counts$hotspot_midpoint + chrom_lens_offset[eqtl_counts$chrom]
+
+trans_band_plot <- eqtl_counts %>% 
+  ggplot()+
+  aes( x = midpoint_offset, 
+       y = distant_rna)+
+  geom_bar( stat = "identity", width = 100, col =strain_colors[[3]], fill= strain_colors[[3]] )+
+  theme_pubclean(base_size = 16)+
+  scale_x_continuous( name = "Chr",
+                      breaks = chrom_lens_midpt, 
+                      labels = names(chrom_lens), expand = expansion(mult = .02) )+
+  xlab("")+
+  ylab("# of distant eQTL")+
+  theme( axis.text = element_text(size = 10)) 
+
+
+eqtl_map_plot <- ggarrange( eqtl_map, trans_band_plot, nrow = 2, heights = c(0.7, 0.3))
+
+# ggsave(npc_eqtl_map_plot, filename = here("figures","figure3a.svg"), width = 8, height = 11, dpi = 300, units = "in")
+eqtl_map_plot
+
+```
+
+## List of eQTL
+
+Here is a full list of significant eQTL with annotations and inferred haplotype effects at each eQTL peak.
+
+```{r eqtl_table}
+#| warning: false
+#| message: false
+
+
+peaks_annotated %>% 
+  filter( lod > 8.4) %>% 
+  mutate( local = ifelse( local , "Local", "Distant")) %>% 
+  select(`Ensembl Gene ID` = gene_id, 
+         `Gene symbol` = symbol, 
+         `Gene chr` = chromosome,
+         `LOD`=lod, 
+         `QTL chr` = peak_chr, 
+         `QTL pos (cM)`= peak_cM, 
+         `QTL pos (bp)`= interp_bp_peak, 
+         `Gene midpoint (bp)` = midpoint,
+         `QTL type` = local,
+         `AJ` = A,
+         `B6` = B,
+         `129` = C,
+         `NOD` = D,
+         `NZO` = E,
+         `CAST` = `F`,
+         `PWK` = G,
+         `WSB` = H) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  create_dt()
+
+```
+
+## eQTL Hotspots
+
+Here is a list of all distant eQTL hotspots.
+We use the significant QTL threshold to call the boundaries and then the suggestive threshold to characterize the targets within each hotspot.
+
+```{r transband_table}
+
+bands.rna  %>% 
+  as_tibble() %>% 
+  mutate( chr = seqnames) -> bands.rna
+
+bands.rna %>% 
+    filter(distant_rna > 20)  %>% 
+  select( Chromosome = seqnames, `Start (bp)`=start, `End (bp)`=end, `# of distant eQTL (LOD > 8.4)` = distant_rna, 
+          `# of distant eQTL (LOD > 7)` = distant_rna_sugg) %>% 
+  create_dt()
+
+```
+
+```{r load_meds}
+#| warning: false
+#| message: false
+#| eval: false
+
+# load + merge mediation results for all eQTL peak lod >7
+med_files <- list.files("/projects/munger-lab/projects/palate-project-murray-munger/qtl_mapping/meds/", full.names = T, pattern = "*_v3_*")
+load(med_files[1])
+res <- results
+for(i in 2:length(med_files)){
+    load(med_files[i])
+    res <- rbind(res, results)
+}
+palate_meds <- res
+rm(res)
+
+# get meds and remove the large res object to save memory
+# # Chr 2 & 13 are the main ones I would like to look into
+# chr2.eQTL1 <- peaks_annotated %>%
+#   filter( peak_chr == 2 &
+#             lod > 7 &
+#             !local &
+#             interp_bp_peak >= filter( bands.rna,chr==2)$start[1] &
+#             interp_bp_peak <= filter( bands.rna,chr==2)$end[1]
+#   )
+# chr2_eqtl_meds <- palate_meds %>% 
+#   inner_join( chr2.eQTL1 %>%  
+#                 select( target_id = gene_id,
+#                         qtl_chr = peak_chr,
+#                         target_pos = interp_bp_peak,
+#                         target_chr = chromosome)
+#               )
+
+# Chr 13
+chr13.eQTL1 <- peaks_annotated %>%
+  filter( peak_chr == 13 &
+            lod > 7 &
+            !local &
+            interp_bp_peak >= filter( bands.rna,chr==13)$start[2] &
+            interp_bp_peak <= filter( bands.rna,chr==13)$end[2]
+  )
+chr13_eqtl_meds_1 <- palate_meds %>% 
+  inner_join( chr13.eQTL1 %>%  
+                select( target_id = gene_id,
+                        qtl_chr = peak_chr,
+                        target_pos = interp_bp_peak,
+                        target_chr = chromosome)
+              )
+
+chr13.eQTL2 <- peaks_annotated %>%
+  filter( peak_chr == 13 &
+            lod > 7 &
+            !local &
+            interp_bp_peak >= filter( bands.rna,chr==13)$start[3] &
+            interp_bp_peak <= filter( bands.rna,chr==13)$end[3]
+  )
+chr13_eqtl_meds_2 <- palate_meds %>% 
+  inner_join( chr13.eQTL2 %>%  
+                select( target_id = gene_id,
+                        qtl_chr = peak_chr,
+                        target_pos = interp_bp_peak,
+                        target_chr = chromosome)
+              )
+rm(palate_meds)
+
+```
+
+
+
+### Chr 13.1
+
+```{r chr13_band_1}
+#| warning: false
+#| message: false
+
+chr13.eQTL1 <- peaks_annotated %>% 
+  filter( peak_chr == 13 &
+            lod > 7 & 
+            !local &
+            interp_bp_peak >= filter( bands.rna,chr==13)$start[2] & 
+            interp_bp_peak <= filter( bands.rna,chr==13)$end[2] 
+  ) 
+
+```
+
+We identified a `r round(filter( bands.rna,chr==13)$width[2]/1e06,2)` Mb wide eQTL hotspot on chromosome 13 between `r formatC(filter( bands.rna,chr==13)$start[2],big.mark=",")`-`r formatC(filter( bands.rna,chr==13)$end[2],big.mark=",")` bp that contains `r nrow(chr13.eQTL1)` suggestive eQTL (LOD \> 7).
+
+::: panel-tabset
+#### ORA results
+
+```{r chr13_ora_1}
+#| warning: false
+#| message: false
+#| cache: true
+
+
+g.chr13_1 <- gost(query =  unique(chr13.eQTL1$symbol),
+                        organism = "mmusculus", 
+                        domain_scope = "custom", 
+                        custom_bg = all_genes_palate$symbol, 
+                        evcodes = TRUE)
+g.chr13_1$result <- g.chr13_1$result %>% filter(term_size < 500)
+
+```
+
+```{r chr13_ora_plot_1}
+#| warning: false
+#| message: false
+#| eval: false
+gostplot(g.chr13_1, capped = F)
+
+```
+
+```{r chr13_ora_table_1}
+
+g.chr13_1$result %>% 
+  select( term_name, source, FDR = p_value, term_size, intersection_size,intersection) %>% 
+  filter( FDR <0.05) %>% 
+  mutate_if( is.numeric, formatC, digits =2) %>% 
+  create_dt()
+
+```
+
+#### Haplotype effects
+
+```{r chr13_effs_1}
+#|warning: false
+#|message: false
+#|fig-width: 10
+#|fig-height: 8
+
+chr13.eQTL1_mat <- chr13.eQTL1 %>% 
+  filter(!is.na(A)) %>% 
+  select(LETTERS[1:8],"symbol") %>% 
+  distinct() %>%
+  column_to_rownames("symbol") %>%
+  as.matrix() %>% 
+  t()
+
+annotation_row <- data.frame(strain=c("AJ","B6","129","NOD","NZO","CAST","PWK","WSB"))
+rownames(annotation_row) <- rownames(chr13.eQTL1_mat)  
+
+annot.colors <- list(strain = founder_colors)
+
+# svg(filename = here("figures","chr1_hotspot_allele_eff.svg"),width = 800, height = 600)
+pheatmap(chr13.eQTL1_mat,
+         cluster_rows=T,
+         show_rownames=FALSE,
+         cluster_cols=T, 
+         show_colnames = FALSE, 
+         clustering_method = "complete",
+         scale="none",
+         clustering_distance_cols="correlation",
+         clustering_distance_rows="correlation",
+         annotation_row = annotation_row, 
+         annotation_colors = annot.colors, 
+         cutree_rows = 2)
+
+```
+
+<!-- #### Mediation results -->
+
+
+<!-- ```{r chr13_meds_updated_1} -->
+<!-- #| warning: false -->
+<!-- #| message: false -->
+<!-- #| results: hide -->
+<!-- chr13_eqtl_meds_filt_1 <- chr13_eqtl_meds_1 |>  -->
+<!--   left_join( all_genes_palate %>%  -->
+<!--                select( target = symbol,  -->
+<!--                        target_id =gene_id  -->
+<!--                        ) -->
+<!--              ) %>% -->
+<!--   select( -->
+<!--     target, -->
+<!--     qtl_chr, -->
+<!--     qtl_lod, -->
+<!--     target_pos, -->
+<!--     target_chr, -->
+<!--     mediator_id,  -->
+<!--     mediator, -->
+<!--     mediator_chr,  -->
+<!--     mediator_midpoint , -->
+<!--     mediation_lod = LOD -->
+<!--   ) %>%  -->
+<!--   group_by( target, qtl_chr, qtl_lod, target_chr) %>%  -->
+<!--   mutate( scaled_LOD = scale(mediation_lod)) %>%  -->
+<!--   filter(  -->
+<!--     # between(mediator_midpoint, filter( bands.rna,chr==13)$start[1]-10e06, filter( bands.rna,chr==13)$end[1]+10e06), -->
+<!--     abs(target_pos-mediator_midpoint) <= 10e6 &   # filter within 10Mb -->
+<!--             qtl_chr == mediator_chr -->
+<!--           #scaled_LOD < -4 # z threshold -4 -->
+<!--   ) -->
+
+<!-- chr13_eqtl_meds_filt_1 %>%  -->
+<!--   mutate(mediation_lod = ifelse(target == mediator, NA, mediation_lod)) %>% -->
+<!--   mutate(lod_drop = qtl_lod - mediation_lod) %>% -->
+<!--   group_by(target) %>% -->
+<!--   arrange(mediation_lod) %>% -->
+<!--   mutate(rank = rep(seq(1:n()))) -> chr13.meds.ranked_1 -->
+
+<!-- chr13.meds.ranked.sum_1 <- chr13.meds.ranked_1 %>% -->
+<!--   filter(rank %in% c( 1)) %>%  -->
+<!--   group_by(mediator) %>% -->
+<!--   summarize(n = length(target), min_drop = min(lod_drop, na.rm = T), max_drop = max(lod_drop, na.rm = T), med_drop = median(lod_drop, na.rm = T)) %>% -->
+<!--   arrange(desc(n)) -->
+
+<!-- chr13.meds.ranked.sum_1 -->
+
+<!-- ``` -->
+
+<!-- ```{r chr13_meds_plot_1} -->
+<!-- #| warning: false -->
+<!-- #| message: false -->
+<!-- #| fig-width: 6 -->
+<!-- #| fig-height: 12 -->
+
+<!-- results <- chr13.meds.ranked_1 %>% -->
+<!--   ungroup() %>% -->
+<!--   select(mediator, target, mediation_lod, qtl_lod, lod_drop, mediator_midpoint, target_pos) %>% -->
+<!--   select(-mediation_lod, -qtl_lod) %>% -->
+<!--   filter((mediator %in% str_c(chr13.meds.ranked.sum_1$mediator[1:5]))) %>% -->
+<!--   mutate(lod_drop = ifelse(lod_drop < 0, 0, lod_drop), lod_drop = ifelse(lod_drop > 10, 10, lod_drop)) %>% -->
+<!--   arrange(mediator_midpoint) %>%  -->
+<!--   mutate( xlabel = as_factor(mediator)) %>%  -->
+<!--   arrange(target_pos) %>%  -->
+<!--   mutate( ylabel = as_factor(target))  -->
+
+<!-- p <- ggplot(results, aes(x = xlabel, y = ylabel)) + -->
+<!--   geom_point(aes(color =lod_drop, size = exp(lod_drop) / 30), alpha = 0.6) + -->
+<!--   scale_color_gradientn( -->
+<!--     colors = c("white", "firebrick3", "navy"), -->
+<!--     values = scales::rescale(c(0, 5, 10)), -->
+<!--     name = "LOD\ndifference", limits = c(0, 10) -->
+<!--   ) + -->
+<!--   scale_size(breaks = 0:10, labels = as.character(0:10), range = c(0, 10)) + -->
+<!--   guides(size = "none") + -->
+<!--   theme_pubclean(base_size = 18) + -->
+<!--   theme( -->
+<!--     axis.text.y = element_text(size = 6, hjust = 1), -->
+<!--     axis.ticks = element_blank(), -->
+<!--     axis.text.x = element_text(size = 12, angle = 15), -->
+<!--     axis.title = element_text(size = 14), -->
+<!--     legend.text = element_text(size = 14), -->
+<!--     legend.title = element_text(size = 16), -->
+<!--     legend.position = "right", -->
+<!--     panel.grid.major = element_blank(), -->
+<!--     panel.grid.minor = element_blank(), -->
+<!--     panel.background = element_blank() -->
+<!--   ) + -->
+<!--   ylab("Target eQTL")+ -->
+<!--   xlab("Mediator") -->
+
+<!-- p -->
+
+<!-- ``` -->
+
+<!-- #### Top candidate mediators -->
+
+<!-- ```{r chr13_med_dets_1} -->
+<!-- #| eval: true -->
+<!-- #| message: false -->
+<!-- #| warning: false -->
+
+
+<!-- candidate_peaks_chr13_1 <- peaks_annotated %>%  -->
+<!--   filter( symbol %in% chr13.meds.ranked.sum_1$mediator[1:5], local ==T) -->
+
+<!-- # add lod + effect plots of the local eQTL peaks for the top candidate mediators -->
+<!-- # the effects are already there but need to run the qtl scan for the lod plot -->
+
+<!-- # LOD plot -->
+<!-- chr13_qtl_scan_1 <- scan1( pheno = exprZ[,candidate_peaks_chr13_1$gene_id,drop=FALSE],  -->
+<!--                    genoprobs = genoprobs,  -->
+<!--                    kinship = kinship_loco, -->
+<!--                    addcovar = covar[,"sex",drop =F]) -->
+
+<!-- chr13_cand_qtl_scans_1 <- chr13_qtl_scan_1 %>%  -->
+<!--   as.data.frame( ) %>%  -->
+<!--   rename( "Slc30a5" = `ENSMUSG00000021629`) %>%  -->
+<!--   mutate( marker = dimnames(chr13_qtl_scan)[[1]]) %>%  -->
+<!--   left_join(map_dat2)  -->
+
+<!-- chr13_lod_plot_1 <- chr13_cand_qtl_scans_1 %>%  -->
+<!--   filter( chr == candidate_peaks_chr13$peak_chr[1]) %>%  -->
+<!--   pivot_longer( cols = c("Slc30a5"), names_to = "symbol", values_to = "lod") %>%  -->
+<!--   mutate( symbol = factor( symbol, levels = c("Slc30a5"))) %>%  -->
+<!--   ggplot()+ -->
+<!--   aes(  -->
+<!--     x= pos_bp/1e06, -->
+<!--     y = lod, -->
+<!--     col = symbol -->
+<!--   )+ -->
+<!--   geom_rect(  xmin =filter( bands.rna,chr==13)$start[1]/1e06,  -->
+<!--               xmax = filter( bands.rna,chr==13)$end[1]/1e06,  -->
+<!--               ymin = 0,  -->
+<!--               ymax = 25,  -->
+<!--               fill = "gray",  -->
+<!--               inherit.aes = FALSE,  -->
+<!--               alpha = 0.1,  -->
+<!--               show.legend = FALSE)+ -->
+<!--   geom_line( size = 1.5, alpha = 0.8)+ -->
+<!--   geom_segment( x = candidate_peaks_chr13$start/1e06, xend = candidate_peaks_chr13$end/1e06 , y = 0, yend = 1, size = 2, aes(col=symbol)) + -->
+<!--   annotate( "text", x= candidate_peaks_chr13$midpoint/1e06, y = -0.8, label ="Slc30a5", size =4, fontface = "italic")+ -->
+<!--   theme_pubclean( base_size = 18)+ -->
+<!--   color_palette("jco")+ -->
+<!--   xlab(paste0("Chr ",candidate_peaks_chr13$peak_chr[1]," location (Mbp)"))+ -->
+<!--   ylab( "LOD score")+ -->
+<!--   labs(col = "Gene")+ -->
+<!--   annotate( "text", x= 6+filter( bands.rna,chr==13)$end[1]/1e06, y = 9, label ="eQTL \n Hotspot", size =5)+ -->
+<!--   ylim(-1,10)+ -->
+<!--   xlim(75,125) -->
+
+
+
+<!-- # Effects plot -->
+<!-- chr13_eff_plot_1 <- candidate_peaks_chr13_1 %>%  -->
+<!--   select(LETTERS[1:8],symbol) %>%  -->
+<!--   pivot_longer( cols = LETTERS[1:8], -->
+<!--                 names_to = "effect", -->
+<!--                 values_to = "value" -->
+<!--   ) %>%  -->
+<!--   mutate( effect = case_when( effect == "A" ~ "AJ", -->
+<!--                               effect == "B" ~ "B6", -->
+<!--                               effect == "C" ~ "129", -->
+<!--                               effect == "D" ~ "NOD", -->
+<!--                               effect == "E" ~ "NZO", -->
+<!--                               effect == "F" ~ "CAST", -->
+<!--                               effect == "G" ~ "PWK", -->
+<!--                               effect == "H" ~ "WSB")) %>%  -->
+<!--   mutate( symbol = factor( symbol, levels = c("Slc30a5"))) %>%  -->
+<!--   ggplot()+ -->
+<!--   aes( x = effect, -->
+<!--        y = value,  -->
+<!--        col = symbol, -->
+<!--        group = symbol)+ -->
+<!--   geom_point(size = 4, show.legend = FALSE)+ -->
+<!--   geom_line(show.legend = T, size = 1.2)+ -->
+<!--   theme_pubclean(base_size = 18)+ -->
+<!--   color_palette("jco")+ -->
+<!--   ylab("Haplotype effects")+ -->
+<!--   xlab("")+ -->
+<!--   #ylim(-2,1.1)+ -->
+<!--   geom_hline( yintercept = 0)+ -->
+<!--   theme(axis.line.x = element_blank(), -->
+<!--         axis.title = element_text(size = 18))+ -->
+<!--   labs(col ="Gene")+ -->
+<!--   coord_flip( clip ="off")+ -->
+<!--   theme(legend.position = "none")  -->
+
+<!-- ``` -->
+
+<!-- ```{r chr13_med_dets_plot_1} -->
+<!-- #| fig-width: 12 -->
+<!-- #| fig-height: 5 -->
+<!-- #| message: false -->
+<!-- #| warning: false -->
+
+<!-- ggarrange( chr13_lod_plot_1, chr13_eff_plot_1,  widths = c(1, 0.5)) -->
+
+<!-- ``` -->
+
+#### Mapping with PC1 of the target eQTL
+
+```{r chr13_pca_mapping_1}
+#| warning: false
+#| message: false
+
+
+# PC1 from chr13 targets
+chr13_pca_1 <- prcomp(
+  t(expr[ chr13.eQTL1$gene_id,, drop = F]), 
+  center = T, scale. = T  
+)
+chr13_pc1_rankz_1 <- apply(chr13_pca_1$x[,"PC1", drop=FALSE],2, rankZ)
+chr13_pc1_qtl_1 <- scan1(pheno = chr13_pc1_rankz_1,
+                      genoprobs = genoprobs,
+                      kinship = kinship_loco,
+                      addcovar = covar[,"sex",drop=F],
+                     cores = 32
+)
+                
+chr13_pc1_qtl_eff_1 <- scan1blup(pheno = chr13_pc1_rankz_1,
+                      genoprobs = genoprobs[,"13"],
+                      kinship = kinship_loco[["13"]],
+                      addcovar = covar[,"sex",drop=F]
+)
+
+chr13_pc1_peak_1 <- find_peaks(chr13_pc1_qtl_1, threshold = 8, pmap) |> filter(chr ==13)
+
+
+marker   <- map_dat2 %>% filter(pos_bp == chr13_pc1_peak_1$pos)
+geno     <- pull_genoprobpos(genoprobs,marker$marker)
+
+
+chr13_pc1_med_1 <- mediation.scan(
+  target= chr13_pc1_rankz_1,
+  mediator = exprZ,
+  annotation = all_genes_palate |> 
+    mutate( chromosome = ifelse( chromosome =="MT","M",chromosome)) |> 
+    mutate(chr=chromosome,pos=midpoint),
+  covar =  covar[,"sex",drop=F],
+  qtl.geno = geno, 
+  verbose=FALSE
+  ) 
+
+chr13_pc1_med_1 <- chr13_pc1_med_1 |> 
+    mutate(target   = "PC1",
+           peak_chr = "13") 
+
+```
+
+```{r chr13_pc1_loadings}
+#| warning: false
+#| message: false
+#| eval: false
+
+chr13_pc1_drivers <- chr13_pca_1$rotation[,"PC1", drop = FALSE] %>% 
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all_genes_palate %>%  
+               select(gene_id, symbol)
+             ) %>% 
+  filter( (PC1) >= quantile((PC1), 0.9)|
+          (PC1) <= quantile((PC1), 0.1)
+          )
+
+
+chr13_pca_1$rotation[,"PC1", drop = FALSE] %>% 
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all_genes_palate %>%  
+               select(gene_id, symbol)
+             ) |> 
+  create_dt()
+```
+
+Here is the effects plot of the region showing the eQTL hotspot boundaries with blue lines and the PC1 QTL peak in dashed red line. 
+```{r chr13_pc1_qtl}
+#| fig-width: 12
+#| fig-height: 7
+
+
+plot_coefCC(chr13_pc1_qtl_eff_1, scan1_output =chr13_pc1_qtl_1, map = pmap , xlim= c(1e08, 1.1e08), main = "PC1 of chr13 eQTL hotspot #1 targets")
+abline( v =chr13_pc1_peak_1$pos, col = "red", lwd = 2, lty = 2)
+abline( v = filter( bands.rna,chr==13)$start[2], col = "blue", lwd = 2)
+abline( v =filter( bands.rna,chr==13)$end[2], col = "blue", lwd = 2)
+# abline( v = filter( bands.rna,chr==13)$start[3], col = "red", lwd = 2)
+# abline( v =filter( bands.rna,chr==13)$end[3], col = "red", lwd = 2)
+#abline( v =pc1_peak_chr13$pos, col = "black", lwd = 2, lty = 2)
+```
+
+```{r chr13_pc1_lod_plot}
+#| warning: false
+#| message: false
+#| fig-width: 12
+#| fig-height: 5
+chr13_pc1_lod_plot_1 <- chr13_pc1_qtl_1 %>% 
+  as_tibble( rownames = "marker") |> 
+  left_join(map_dat2) |> 
+  filter( chr == chr13_pc1_peak_1$chr) %>% 
+  mutate( type = "Chr13 PC1") |> 
+  ggplot()+
+  aes( 
+    x= pos_bp/1e06,
+    y = PC1,
+    col = type
+  )+
+  geom_rect(  xmin =filter( bands.rna,chr==13)$start[2]/1e06, 
+              xmax = filter( bands.rna,chr==13)$end[2]/1e06, 
+              ymin = 0, 
+              ymax = 25, 
+              fill = "gray", 
+              inherit.aes = FALSE, 
+              alpha = 0.1, 
+              show.legend = FALSE)+
+  geom_line( size = 1.5)+
+  theme_pubclean( base_size = 18)+
+  color_palette("jco")+
+  xlab(paste0("Chr ",chr13_pc1_peak_1$chr," location (Mbp)"))+
+  ylab( "LOD score")+
+  labs(col = "Gene")+
+  annotate( "text", x= 6+filter( bands.rna,chr==13)$end[2]/1e06, y = 8, label ="eQTL \n Hotspot", size =5)+
+  ylim(0,12)+
+  xlim(60,120)+
+  theme(legend.position = "none") 
+
+
+
+# Effects plot
+chr13_pc1_peak_n <- map_dat2 |> filter( pos_bp == chr13_pc1_peak_1$pos)
+# chr13_pc1_peak$before <- (map_dat2 |> filter( n == chr13_pc1_peak_n$n-1))$marker
+# chr13_pc1_peak$after <- (map_dat2 |> filter( n == chr13_pc1_peak_n$n+1))$marker
+
+# note I am getting the effect at the peak!
+chr13_pc1_eff_plot_1 <- chr13_pc1_qtl_eff_1[chr13_pc1_peak_n$marker,LETTERS[1:8]] %>% 
+  t() |> 
+  as_tibble() |> 
+  pivot_longer( cols = LETTERS[1:8],
+                names_to = "effect",
+                values_to = "value"
+  ) %>% 
+  mutate( effect = case_when( effect == "A" ~ "AJ",
+                              effect == "B" ~ "B6",
+                              effect == "C" ~ "129",
+                              effect == "D" ~ "NOD",
+                              effect == "E" ~ "NZO",
+                              effect == "F" ~ "CAST",
+                              effect == "G" ~ "PWK",
+                              effect == "H" ~ "WSB"),
+          name = "PC1") |> 
+  mutate( effect = factor(effect, levels =c("WSB","B6","NOD","129","AJ","PWK","CAST","NZO"))) |> 
+  ggplot()+
+  aes( x = effect,
+       y = value,
+       group = name,
+       col = name)+
+  geom_point(size = 4, show.legend = FALSE)+
+  geom_line(show.legend = T, size = 1.2)+
+  theme_pubclean(base_size = 18)+
+  color_palette("jco")+
+  ylab("Haplotype effects")+
+  xlab("")+
+  #ylim(-2,1.1)+
+  geom_hline( yintercept = 0)+
+  theme(axis.line.x = element_blank(),
+        axis.title = element_text(size = 18))+
+  labs(col ="Gene")+
+  coord_flip( clip ="off")+
+  theme(legend.position = "none") 
+
+chr13_pc1_peak_plot_1 <- ggarrange( chr13_pc1_lod_plot_1, chr13_pc1_eff_plot_1,  widths = c(1, 0.5))
+chr13_pc1_peak_plot_1
+# ggsave(filename = here("_figures/chr13_eQTL_hotspot_PC1_peak_plot.png"), plot = chr13_pc1_peak_plot, width = 12, height = 5, units = "in")
+
+```
+
+Mediation results: *Zbed3* doesn't have a local eQTL.
+
+```{r}
+#| warning: false
+#| message: false
+# ggplotly(kplot(chr13_pc1_med)+
+#   theme_pubclean()+
+#     theme(legend.position = "none"))
+
+chr13_pc1_med_1 |> 
+  mutate( qtl_pos = chr13_pc1_peak_1$pos, qtl_chr = chr13_pc1_peak_1$chr, qtl_lod = chr13_pc1_peak_1$lod) %>% 
+  mutate( scaled_LOD = scale(LOD)) %>% 
+  filter( abs(qtl_pos-midpoint) <= 10e6 &   # filter within 10Mb
+            qtl_chr == chr
+  ) %>% 
+  arrange( LOD) %>% 
+  head(5) %>% 
+  arrange(midpoint) %>% 
+  select( symbol, chr, qtl_lod, mediation_lod = LOD, qtl_pos, pos) %>% 
+  mutate_if( is.numeric, round, 2) %>% 
+  create_dt()
+
+```
+
+Looking at PC1 values by genotype:
+```{r}
+
+cols = gray(10000:1/10000)
+label_col = as.character(qtl2::CCcolors)
+founders = c("AJ", "B6", "129", "NOD", "NZO", "CAST", "PWK", "WSB")
+sorted_pheno <- sort( chr13_pc1_rankz_1[,"PC1"])
+image(genoprobs[[chr13_pc1_peak_1$chr]][names(sorted_pheno), rev(LETTERS[1:8]), chr13_pc1_peak_n$marker]*2,yaxt = "n", xaxt = "n", col = cols)
+axis(2, at = seq(0, 8, 1 + 1/8)/8, labels = FALSE, 
+       lty = 0, srt = 90, las = 2)
+mtext(text = "", side = 3, padj = -1, cex = 1.25)
+mtext(text = rev(founders), side = 2, col = rev(label_col), at = seq(0, 1, length.out = 8), 
+        las = 1, cex = 1.25, adj = 1.25, font = 2)
+mtext(text = paste("lower", "<-- PC1 -->", "higher"), side = 1, padj = 1.25, cex = 1.25)
+
+
+
+
+```
+
+
+Association mapping:
+```{r chr13_pc1_as_1}
+#| warning: false
+#| message: false
+pmap_Mbp <- lapply( pmap, function(x){x/1e06})
+attr(genoprobs, "is_x_chr") <- NULL
+
+chr13_pc1_as_1 <- scan1snps(genoprobs = genoprobs,
+                     map = pmap_Mbp,
+                     pheno = chr13_pc1_rankz_1,
+                     kinship = kinship_loco[[chr13_pc1_peak_1$chr]],
+                     addcovar = covar[,"sex",drop=F],
+                     chr = as.character(chr13_pc1_peak_1$chr),
+                     query_func = query_variants,
+                     start = chr13_pc1_peak_1$pos/1e06 - 5,
+                     end = chr13_pc1_peak_1$pos/1e06 + 5,
+                     keep_all_snps = T,
+                     cores = 32
+                     )
+genes <- query_genes( chr13_pc1_peak_1$chr,
+                      chr13_pc1_peak_1$pos/1e06 - 5,
+                      chr13_pc1_peak_1$pos/1e06 + 5) %>%
+  distinct()
+
+```
+
+```{r chr13_pc1_as_plot}
+#| warning: false
+#| message: false
+#| fig-width: 16
+#| fig-height: 8
+
+par(mar=c(4.1, 4.1,2, 1))
+
+plot(chr13_pc1_as_1$lod,
+     chr13_pc1_as_1$snpinfo,
+     drop_hilit = 1,
+     genes = genes,
+     xlim=c(100,104))
+
+
+```
+
+Highest scoring SNPs:
+
+```{r chr13_pc1_as_snp_annot}
+#| warning: false
+#| message: false
+#| cache: true
+
+chr13_pc1_as_1_snps <- chr13_pc1_as_1$lod |> 
+  as.data.frame( ) |> 
+  rownames_to_column("snp") |> 
+  left_join( chr13_pc1_as_1$snpinfo) |> 
+  filter( PC1 > 6) |> 
+  select( LOD = PC1,
+          snp ,
+          pos ,
+          ref,
+          alt,
+          consequence = max_csq ,
+          # gene_id = ensembl_gene ,
+          `129` = sample_129S1_SvImJ,
+          `AJ` = sample_A_J,
+          `CAST` = sample_CAST_EiJ,
+          `NZO` = sample_NZO_HlLtJ,
+          `PWK` = sample_PWK_PhJ,
+          `B6` = sample_C57BL_6J,
+          `NOD` = sample_NOD_ShiLtJ,
+          `WSB` = sample_WSB_EiJ
+          ) 
+
+# connect to ensembl
+if (!exists("ensembl") || is.null(ensembl)) {
+  # Connect to the Ensembl Variation database
+  ensembl <- biomaRt::useMart("ENSEMBL_MART_SNP", dataset = "mmusculus_snp")
+}
+# Get annotations for the SNPs
+chr13_pc1_as_1_snp_annotations <- biomaRt::getBM(
+  attributes = c("refsnp_id", "ensembl_gene_stable_id", "ensembl_gene_name","consequence_type_tv","sift_score","reg_consequence_types","motif_consequence_types"),
+  filters = "snp_filter",
+  values = chr13_pc1_as_1_snps$snp,
+  mart = ensembl
+)
+```
+
+
+```{r chr13_pc1_as_table}
+#| warning: false
+#| message: false
+chr13_pc1_as_1_snps |> 
+  left_join( chr13_pc1_as_1_snp_annotations |> select( snp = refsnp_id, gene_id = ensembl_gene_stable_id )) |> 
+  left_join( all.genes_v105 |> select( gene_id, symbol)) |> 
+  mutate_if(is.numeric, round, 2) |> 
+  select(LOD, snp, gene_id, symbol, pos, ref, alt, consequence, founders) |> 
+  create_dt()
+
+
+```
+
+:::
+
+### Chr13.2
+
+```{r chr13_band_2}
+#| warning: false
+#| message: false
+
+chr13.eQTL2 <- peaks_annotated %>% 
+  filter( peak_chr == 13 &
+            lod > 7 & 
+            !local &
+            interp_bp_peak >= filter( bands.rna,chr==13)$start[3] & 
+            interp_bp_peak <= filter( bands.rna,chr==13)$end[3] 
+  ) 
+
+```
+
+We identified a `r round(filter( bands.rna,chr==13)$width[3]/1e06,2)` Mb wide eQTL hotspot on chromosome 13 between `r formatC(filter( bands.rna,chr==13)$start[3],big.mark=",")`-`r formatC(filter( bands.rna,chr==13)$end[3],big.mark=",")` bp that contains `r nrow(chr13.eQTL2)` suggestive eQTL (LOD \> 7).
+
+::: panel-tabset
+#### ORA results
+
+```{r chr13_ora_2}
+#| warning: false
+#| message: false
+#| cache: true
+
+
+g.chr13_2 <- gost(query =  unique(chr13.eQTL2$symbol),
+                        organism = "mmusculus", 
+                        domain_scope = "custom", 
+                        custom_bg = all_genes_palate$symbol, 
+                        evcodes = TRUE)
+g.chr13_2$result <- g.chr13_2$result %>% filter(term_size < 500)
+
+```
+
+```{r chr13_ora_plot_2}
+#| warning: false
+#| message: false
+#| eval: false
+gostplot(g.chr13_2, capped = F)
+
+```
+
+```{r chr13_ora_table_2}
+
+g.chr13_2$result %>% 
+  select( term_name, source, FDR = p_value, term_size, intersection_size,intersection) %>% 
+  filter( FDR <0.01) %>% 
+  mutate_if( is.numeric, formatC, digits =2) %>% 
+  create_dt()
+
+```
+
+#### Haplotype effects
+
+```{r chr13_effs_2}
+#|warning: false
+#|message: false
+#|fig-width: 10
+#|fig-height: 8
+
+chr13.eQTL2_mat <- chr13.eQTL2 %>% 
+  filter(!is.na(A)) %>% 
+  select(LETTERS[1:8],"symbol") %>% 
+  distinct() %>%
+  column_to_rownames("symbol") %>%
+  as.matrix() %>% 
+  t()
+
+annotation_row <- data.frame(strain=c("AJ","B6","129","NOD","NZO","CAST","PWK","WSB"))
+rownames(annotation_row) <- rownames(chr13.eQTL2_mat)  
+
+annot.colors <- list(strain = founder_colors)
+
+# svg(filename = here("figures","chr1_hotspot_allele_eff.svg"),width = 800, height = 600)
+pheatmap(chr13.eQTL2_mat,
+         cluster_rows=T,
+         show_rownames=FALSE,
+         cluster_cols=T, 
+         show_colnames = FALSE, 
+         clustering_method = "complete",
+         scale="none",
+         clustering_distance_cols="correlation",
+         clustering_distance_rows="correlation",
+         annotation_row = annotation_row, 
+         annotation_colors = annot.colors, 
+         cutree_rows = 2)
+
+```
+
+<!-- #### Mediation results -->
+
+
+<!-- ```{r chr13_meds_updated_2} -->
+<!-- #| warning: false -->
+<!-- #| message: false -->
+<!-- #| results: hide -->
+<!-- chr13_eqtl_meds_filt_2 <- chr13_eqtl_meds_2 |>  -->
+<!--   left_join( all_genes_palate %>%  -->
+<!--                select( target = symbol,  -->
+<!--                        target_id =gene_id  -->
+<!--                        ) -->
+<!--              ) %>% -->
+<!--   select( -->
+<!--     target, -->
+<!--     qtl_chr, -->
+<!--     qtl_lod, -->
+<!--     target_pos, -->
+<!--     target_chr, -->
+<!--     mediator_id,  -->
+<!--     mediator, -->
+<!--     mediator_chr,  -->
+<!--     mediator_midpoint , -->
+<!--     mediation_lod = LOD -->
+<!--   ) %>%  -->
+<!--   group_by( target, qtl_chr, qtl_lod, target_chr) %>%  -->
+<!--   mutate( scaled_LOD = scale(mediation_lod)) %>%  -->
+<!--   filter(  -->
+<!--     # between(mediator_midpoint, filter( bands.rna,chr==13)$start[1]-10e06, filter( bands.rna,chr==13)$end[1]+10e06), -->
+<!--     abs(target_pos-mediator_midpoint) <= 10e6 &   # filter within 10Mb -->
+<!--             qtl_chr == mediator_chr -->
+<!--           #scaled_LOD < -4 # z threshold -4 -->
+<!--   ) -->
+
+<!-- chr13_eqtl_meds_filt_2 %>%  -->
+<!--   mutate(mediation_lod = ifelse(target == mediator, NA, mediation_lod)) %>% -->
+<!--   mutate(lod_drop = qtl_lod - mediation_lod) %>% -->
+<!--   group_by(target) %>% -->
+<!--   arrange(mediation_lod) %>% -->
+<!--   mutate(rank = rep(seq(1:n()))) -> chr13.meds.ranked_2 -->
+
+<!-- chr13.meds.ranked.sum_2 <- chr13.meds.ranked_2 %>% -->
+<!--   filter(rank %in% c( 1)) %>%  -->
+<!--   group_by(mediator) %>% -->
+<!--   summarize(n = length(target), min_drop = min(lod_drop, na.rm = T), max_drop = max(lod_drop, na.rm = T), med_drop = median(lod_drop, na.rm = T)) %>% -->
+<!--   arrange(desc(n)) -->
+
+<!-- chr13.meds.ranked.sum_2 -->
+
+<!-- ``` -->
+
+<!-- ```{r chr13_meds_plot_2} -->
+<!-- #| warning: false -->
+<!-- #| message: false -->
+<!-- #| fig-width: 6 -->
+<!-- #| fig-height: 18 -->
+
+<!-- results <- chr13.meds.ranked_2 %>% -->
+<!--   ungroup() %>% -->
+<!--   select(mediator, target, mediation_lod, qtl_lod, lod_drop, mediator_midpoint, target_pos) %>% -->
+<!--   select(-mediation_lod, -qtl_lod) %>% -->
+<!--   filter((mediator %in% str_c(chr13.meds.ranked.sum_2$mediator[1:5]))) %>% -->
+<!--   mutate(lod_drop = ifelse(lod_drop < 0, 0, lod_drop), lod_drop = ifelse(lod_drop > 10, 10, lod_drop)) %>% -->
+<!--   arrange(mediator_midpoint) %>%  -->
+<!--   mutate( xlabel = as_factor(mediator)) %>%  -->
+<!--   arrange(target_pos) %>%  -->
+<!--   mutate( ylabel = as_factor(target))  -->
+
+<!-- p <- ggplot(results, aes(x = xlabel, y = ylabel)) + -->
+<!--   geom_point(aes(color =lod_drop, size = exp(lod_drop) / 30), alpha = 0.6) + -->
+<!--   scale_color_gradientn( -->
+<!--     colors = c("white", "firebrick3", "navy"), -->
+<!--     values = scales::rescale(c(0, 5, 10)), -->
+<!--     name = "LOD\ndifference", limits = c(0, 10) -->
+<!--   ) + -->
+<!--   scale_size(breaks = 0:10, labels = as.character(0:10), range = c(0, 10)) + -->
+<!--   guides(size = "none") + -->
+<!--   theme_pubclean(base_size = 18) + -->
+<!--   theme( -->
+<!--     axis.text.y = element_text(size = 6, hjust = 1), -->
+<!--     axis.ticks = element_blank(), -->
+<!--     axis.text.x = element_text(size = 12, angle = 15), -->
+<!--     axis.title = element_text(size = 14), -->
+<!--     legend.text = element_text(size = 14), -->
+<!--     legend.title = element_text(size = 16), -->
+<!--     legend.position = "right", -->
+<!--     panel.grid.major = element_blank(), -->
+<!--     panel.grid.minor = element_blank(), -->
+<!--     panel.background = element_blank() -->
+<!--   ) + -->
+<!--   ylab("Target eQTL")+ -->
+<!--   xlab("Mediator") -->
+
+<!-- p -->
+
+<!-- ``` -->
+
+<!-- #### Top candidate mediators -->
+
+<!-- ```{r chr13_med_dets} -->
+<!-- #| eval: true -->
+<!-- #| message: false -->
+<!-- #| warning: false -->
+
+
+<!-- candidate_peaks_chr13_2 <- peaks_annotated %>%  -->
+<!--   filter( symbol %in% chr13.meds.ranked.sum_2$mediator[1], local ==T) -->
+
+<!-- # add lod + effect plots of the local eQTL peaks for the top candidate mediators -->
+<!-- # the effects are already there but need to run the qtl scan for the lod plot -->
+
+<!-- # LOD plot -->
+<!-- chr13_qtl_scan_2 <- scan1( pheno = exprZ[,candidate_peaks_chr13_2$gene_id,drop=FALSE],  -->
+<!--                    genoprobs = genoprobs,  -->
+<!--                    kinship = kinship_loco, -->
+<!--                    addcovar = covar[,"sex",drop =F]) -->
+
+<!-- chr13_cand_qtl_scans_2 <- chr13_qtl_scan_2 %>%  -->
+<!--   as.data.frame( ) %>%  -->
+<!--   rename( "Mtrex" = `ENSMUSG00000016018`) %>%  -->
+<!--   mutate( marker = dimnames(chr13_qtl_scan_2)[[1]]) %>%  -->
+<!--   left_join(map_dat2)  -->
+
+<!-- chr13_lod_plot_2 <- chr13_cand_qtl_scans_2 %>%  -->
+<!--   filter( chr == candidate_peaks_chr13_2$peak_chr[1]) %>%  -->
+<!--   pivot_longer( cols = c("Mtrex"), names_to = "symbol", values_to = "lod") %>%  -->
+<!--   mutate( symbol = factor( symbol, levels = c("Mtrex"))) %>%  -->
+<!--   ggplot()+ -->
+<!--   aes(  -->
+<!--     x= pos_bp/1e06, -->
+<!--     y = lod, -->
+<!--     col = symbol -->
+<!--   )+ -->
+<!--   geom_rect(  xmin = filter( bands.rna,chr==13)$start[3]/1e06,  -->
+<!--               xmax = filter( bands.rna,chr==13)$end[3]/1e06,  -->
+<!--               ymin = 0,  -->
+<!--               ymax = 25,  -->
+<!--               fill = "gray",  -->
+<!--               inherit.aes = FALSE,  -->
+<!--               alpha = 0.1,  -->
+<!--               show.legend = FALSE)+ -->
+<!--   geom_line( size = 1.5, alpha = 0.8)+ -->
+<!--   geom_segment( x = candidate_peaks_chr13_2$start/1e06, xend = candidate_peaks_chr13_2$end/1e06 , y = 0, yend = 1, size = 2, aes(col=symbol)) + -->
+<!--   annotate( "text", x= candidate_peaks_chr13_2$midpoint/1e06, y = -0.8, label ="Mtrex", size =4, fontface = "italic")+ -->
+<!--   theme_pubclean( base_size = 18)+ -->
+<!--   color_palette("jco")+ -->
+<!--   xlab(paste0("Chr ",candidate_peaks_chr13_2$peak_chr[1]," location (Mbp)"))+ -->
+<!--   ylab( "LOD score")+ -->
+<!--   labs(col = "Gene")+ -->
+<!--   annotate( "text", x= 6+filter( bands.rna,chr==13)$end[3]/1e06, y = 9, label ="eQTL \n Hotspot", size =5)+ -->
+<!--   ylim(-1,10)+ -->
+<!--   xlim(75,125) -->
+
+
+
+<!-- # Effects plot -->
+<!-- chr13_eff_plot_2 <- candidate_peaks_chr13_2 %>%  -->
+<!--   select(LETTERS[1:8],symbol) %>%  -->
+<!--   pivot_longer( cols = LETTERS[1:8], -->
+<!--                 names_to = "effect", -->
+<!--                 values_to = "value" -->
+<!--   ) %>%  -->
+<!--   mutate( effect = case_when( effect == "A" ~ "AJ", -->
+<!--                               effect == "B" ~ "B6", -->
+<!--                               effect == "C" ~ "129", -->
+<!--                               effect == "D" ~ "NOD", -->
+<!--                               effect == "E" ~ "NZO", -->
+<!--                               effect == "F" ~ "CAST", -->
+<!--                               effect == "G" ~ "PWK", -->
+<!--                               effect == "H" ~ "WSB")) %>%  -->
+<!--   mutate( symbol = factor( symbol, levels = c("Mtrex"))) %>%  -->
+<!--   ggplot()+ -->
+<!--   aes( x = effect, -->
+<!--        y = value,  -->
+<!--        col = symbol, -->
+<!--        group = symbol)+ -->
+<!--   geom_point(size = 4, show.legend = FALSE)+ -->
+<!--   geom_line(show.legend = T, size = 1.2)+ -->
+<!--   theme_pubclean(base_size = 18)+ -->
+<!--   color_palette("jco")+ -->
+<!--   ylab("Haplotype effects")+ -->
+<!--   xlab("")+ -->
+<!--   #ylim(-2,1.1)+ -->
+<!--   geom_hline( yintercept = 0)+ -->
+<!--   theme(axis.line.x = element_blank(), -->
+<!--         axis.title = element_text(size = 18))+ -->
+<!--   labs(col ="Gene")+ -->
+<!--   coord_flip( clip ="off")+ -->
+<!--   theme(legend.position = "none")  -->
+
+<!-- ``` -->
+
+<!-- ```{r chr13_med_dets_plot_2} -->
+<!-- #| fig-width: 12 -->
+<!-- #| fig-height: 5 -->
+<!-- #| message: false -->
+<!-- #| warning: false -->
+
+<!-- ggarrange( chr13_lod_plot_2, chr13_eff_plot_2,  widths = c(1, 0.5)) -->
+
+<!-- ``` -->
+
+#### Mapping with PC1 of the target eQTL
+
+```{r chr13_pca_mapping_2}
+#| warning: false
+#| message: false
+
+
+# PC1 from chr13 targets
+chr13_pca_2 <- prcomp(
+  t(expr[ chr13.eQTL2$gene_id,, drop = F]), 
+  center = T, scale. = T  
+)
+chr13_pc1_rankz_2 <- apply(chr13_pca_2$x[,"PC1", drop=FALSE],2, rankZ)
+chr13_pc1_qtl_2 <- scan1(pheno = chr13_pc1_rankz_2,
+                      genoprobs = genoprobs,
+                      kinship = kinship_loco,
+                      addcovar = covar[,"sex",drop=F],
+                     cores = 32
+)
+                
+chr13_pc1_qtl_eff_2 <- scan1blup(pheno = chr13_pc1_rankz_2,
+                      genoprobs = genoprobs[,"13"],
+                      kinship = kinship_loco[["13"]],
+                      addcovar = covar[,"sex",drop=F]
+)
+
+chr13_pc1_peak_2 <- find_peaks(chr13_pc1_qtl_2, threshold = 8, pmap) |> filter(chr ==13)
+
+
+marker   <- map_dat2 %>% filter(pos_bp == chr13_pc1_peak_2$pos)
+geno     <- pull_genoprobpos(genoprobs,marker$marker)
+
+
+chr13_pc1_med_2 <- mediation.scan(
+  target= chr13_pc1_rankz_2,
+  mediator = exprZ,
+  annotation = all_genes_palate |> 
+    mutate( chromosome = ifelse( chromosome =="MT","M",chromosome)) |> 
+    mutate(chr=chromosome,pos=midpoint),
+  covar =  covar[,"sex",drop=F],
+  qtl.geno = geno, 
+  verbose=FALSE
+  ) 
+
+chr13_pc1_med_2 <- chr13_pc1_med_2 |> 
+    mutate(target   = "PC1",
+           peak_chr = "13") 
+
+```
+
+```{r chr13_pc1_loadings_2}
+#| warning: false
+#| message: false
+#| eval: false
+
+chr13_pc1_drivers_2 <- chr13_pca_2$rotation[,"PC1", drop = FALSE] %>% 
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all_genes_palate %>%  
+               select(gene_id, symbol)
+             ) %>% 
+  filter( (PC1) >= quantile((PC1), 0.9)|
+          (PC1) <= quantile((PC1), 0.1)
+          )
+
+
+chr13_pca_2$rotation[,"PC1", drop = FALSE] %>% 
+  as_tibble( rownames = "gene_id") %>% 
+  left_join( all_genes_palate %>%  
+               select(gene_id, symbol)
+             ) |> 
+  create_dt()
+```
+
+
+Here is the effects plot of the region showing the eQTL hotspot boundaries with blue lines and the PC1 QTL peak in dashed red line. 
+```{r chr13_pc1_qtl_2}
+#| fig-width: 12
+#| fig-height: 7
+
+
+plot_coefCC(chr13_pc1_qtl_eff_2, scan1_output =chr13_pc1_qtl_2, map = pmap , xlim= c(1e08, 1.1e08), main = "PC1 of chr13 eQTL hotspot #2 targets")
+abline( v =chr13_pc1_peak_2$pos, col = "red", lwd = 2, lty = 2)
+abline( v = filter( bands.rna,chr==13)$start[3], col = "blue", lwd = 2)
+abline( v =filter( bands.rna,chr==13)$end[3], col = "blue", lwd = 2)
+# abline( v = filter( bands.rna,chr==13)$start[3], col = "red", lwd = 2)
+# abline( v =filter( bands.rna,chr==13)$end[3], col = "red", lwd = 2)
+#abline( v =pc1_peak_chr13$pos, col = "black", lwd = 2, lty = 2)
+```
+
+```{r chr13_pc1_lod_plot_2}
+#| warning: false
+#| message: false
+#| fig-width: 12
+#| fig-height: 5
+chr13_pc1_lod_plot_2 <- chr13_pc1_qtl_2 %>% 
+  as_tibble( rownames = "marker") |> 
+  left_join(map_dat2) |> 
+  filter( chr == chr13_pc1_peak_2$chr) %>% 
+  mutate( type = "Chr13 PC1") |> 
+  ggplot()+
+  aes( 
+    x= pos_bp/1e06,
+    y = PC1,
+    col = type
+  )+
+  geom_rect(  xmin =filter( bands.rna,chr==13)$start[3]/1e06, 
+              xmax = filter( bands.rna,chr==13)$end[3]/1e06, 
+              ymin = 0, 
+              ymax = 25, 
+              fill = "gray", 
+              inherit.aes = FALSE, 
+              alpha = 0.1, 
+              show.legend = FALSE)+
+  geom_line( size = 1.5)+
+  theme_pubclean( base_size = 18)+
+  color_palette("jco")+
+  xlab(paste0("Chr ",chr13_pc1_peak_2$chr," location (Mbp)"))+
+  ylab( "LOD score")+
+  labs(col = "Gene")+
+  annotate( "text", x= 6+filter( bands.rna,chr==13)$end[3]/1e06, y = 8, label ="eQTL \n Hotspot", size =5)+
+  ylim(0,12)+
+  xlim(60,120)+
+  theme(legend.position = "none") 
+
+
+
+# Effects plot
+chr13_pc1_peak_n <- map_dat2 |> filter( pos_bp == chr13_pc1_peak_2$pos)
+# chr13_pc1_peak$before <- (map_dat2 |> filter( n == chr13_pc1_peak_n$n-1))$marker
+# chr13_pc1_peak$after <- (map_dat2 |> filter( n == chr13_pc1_peak_n$n+1))$marker
+
+# note I am getting the effect at the peak!
+chr13_pc1_eff_plot_2 <- chr13_pc1_qtl_eff_2[chr13_pc1_peak_n$marker,LETTERS[1:8]] %>% 
+  t() |> 
+  as_tibble() |> 
+  pivot_longer( cols = LETTERS[1:8],
+                names_to = "effect",
+                values_to = "value"
+  ) %>% 
+  mutate( effect = case_when( effect == "A" ~ "AJ",
+                              effect == "B" ~ "B6",
+                              effect == "C" ~ "129",
+                              effect == "D" ~ "NOD",
+                              effect == "E" ~ "NZO",
+                              effect == "F" ~ "CAST",
+                              effect == "G" ~ "PWK",
+                              effect == "H" ~ "WSB"),
+          name = "PC1") |> 
+  mutate( effect = factor(effect, levels =c("WSB","B6","NOD","129","AJ","PWK","CAST","NZO"))) |> 
+  ggplot()+
+  aes( x = effect,
+       y = value,
+       group = name,
+       col = name)+
+  geom_point(size = 4, show.legend = FALSE)+
+  geom_line(show.legend = T, size = 1.2)+
+  theme_pubclean(base_size = 18)+
+  color_palette("jco")+
+  ylab("Haplotype effects")+
+  xlab("")+
+  #ylim(-2,1.1)+
+  geom_hline( yintercept = 0)+
+  theme(axis.line.x = element_blank(),
+        axis.title = element_text(size = 18))+
+  labs(col ="Gene")+
+  coord_flip( clip ="off")+
+  theme(legend.position = "none") 
+
+chr13_pc1_peak_plot_2 <- ggarrange( chr13_pc1_lod_plot_2, chr13_pc1_eff_plot_2,  widths = c(1, 0.5))
+chr13_pc1_peak_plot_2
+# ggsave(filename = here("_figures/chr13_eQTL_hotspot_PC1_peak_plot.png"), plot = chr13_pc1_peak_plot, width = 12, height = 5, units = "in")
+
+```
+
+Mediation results:
+
+```{r}
+#| warning: false
+#| message: false
+# ggplotly(kplot(chr13_pc1_med)+
+#   theme_pubclean()+
+#     theme(legend.position = "none"))
+
+chr13_pc1_med_2 |> 
+  mutate( qtl_pos = chr13_pc1_peak_2$pos, qtl_chr = chr13_pc1_peak_2$chr, qtl_lod = chr13_pc1_peak_2$lod) %>% 
+  mutate( scaled_LOD = scale(LOD)) %>% 
+  filter( abs(qtl_pos-midpoint) <= 10e6 &   # filter within 10Mb
+            qtl_chr == chr
+  ) %>% 
+  arrange( LOD) %>% 
+  head(5) %>% 
+  arrange(midpoint) %>% 
+  select( symbol, chr, qtl_lod, mediation_lod = LOD, qtl_pos, pos) %>% 
+  mutate_if( is.numeric, round, 2) %>% 
+  create_dt()
+
+```
+
+Looking at PC1 values by genotype:
+
+```{r}
+
+cols = gray(10000:1/10000)
+label_col = as.character(qtl2::CCcolors)
+founders = c("AJ", "B6", "129", "NOD", "NZO", "CAST", "PWK", "WSB")
+sorted_pheno <- sort( chr13_pc1_rankz_2[,"PC1"])
+image(genoprobs[[chr13_pc1_peak_2$chr]][names(sorted_pheno), rev(LETTERS[1:8]), chr13_pc1_peak_n$marker]*2,yaxt = "n", xaxt = "n", col = cols)
+axis(2, at = seq(0, 8, 1 + 1/8)/8, labels = FALSE, 
+       lty = 0, srt = 90, las = 2)
+mtext(text = "", side = 3, padj = -1, cex = 1.25)
+mtext(text = rev(founders), side = 2, col = rev(label_col), at = seq(0, 1, length.out = 8), 
+        las = 1, cex = 1.25, adj = 1.25, font = 2)
+mtext(text = paste("lower", "<-- PC1 -->", "higher"), side = 1, padj = 1.25, cex = 1.25)
+
+
+
+
+```
+
+Association mapping:
+```{r chr13_pc1_as_2}
+#| warning: false
+#| message: false
+pmap_Mbp <- lapply( pmap, function(x){x/1e06})
+attr(genoprobs, "is_x_chr") <- NULL
+
+chr13_pc1_as_2 <- scan1snps(genoprobs = genoprobs,
+                     map = pmap_Mbp,
+                     pheno = chr13_pc1_rankz_2,
+                     kinship = kinship_loco[[chr13_pc1_peak_2$chr]],
+                     addcovar = covar[,"sex",drop=F],
+                     chr = as.character(chr13_pc1_peak_2$chr),
+                     query_func = query_variants,
+                     start = chr13_pc1_peak_2$pos/1e06 - 5,
+                     end = chr13_pc1_peak_2$pos/1e06 + 5,
+                     keep_all_snps = T,
+                     cores = 32
+                     )
+genes <- query_genes( chr13_pc1_peak_2$chr,
+                      chr13_pc1_peak_2$pos/1e06 - 5,
+                      chr13_pc1_peak_2$pos/1e06 + 5) %>%
+  distinct()
+
+```
+
+```{r chr13_pc1_as_plot_2}
+#| warning: false
+#| message: false
+#| fig-width: 16
+#| fig-height: 8
+
+par(mar=c(4.1, 4.1,2, 1))
+
+plot(chr13_pc1_as_2$lod,
+     chr13_pc1_as_2$snpinfo,
+     drop_hilit = 1,
+     genes = genes,
+     xlim=c(103,108))
+
+
+```
+
+SNPs with matching 3:5 in the area.
+
+```{r chr13_pc1_as_2_snp_annot}
+#| warning: false
+#| message: false
+#| cache: true
+
+chr13_pc1_as_2_snps <- chr13_pc1_as_2$lod |> 
+  as.data.frame( ) |> 
+  rownames_to_column("snp") |> 
+  left_join( chr13_pc1_as_2$snpinfo) |> 
+  filter( PC1 > 6) |> 
+  select( LOD = PC1,
+          snp ,
+          pos ,
+          ref,
+          alt,
+          consequence = max_csq ,
+          # gene_id = ensembl_gene ,
+          `129` = sample_129S1_SvImJ,
+          `AJ` = sample_A_J,
+          `CAST` = sample_CAST_EiJ,
+          `NZO` = sample_NZO_HlLtJ,
+          `PWK` = sample_PWK_PhJ,
+          `B6` = sample_C57BL_6J,
+          `NOD` = sample_NOD_ShiLtJ,
+          `WSB` = sample_WSB_EiJ
+          )  |>  
+  filter( `129`==`B6`, B6==NOD , NOD==AJ, AJ==WSB &
+            CAST == NZO, NZO == PWK) 
+
+# connect to ensembl
+if (!exists("ensembl") || is.null(ensembl)) {
+  # Connect to the Ensembl Variation database
+  ensembl <- biomaRt::useMart("ENSEMBL_MART_SNP", dataset = "mmusculus_snp")
+}
+# Get annotations for the SNPs
+chr13_pc1_as_2_snp_annotations <- biomaRt::getBM(
+  attributes = c("refsnp_id", "ensembl_gene_stable_id", "ensembl_gene_name","consequence_type_tv","sift_score","reg_consequence_types","motif_consequence_types"),
+  filters = "snp_filter",
+  values = chr13_pc1_as_2_snps$snp,
+  mart = ensembl
+)
+```
+
+```{r chr13_pc1_as_snp_table2}
+#| warning: false
+#| message: false
+chr13_pc1_as_2_snps |> 
+  left_join( chr13_pc1_as_2_snp_annotations |> select( snp = refsnp_id, gene_id = ensembl_gene_stable_id ,reg_consequence_types)) |> 
+  left_join( all.genes_v105 |> select( gene_id, symbol)) |> 
+  mutate_if(is.numeric, round, 2) |> 
+  select(LOD, snp, gene_id, symbol, pos, ref, alt, consequence,reg_consequence_types, founders) |> 
+  create_dt()
+```
+
+:::
+
+::: 
+
+
+
+# Genetic mapping with morphological traits
+
+## Genetic mapping with limb bud stage
+
+```{r map_lb_stage}
+#| warning: false
+#| message: false
+
+lb_pheno <- sample_annot %>% 
+  select(sample, LB_stage) %>% 
+  column_to_rownames('sample') %>% 
+  as.matrix()
+
+lb_pheno_rankZ <- apply(lb_pheno, 2, rankZ)
+lb_scan <- scan1( genoprobs = genoprobs, 
+                  pheno = lb_pheno_rankZ, 
+                  kinship = kinship_loco, 
+                  addcovar = covar[,"sex",drop = FALSE],
+                     cores = 32)
+
+
+
+```
+
+```{r lb_stage_perm}
+#| warning: false
+#| message: false
+#| cache: true
+
+lb_perm <- scan1perm(genoprobs = genoprobs, 
+                     pheno = lb_pheno_rankZ, 
+                  kinship = kinship_loco, 
+                  addcovar = covar[,"sex",drop = FALSE], 
+                  n_perm = 1000, 
+                  cores = 32
+                  )
+```
+
+We identified two significant QTL on chromosomes 6 and 13, and two suggestive QTL on chromosomes 1 and 2 for limb bud stage phenotype. The QTL on chromosome 13 overlaps with the second eQTL hotspot identified above.
+
+::: panel-tabset
+### LOD plot
+
+```{r lb_lod_plot}
+#| warning: false
+#| message: false
+#| fig-width: 14
+#| fig-height: 4
+
+thres <- summary(lb_perm, alpha = c(0.05, 0.2)) %>% 
+  as_tibble( rownames = "alpha")
+
+lb_peaks <- find_peaks(lb_scan, threshold = thres$LB_stage[2], pmap, peakdrop = 1)
+
+chroms <-names(chrom_lens)
+chrom_segments <- tibble( start = 0, 
+                          end = chrom_lens,
+                          chr = chroms,
+                          type = as.character(rep(c(0,1),10)))
+chrom_segments$start <- chrom_segments$start+ chrom_lens_offset[chrom_segments$chr]
+chrom_segments$end <- chrom_segments$end+ chrom_lens_offset[chrom_segments$chr]
+
+lb_scan_df <- lb_scan %>% 
+  as_tibble( rownames = "marker") %>% 
+  left_join(map_dat2) 
+lb_scan_df$pos_bp_offset <- lb_scan_df$pos_bp+chrom_lens_offset[lb_scan_df$chr]
+
+ggplot()+
+  geom_rect( data = chrom_segments, 
+             aes( xmin =start, 
+                  xmax = end, 
+                  ymin = 0, 
+                  ymax = 8, 
+                  fill = type), 
+             inherit.aes = FALSE, alpha = 0.2, show.legend = FALSE)+
+  scale_fill_manual(values = c("dark gray","white"))+
+  geom_line(data = lb_scan_df ,
+            aes( x = pos_bp_offset, y = LB_stage),
+            size = 1, 
+            col =strain_colors[[3]],
+             inherit.aes = FALSE )+
+  theme_pubclean(base_size = 16)+
+  scale_x_discrete( name = "Chr",
+                    limits = chrom_lens_midpt, 
+                    labels = names(chrom_lens), 
+                    expand = expansion( mult = 0.02))+
+  ylab("LOD")+
+  geom_hline( yintercept = thres$LB_stage[1], col = "red", lty = 2)+
+  geom_hline( yintercept = thres$LB_stage[2], col = "red", lty = 3)
+
+```
+
+### Suggestive QTL on chromosome 1
+
+```{r lb_peak_chr1}
+
+peak_chr1 <- find_peaks( lb_scan, threshold = thres$LB_stage[2], pmap) %>% 
+  filter( chr == 1)
+
+peak_chr1_eff <- scan1blup( genoprobs = genoprobs[,"1"], 
+                            pheno = lb_pheno, 
+                            kinship = kinship_loco[["1"]], 
+                            addcovar = covar[,"sex",drop = FALSE])
+
+markers <- select(map_dat2, chrom, pos_bp) %>% dplyr::rename(start=pos_bp) %>%
+  mutate(end=start) %>% GenomicRanges::GRanges()   # length 69,005
+# Get the bounding markers for each QTL peak
+# i.e. markers on the 69k grid that are up- and downstream of the peak
+query <- peak_chr1 %>% dplyr::select(chr, pos) %>%
+  dplyr::rename(chrom=chr, start=pos) %>% mutate(end=start) %>%
+  GenomicRanges::GRanges()  # filter based on LOD
+subject <- markers
+#peak_chr1$before <- map_dat2$marker[GenomicRanges::follow(query, subject)]
+#peak_chr1$after <- map_dat2$marker[GenomicRanges::precede(query, subject)]
+peak_chr1$marker <- map_dat2$marker[GenomicRanges::nearest(query, subject)]
+peak_chr1_eff_sum <- (peak_chr1_eff[c(peak_chr1$marker), LETTERS[1:8]])
+#plot_coefCC(peak_chr1_eff, map = pmap, scan1_output = lb_scan )
+
+peak_chr1_lod_plot <- lb_scan_df %>% 
+  filter( chr == 1) %>% 
+  ggplot()+
+  aes( 
+    x= pos_bp/1e06,
+    y = LB_stage
+  )+
+  # geom_rect(  xmin =filter( bands.rna,chr==2)$start[1]/1e06, 
+  #           xmax = filter( bands.rna,chr==2)$end[1]/1e06, 
+  #           ymin = 0, 
+  #           ymax = 25, 
+  #           fill = "gray", 
+  #          inherit.aes = FALSE, 
+  #          alpha = 0.1, 
+  #          show.legend = FALSE)+
+  geom_line( size = 1.5, col =strain_colors[[3]],)+
+  theme_pubclean( base_size = 18)+
+  xlab(paste0("Chr 1 location (Mbp)"))+
+  ylab( "LOD score")+
+  ylim(0,8)
+# annotate( "text", x= 7+filter( bands.rna,chr==2)$end[1]/1e06, y = 9.5, label ="eQTL \n Hotspot", size =5)
+
+peak_chr1_eff_plot <- peak_chr1_eff_sum %>%
+  as_tibble(rownames = "effect") %>% 
+  mutate( type = "LB_stage") %>% 
+  mutate( effect = case_when( effect == "A" ~ "AJ",
+                              effect == "B" ~ "B6",
+                              effect == "C" ~ "129",
+                              effect == "D" ~ "NOD",
+                              effect == "E" ~ "NZO",
+                              effect == "F" ~ "CAST",
+                              effect == "G" ~ "PWK",
+                              effect == "H" ~ "WSB")) %>% 
+  ggplot()+
+  aes( x = effect,
+       y = value,
+       group = type)+
+  geom_point(size = 4, show.legend = FALSE, col =strain_colors[[3]],)+
+  geom_line(show.legend = T, size = 1.2, col =strain_colors[[3]],)+
+  theme_pubclean(base_size = 18)+
+  ylab("Haplotype effects")+
+  xlab("")+
+  #ylim(-2,1.1)+
+  geom_hline( yintercept = 0)+
+  theme(axis.line.x = element_blank(),
+        axis.title = element_text(size = 18))+
+  coord_flip( clip ="off")+
+  theme(legend.position = "none")
+
+```
+
+```{r lb_peak1_plot}
+#| fig-width: 12
+#| fig-height: 5
+#| message: false
+#| warning: false
+
+
+peak1_plot<- ggarrange( peak_chr1_lod_plot, peak_chr1_eff_plot, widths = c(1, 0.5))
+peak1_plot
+
+```
+
+Mediation results for Chr 1 peak
+
+```{r chr1_lb_mediation}
+#| warning: false
+#| message: false
+#| results: hide
+
+
+# mediate with RNA data
+peak1_marker <- map_dat2 %>%  filter( pos_bp == peak_chr1$pos)
+qtl_geno <- pull_genoprobpos(genoprobs, peak1_marker$marker)
+
+peak1_meds <- mediation.scan( target =as.matrix(lb_pheno),
+                              mediator = exprZ[rownames(lb_pheno),all_genes_palate$gene_id,drop=F], 
+                              annotation =  all_genes_palate %>%
+                                mutate(chr=chromosome,pos=abs(end+start)/2),
+                              qtl.geno = qtl_geno[rownames(lb_pheno),],
+                              covar = covar[rownames(lb_pheno),"sex",drop=FALSE])
+
+```
+
+```{r chr1_meds_table}
+
+peak1_meds %>% 
+  mutate( qtl_pos = peak_chr1$pos, qtl_chr = peak_chr1$chr, qtl_lod = peak_chr1$lod) %>% 
+  mutate( scaled_LOD = scale(LOD)) %>% 
+  filter( abs(qtl_pos-midpoint) <= 10e6 &   # filter within 10Mb
+            qtl_chr == chr
+  ) %>% 
+  arrange( LOD) %>% 
+  head(5) %>% 
+  arrange(midpoint) %>% 
+  select( symbol, chr, qtl_lod, mediation_lod = LOD, qtl_pos, pos) %>% 
+  mutate_if( is.numeric, round, 2) %>% 
+  create_dt()
+
+```
+Association mapping:
+```{r lb_peak_chr1_as}
+#| warning: false
+#| message: false
+pmap_Mbp <- lapply( pmap, function(x){x/1e06})
+attr(genoprobs, "is_x_chr") <- NULL
+
+lb_peak_chr1_as <- scan1snps(genoprobs = genoprobs,
+                     map = pmap_Mbp,
+                     pheno = lb_pheno_rankZ,
+                     kinship = kinship_loco[[peak_chr1$chr]],
+                     addcovar = covar[,"sex",drop=F],
+                     chr = "1",
+                     query_func = query_variants,
+                     start = peak_chr1$pos/1e06 - 5,
+                     end = peak_chr1$pos/1e06 + 5,
+                     keep_all_snps = T,
+                     cores = 32
+                     )
+genes <- query_genes( peak_chr1$chr,
+                      peak_chr1$pos/1e06 - 5,
+                      peak_chr1$pos/1e06 + 5) %>%
+  distinct()
+
+```
+
+```{r lb_peak_chr1_as_plot}
+#| warning: false
+#| message: false
+#| fig-width: 16
+#| fig-height: 8
+
+par(mar=c(4.1, 4.1,2, 1))
+
+plot(lb_peak_chr1_as$lod,
+     lb_peak_chr1_as$snpinfo,
+     drop_hilit = 1,
+     genes = genes,
+     xlim=c(peak_chr1$pos/1e06 - 2.5,peak_chr1$pos/1e06 + 2.5))
+
+
+```
+
+Let's look for SNPs that have a LOD >3, without any genotype filtering:
+
+```{r lb_peak_chr1_as_snp_annot}
+#| warning: false
+#| message: false
+#| cache: true
+
+lb_peak_chr1_as_snps <- lb_peak_chr1_as$lod |> 
+  as.data.frame( ) |> 
+  rownames_to_column("snp") |> 
+  left_join( lb_peak_chr1_as$snpinfo) |> 
+  filter( LB_stage > 3) |> 
+  select( LOD = LB_stage,
+          snp ,
+          pos ,
+          ref,
+          alt,
+          consequence = max_csq ,
+          # gene_id = ensembl_gene ,
+          `129` = sample_129S1_SvImJ,
+          `AJ` = sample_A_J,
+          `CAST` = sample_CAST_EiJ,
+          `NZO` = sample_NZO_HlLtJ,
+          `PWK` = sample_PWK_PhJ,
+          `B6` = sample_C57BL_6J,
+          `NOD` = sample_NOD_ShiLtJ,
+          `WSB` = sample_WSB_EiJ
+          )  
+  # filter( `129`==`B6`, B6==CAST , CAST==WSB & 
+  #           AJ==NOD, NOD == NZO, NZO == PWK) 
+
+# connect to ensembl
+if (!exists("ensembl") || is.null(ensembl)) {
+  # Connect to the Ensembl Variation database
+  ensembl <- biomaRt::useMart("ENSEMBL_MART_SNP", dataset = "mmusculus_snp")
+}
+# Get annotations for the SNPs
+lb_peak_chr1_as_snp_annotations <- biomaRt::getBM(
+  attributes = c("refsnp_id", "ensembl_gene_stable_id", "ensembl_gene_name","consequence_type_tv","sift_score","reg_consequence_types","motif_consequence_types"),
+  filters = "snp_filter",
+  values = lb_peak_chr1_as_snps$snp,
+  mart = ensembl
+)
+
+```
+
+```{r lb_peak_chr1_as_table}
+#| warning: false
+#| message: false
+lb_peak_chr1_as_snps |> 
+  left_join( lb_peak_chr1_as_snp_annotations |> select( snp = refsnp_id, gene_id = ensembl_gene_stable_id ,reg_consequence_types)) |> 
+  left_join( all.genes_v105 |> select( gene_id, symbol)) |> 
+  mutate_if(is.numeric, round, 2) |> 
+  select(LOD, snp, gene_id, symbol, pos, ref, alt, consequence,reg_consequence_types, founders) |> 
+  create_dt()
+```
+
+Follow up on Tmbim1:
+
+
+### Suggestive QTL on chromosome 2
+
+```{r lb_peak_chr2}
+
+peak_chr2 <- find_peaks( lb_scan, threshold = thres$LB_stage[2], pmap) %>% 
+  filter( chr ==2)
+
+peak_chr2_eff <- scan1blup( genoprobs = genoprobs[,"2"], 
+                             pheno = lb_pheno, 
+                             kinship = kinship_loco[["2"]], 
+                             addcovar = covar[,"sex",drop = FALSE])
+
+markers <- select(map_dat2, chrom, pos_bp) %>% dplyr::rename(start=pos_bp) %>%
+  mutate(end=start) %>% GenomicRanges::GRanges()   # length 69,005
+# Get the bounding markers for each QTL peak
+# i.e. markers on the 69k grid that are up- and downstream of the peak
+query <- peak_chr2 %>% dplyr::select(chr, pos) %>%
+  dplyr::rename(chrom=chr, start=pos) %>% mutate(end=start) %>%
+  GenomicRanges::GRanges()  # filter based on LOD
+subject <- markers
+#peak_chr2$before <- map_dat2$marker[GenomicRanges::follow(query, subject)]
+#peak_chr2$after <- map_dat2$marker[GenomicRanges::precede(query, subject)]
+peak_chr2$marker <- map_dat2$marker[GenomicRanges::nearest(query, subject)]
+peak_chr2_eff_sum <- (peak_chr2_eff[c(peak_chr2$marker), LETTERS[1:8]])
+#plot_coefCC(peak_chr2_eff, map = pmap, scan1_output = lb_scan )
+
+peak_chr2_lod_plot <- lb_scan_df %>% 
+  filter( chr == 2) %>% 
+  ggplot()+
+    aes( 
+      x= pos_bp/1e06,
+      y = LB_stage
+      )+
+    # geom_rect(  xmin =filter( bands.rna,chr==2)$start[1]/1e06, 
+    #           xmax = filter( bands.rna,chr==2)$end[1]/1e06, 
+    #           ymin = 0, 
+    #           ymax = 25, 
+    #           fill = "gray", 
+    #          inherit.aes = FALSE, 
+    #          alpha = 0.1, 
+    #          show.legend = FALSE)+
+    geom_line( size = 1.5, col =strain_colors[[3]],)+
+    theme_pubclean( base_size = 18)+
+  xlab(paste0("Chr 2 location (Mbp)"))+
+  ylab( "LOD score")+
+  ylim(0,8)
+  # annotate( "text", x= 7+filter( bands.rna,chr==2)$end[1]/1e06, y = 9.5, label ="eQTL \n Hotspot", size =5)
+
+peak_chr2_eff_plot <- peak_chr2_eff_sum %>%
+  as_tibble(rownames = "effect") %>% 
+  mutate( type = "LB_stage") %>% 
+  mutate( effect = case_when( effect == "A" ~ "AJ",
+                              effect == "B" ~ "B6",
+                              effect == "C" ~ "129",
+                              effect == "D" ~ "NOD",
+                              effect == "E" ~ "NZO",
+                              effect == "F" ~ "CAST",
+                              effect == "G" ~ "PWK",
+                              effect == "H" ~ "WSB")) %>% 
+  ggplot()+
+  aes( x = effect,
+       y = value,
+       group = type)+
+  geom_point(size = 4, show.legend = FALSE, col =strain_colors[[3]],)+
+  geom_line(show.legend = T, size = 1.2, col =strain_colors[[3]],)+
+  theme_pubclean(base_size = 18)+
+  ylab("Haplotype effects")+
+  xlab("")+
+  #ylim(-2,1.1)+
+  geom_hline( yintercept = 0)+
+  theme(axis.line.x = element_blank(),
+        axis.title = element_text(size = 18))+
+  coord_flip( clip ="off")+
+  theme(legend.position = "none")
+
+```
+
+```{r lb_peak2_plot}
+#| fig-width: 12
+#| fig-height: 5
+#| message: false
+#| warning: false
+
+
+peak2_plot<- ggarrange( peak_chr2_lod_plot, peak_chr2_eff_plot, widths = c(1, 0.5))
+peak2_plot
+
+```
+
+Mediation results for Chr 2 peak:
+
+```{r chr2_lb_mediation}
+#| warning: false
+#| message: false
+#| results: hide
+
+
+# mediate with RNA data
+peak2_marker <- map_dat2 %>%  filter( pos_bp == peak_chr2$pos)
+qtl_geno <- pull_genoprobpos(genoprobs, peak2_marker$marker)
+
+peak2_meds <- mediation.scan( target =as.matrix(lb_pheno),
+                               mediator = exprZ[rownames(lb_pheno),all_genes_palate$gene_id,drop=F], 
+                               annotation =  all_genes_palate %>%
+                                 mutate(chr=chromosome,pos=abs(end+start)/2),
+                               qtl.geno = qtl_geno[rownames(lb_pheno),],
+                               covar = covar[rownames(lb_pheno),"sex",drop=FALSE])
+
+```
+
+```{r chr2_meds_table}
+
+peak2_meds %>% 
+  mutate( qtl_pos = peak_chr2$pos, qtl_chr = peak_chr2$chr, qtl_lod = peak_chr2$lod) %>% 
+  mutate( scaled_LOD = scale(LOD)) %>% 
+  filter( abs(qtl_pos-midpoint) <= 10e6 &   # filter within 10Mb
+            qtl_chr == chr
+  ) %>% 
+  arrange( LOD) %>% 
+  head(5) %>% 
+  arrange(midpoint) %>% 
+  select( symbol, chr, qtl_lod, mediation_lod = LOD, qtl_pos, pos) %>% 
+  mutate_if( is.numeric, round, 2) %>% 
+  create_dt()
+  
+```
+
+Association mapping:
+```{r lb_peak_chr2_as}
+#| warning: false
+#| message: false
+pmap_Mbp <- lapply( pmap, function(x){x/1e06})
+attr(genoprobs, "is_x_chr") <- NULL
+
+lb_peak_chr2_as <- scan1snps(genoprobs = genoprobs,
+                     map = pmap_Mbp,
+                     pheno = lb_pheno_rankZ,
+                     kinship = kinship_loco[[peak_chr2$chr]],
+                     addcovar = covar[,"sex",drop=F],
+                     chr = peak_chr2$chr,
+                     query_func = query_variants,
+                     start = peak_chr2$pos/1e06 - 5,
+                     end = peak_chr2$pos/1e06 + 5,
+                     keep_all_snps = T,
+                     cores = 32
+                     )
+genes <- query_genes( peak_chr2$chr,
+                      peak_chr2$pos/1e06 - 5,
+                      peak_chr2$pos/1e06 + 5) %>%
+  distinct()
+
+```
+
+```{r lb_peak_chr2_as_plot}
+#| warning: false
+#| message: false
+#| fig-width: 16
+#| fig-height: 8
+
+par(mar=c(4.1, 4.1,2, 1))
+
+plot(lb_peak_chr2_as$lod,
+     lb_peak_chr2_as$snpinfo,
+     drop_hilit = 1,
+     genes = genes,
+     xlim=c(peak_chr2$pos/1e06 - 2.5,peak_chr2$pos/1e06 + 2.5))
+
+
+```
+
+Let's look for SNPs that have a LOD >3, without any genotype filtering:
+
+```{r lb_peak_chr2_as_snp_annot}
+#| warning: false
+#| message: false
+#| cache: true
+
+lb_peak_chr2_as_snps <- lb_peak_chr2_as$lod |> 
+  as.data.frame( ) |> 
+  rownames_to_column("snp") |> 
+  left_join( lb_peak_chr2_as$snpinfo) |> 
+  filter( LB_stage > 3) |> 
+  select( LOD = LB_stage,
+          snp ,
+          pos ,
+          ref,
+          alt,
+          consequence = max_csq ,
+          # gene_id = ensembl_gene ,
+          `129` = sample_129S1_SvImJ,
+          `AJ` = sample_A_J,
+          `CAST` = sample_CAST_EiJ,
+          `NZO` = sample_NZO_HlLtJ,
+          `PWK` = sample_PWK_PhJ,
+          `B6` = sample_C57BL_6J,
+          `NOD` = sample_NOD_ShiLtJ,
+          `WSB` = sample_WSB_EiJ
+          )  
+  # filter( `129`==`B6`, B6==CAST , CAST==WSB & 
+  #           AJ==NOD, NOD == NZO, NZO == PWK) 
+
+# connect to ensembl
+if (!exists("ensembl") || is.null(ensembl)) {
+  # Connect to the Ensembl Variation database
+  ensembl <- biomaRt::useMart("ENSEMBL_MART_SNP", dataset = "mmusculus_snp")
+}
+# Get annotations for the SNPs
+lb_peak_chr2_as_snp_annotations <- biomaRt::getBM(
+  attributes = c("refsnp_id", "ensembl_gene_stable_id", "ensembl_gene_name","consequence_type_tv","sift_score","reg_consequence_types","motif_consequence_types"),
+  filters = "snp_filter",
+  values = lb_peak_chr2_as_snps$snp,
+  mart = ensembl
+)
+
+```
+
+```{r lb_peak_chr2_as_table}
+#| warning: false
+#| message: false
+lb_peak_chr2_as_snps |> 
+  left_join( lb_peak_chr2_as_snp_annotations |> select( snp = refsnp_id, gene_id = ensembl_gene_stable_id ,reg_consequence_types)) |> 
+  left_join( all.genes_v105 |> select( gene_id, symbol)) |> 
+  mutate_if(is.numeric, round, 2) |> 
+  select(LOD, snp, gene_id, symbol, pos, ref, alt, consequence,reg_consequence_types, founders) |> 
+  create_dt()
+```
+
+### Significant QTL on chromosome 6
+
+```{r lb_peak_chr6}
+
+peak_chr6 <- find_peaks( lb_scan, threshold = thres$LB_stage[2], pmap) %>% 
+  filter(chr ==6)
+
+peak_chr6_eff <- scan1blup( genoprobs = genoprobs[,"6"], 
+                             pheno = lb_pheno, 
+                             kinship = kinship_loco[["6"]], 
+                             addcovar = covar[,"sex",drop = FALSE])
+
+markers <- select(map_dat2, chrom, pos_bp) %>% dplyr::rename(start=pos_bp) %>%
+  mutate(end=start) %>% GenomicRanges::GRanges()   # length 69,005
+# Get the bounding markers for each QTL peak
+# i.e. markers on the 69k grid that are up- and downstream of the peak
+query <- peak_chr6 %>% dplyr::select(chr, pos) %>%
+  dplyr::rename(chrom=chr, start=pos) %>% mutate(end=start) %>%
+  GenomicRanges::GRanges()  # filter based on LOD
+subject <- markers
+# peak_chr6$before <- map_dat2$marker[GenomicRanges::follow(query, subject)]
+# peak_chr6$after <- map_dat2$marker[GenomicRanges::precede(query, subject)]
+peak_chr6$marker <- map_dat2$marker[GenomicRanges::nearest(query, subject)]
+peak_chr6_eff_sum <- (peak_chr6_eff[c(peak_chr6$marker), LETTERS[1:8]])
+#plot_coefCC(peak_chr6_eff, map = pmap, scan1_output = lb_scan )
+
+peak_chr6_lod_plot <- lb_scan_df %>% 
+  filter( chr == 6) %>% 
+  ggplot()+
+  aes( 
+    x= pos_bp/1e06,
+    y = LB_stage
+  )+
+  # geom_rect(  xmin =filter( bands.rna,chr==6)$start[1]/1e06, 
+  #             xmax = filter( bands.rna,chr==6)$end[1]/1e06, 
+  #             ymin = 0, 
+  #             ymax = 25, 
+  #             fill = "gray", 
+  #             inherit.aes = FALSE, 
+  #             alpha = 0.1, 
+  #             show.legend = FALSE)+
+  geom_line( size = 1.5, col =strain_colors[[3]],)+
+  theme_pubclean( base_size = 18)+
+  xlab(paste0("Chr 6 location (Mbp)"))+
+  ylab( "LOD score")+
+  ylim(0,8)
+  # annotate( "text", x= 7+filter( bands.rna,chr==6)$end[1]/1e06, y = 7.5, label ="eQTL \n Hotspot", size =5)
+
+peak_chr6_eff_plot <- peak_chr6_eff_sum %>%
+  as_tibble(rownames = "effect") %>% 
+  mutate( type = "LB_stage") %>% 
+  mutate( effect = case_when( effect == "A" ~ "AJ",
+                              effect == "B" ~ "B6",
+                              effect == "C" ~ "129",
+                              effect == "D" ~ "NOD",
+                              effect == "E" ~ "NZO",
+                              effect == "F" ~ "CAST",
+                              effect == "G" ~ "PWK",
+                              effect == "H" ~ "WSB")) %>% 
+  ggplot()+
+  aes( x = effect,
+       y = value,
+       group = type)+
+  geom_point(size = 4, show.legend = FALSE, col =strain_colors[[3]],)+
+  geom_line(show.legend = T, size = 1.2, col =strain_colors[[3]],)+
+  theme_pubclean(base_size = 18)+
+  ylab("Haplotype effects")+
+  xlab("")+
+  #ylim(-2,1.1)+
+  geom_hline( yintercept = 0)+
+  theme(axis.line.x = element_blank(),
+        axis.title = element_text(size = 18))+
+  coord_flip( clip ="off")+
+  theme(legend.position = "none")
+
+```
+
+```{r lb_peak6_plot}
+#| fig-width: 12
+#| fig-height: 5
+#| message: false
+#| warning: false
+
+
+peak6_plot<- ggarrange( peak_chr6_lod_plot, peak_chr6_eff_plot, widths = c(1, 0.5))
+peak6_plot
+
+```
+
+Mediation results for Chr 6 peak:
+
+```{r chr6_lb_mediation}
+#| warning: false
+#| message: false
+#| results: hide
+
+
+# mediate with RNA data
+peak6_marker <- map_dat2 %>%  filter( pos_bp == peak_chr6$pos)
+qtl_geno <- pull_genoprobpos(genoprobs, peak6_marker$marker)
+
+peak6_meds <- mediation.scan( target =as.matrix(lb_pheno),
+                               mediator = exprZ[rownames(lb_pheno),all_genes_palate$gene_id,drop=F], 
+                               annotation =  all_genes_palate %>%
+                                 mutate(chr=chromosome,pos=abs(end+start)/2),
+                               qtl.geno = qtl_geno[rownames(lb_pheno),],
+                               covar = covar[rownames(lb_pheno),"sex",drop=FALSE])
+```
+
+```{r chr6_meds_table}
+
+peak6_meds %>% 
+  mutate( qtl_pos = peak_chr6$pos, qtl_chr = peak_chr6$chr, qtl_lod = peak_chr6$lod) %>% 
+  mutate( scaled_LOD = scale(LOD)) %>% 
+  filter( abs(qtl_pos-midpoint) <= 10e6 &   # filter within 10Mb
+            qtl_chr == chr
+  ) %>% 
+  arrange( LOD) %>% 
+  head(10) %>% 
+  arrange(midpoint) %>% 
+  select( symbol, chr, qtl_lod, mediation_lod = LOD, qtl_pos, pos) %>% 
+  mutate_if( is.numeric, round, 2) %>% 
+  create_dt()
+
+```
+
+Follow up on Mgp: It doesn't have a local eQTL! I do pick it up as the best mediator for the WGCNA Tan Module QTL on chromosome 6 with similar allele effects. 
+
+Association mapping:
+```{r lb_peak_chr6_as}
+#| warning: false
+#| message: false
+pmap_Mbp <- lapply( pmap, function(x){x/1e06})
+attr(genoprobs, "is_x_chr") <- NULL
+
+lb_peak_chr6_as <- scan1snps(genoprobs = genoprobs,
+                     map = pmap_Mbp,
+                     pheno = lb_pheno_rankZ,
+                     kinship = kinship_loco[[peak_chr6$chr]],
+                     addcovar = covar[,"sex",drop=F],
+                     chr = peak_chr6$chr,
+                     query_func = query_variants,
+                     start = peak_chr6$pos/1e06 - 5,
+                     end = peak_chr6$pos/1e06 + 5,
+                     keep_all_snps = T,
+                     cores = 32
+                     )
+genes <- query_genes( peak_chr6$chr,
+                      peak_chr6$pos/1e06 - 5,
+                      peak_chr6$pos/1e06 + 5) %>%
+  distinct()
+
+```
+
+```{r lb_peak_chr6_as_plot}
+#| warning: false
+#| message: false
+#| fig-width: 16
+#| fig-height: 8
+
+par(mar=c(4.1, 4.1,2, 1))
+
+plot(lb_peak_chr6_as$lod,
+     lb_peak_chr6_as$snpinfo,
+     drop_hilit = 1,
+     genes = genes,
+     xlim=c(peak_chr6$pos/1e06 - 2.5,peak_chr6$pos/1e06 + 2.5))
+
+
+```
+
+Let's look for SNPs that have a LOD >2, without any genotype filtering:
+
+```{r lb_peak_chr6_as_snp_annot}
+#| warning: false
+#| message: false
+#| cache: true
+
+lb_peak_chr6_as_snps <- lb_peak_chr6_as$lod |> 
+  as.data.frame( ) |> 
+  rownames_to_column("snp") |> 
+  left_join( lb_peak_chr6_as$snpinfo) |> 
+  filter( LB_stage > 2) |> 
+  select( LOD = LB_stage,
+          snp ,
+          pos ,
+          ref,
+          alt,
+          consequence = max_csq ,
+          # gene_id = ensembl_gene ,
+          `129` = sample_129S1_SvImJ,
+          `AJ` = sample_A_J,
+          `CAST` = sample_CAST_EiJ,
+          `NZO` = sample_NZO_HlLtJ,
+          `PWK` = sample_PWK_PhJ,
+          `B6` = sample_C57BL_6J,
+          `NOD` = sample_NOD_ShiLtJ,
+          `WSB` = sample_WSB_EiJ
+          )  
+  # filter( `129`==`B6`, B6==CAST , CAST==WSB & 
+  #           AJ==NOD, NOD == NZO, NZO == PWK) 
+
+# connect to ensembl
+if (!exists("ensembl") || is.null(ensembl)) {
+  # Connect to the Ensembl Variation database
+  ensembl <- biomaRt::useMart("ENSEMBL_MART_SNP", dataset = "mmusculus_snp")
+}
+# Get annotations for the SNPs
+lb_peak_chr6_as_snp_annotations <- biomaRt::getBM(
+  attributes = c("refsnp_id", "ensembl_gene_stable_id", "ensembl_gene_name","consequence_type_tv","sift_score","reg_consequence_types","motif_consequence_types"),
+  filters = "snp_filter",
+  values = lb_peak_chr6_as_snps$snp,
+  mart = ensembl
+)
+
+```
+
+```{r lb_peak_chr6_as_table}
+#| warning: false
+#| message: false
+lb_peak_chr6_as_snps |> 
+  left_join( lb_peak_chr6_as_snp_annotations |> select( snp = refsnp_id, gene_id = ensembl_gene_stable_id ,reg_consequence_types)) |> 
+  left_join( all.genes_v105 |> select( gene_id, symbol)) |> 
+  mutate_if(is.numeric, round, 2) |> 
+  select(LOD, snp, gene_id, symbol, pos, ref, alt, consequence,reg_consequence_types, founders) |> 
+  create_dt()
+```
+
+### Significant QTL on chromosome 13
+
+```{r lb_peak_chr13}
+#| warning: false
+#| message: false
+peak_chr13 <- find_peaks( lb_scan, threshold = thres$LB_stage[1], pmap) |> filter(chr ==13)
+
+peak_chr13_eff <- scan1blup( genoprobs = genoprobs[,"13"], 
+                             pheno = lb_pheno, 
+                             kinship = kinship_loco[["13"]], 
+                             addcovar = covar[,"sex",drop = FALSE])
+
+markers <- select(map_dat2, chrom, pos_bp) %>% dplyr::rename(start=pos_bp) %>%
+  mutate(end=start) %>% GenomicRanges::GRanges()   # length 69,005
+# Get the bounding markers for each QTL peak
+# i.e. markers on the 69k grid that are up- and downstream of the peak
+query <- peak_chr13 %>% dplyr::select(chr, pos) %>%
+  dplyr::rename(chrom=chr, start=pos) %>% mutate(end=start) %>%
+  GenomicRanges::GRanges()  # filter based on LOD
+subject <- markers
+#peak_chr13$before <- map_dat2$marker[GenomicRanges::follow(query, subject)]
+#peak_chr13$after <- map_dat2$marker[GenomicRanges::precede(query, subject)]
+peak_chr13$marker <- map_dat2$marker[GenomicRanges::nearest(query, subject)]
+peak_chr13_eff_sum <- (peak_chr13_eff[(peak_chr13$marker), LETTERS[1:8]])
+# plot_coefCC(peak_chr13_eff, map = pmap, scan1_output = lb_scan , xlim=c(1e08,1.2e08))
+# abline(v =  107294179, col = "red", lwd=2, lty=2)
+# abline(v =  107379301, col = "blue", lwd=2, lty=2)
+
+peak_chr13_lod_plot <- lb_scan_df %>% 
+  filter( chr == 13) %>% 
+  ggplot()+
+    aes( 
+      x= pos_bp/1e06,
+      y = LB_stage
+      )+
+    geom_rect(  xmin =filter( bands.rna,chr==13)$start[3]/1e06, 
+              xmax = filter( bands.rna,chr==13)$end[3]/1e06, 
+              ymin = 0, 
+              ymax = 25, 
+              fill = "gray", 
+             inherit.aes = FALSE, 
+             alpha = 0.1, 
+             show.legend = FALSE)+
+    geom_line( size = 1.5, col =strain_colors[[3]],)+
+    theme_pubclean( base_size = 18)+
+  xlab(paste0("Chr 13 location (Mbp)"))+
+  ylab( "LOD score")+
+  ylim(0,10)+
+  annotate( "text", x= 7+filter( bands.rna,chr==13)$end[3]/1e06, y = 9.5, label ="eQTL \n Hotspot", size =5)
+
+peak_chr13_eff_plot <- peak_chr13_eff_sum %>%
+  as_tibble(rownames = "effect") %>% 
+  mutate( type = "LB_stage") %>% 
+  mutate( effect = case_when( effect == "A" ~ "AJ",
+                              effect == "B" ~ "B6",
+                              effect == "C" ~ "129",
+                              effect == "D" ~ "NOD",
+                              effect == "E" ~ "NZO",
+                              effect == "F" ~ "CAST",
+                              effect == "G" ~ "PWK",
+                              effect == "H" ~ "WSB")) %>% 
+  ggplot()+
+  aes( x = effect,
+       y = value,
+       group = type)+
+  geom_point(size = 4, show.legend = FALSE, col =strain_colors[[3]],)+
+  geom_line(show.legend = T, size = 1.2, col =strain_colors[[3]],)+
+  theme_pubclean(base_size = 18)+
+  ylab("Haplotype effects")+
+  xlab("")+
+  #ylim(-2,1.1)+
+  geom_hline( yintercept = 0)+
+  theme(axis.line.x = element_blank(),
+        axis.title = element_text(size = 18))+
+  coord_flip( clip ="off")+
+  theme(legend.position = "none")
+
+
+```
+
+```{r lb_peak13_plot}
+#| fig-width: 12
+#| fig-height: 5
+#| message: false
+#| warning: false
+
+
+peak13_plot<- ggarrange( peak_chr13_lod_plot, peak_chr13_eff_plot, widths = c(1, 0.5))
+peak13_plot
+
+```
+
+
+Below in blue are the boundaries of the eQTL hotspot, LB stage QTL peak in black. The QTL peak from PC1 of the Chr 13.2 eQTL hotspot targets is the same as the LB stage QTL peak (red-dashed line). 
+
+```{r chr13_lb_stage_eff_plot}
+#| warning: false
+#| message: false
+#| #| fig-width: 12
+#| fig-height: 8
+plot_coefCC( peak_chr13_eff, pmap, scan1_output = lb_scan,  xlim= c(1e08, 1.1e08))
+abline( v = peak_chr13$pos, col = "black", lwd = 2, lty = 1)
+abline( v = chr13_pc1_peak_2$pos, col = "red", lwd = 2, lty = 3)
+abline( v = filter( bands.rna,chr==13)$start[3], col = "blue", lwd = 2)
+abline( v =filter( bands.rna,chr==13)$end[3], col = "blue", lwd = 2)
+
+```
+
+Mediation results for Chr 13 peak:
+
+```{r chr13_lb_mediation}
+#| warning: false
+#| message: false
+#| results: hide
+
+
+# mediate with RNA data
+peak13_marker <- map_dat2 %>%  filter( pos_bp == peak_chr13$pos)
+qtl_geno <- pull_genoprobpos(genoprobs, peak13_marker$marker)
+
+peak13_meds <- mediation.scan( target =as.matrix(lb_pheno),
+                               mediator = exprZ[rownames(lb_pheno),all_genes_palate$gene_id,drop=F], 
+                               annotation =  all_genes_palate %>%
+                                 mutate(chr=chromosome,pos=abs(end+start)/2),
+                               qtl.geno = qtl_geno[rownames(lb_pheno),],
+                               covar = covar[rownames(lb_pheno),"sex",drop=FALSE])
+```
+
+```{r chr13_meds_table}
+#| warning: false
+#| message: false
+peak13_meds %>% 
+  mutate( qtl_pos = peak_chr13$pos, qtl_chr = peak_chr13$chr, qtl_lod = peak_chr13$lod) %>% 
+  mutate( scaled_LOD = scale(LOD)) %>% 
+  filter( abs(qtl_pos-midpoint) <= 10e6 &   # filter within 10Mb
+            qtl_chr == chr
+  ) %>% 
+  arrange( LOD) %>% 
+  head(5) %>% 
+  arrange(midpoint) %>% 
+  select( symbol, chr, qtl_lod, mediation_lod = LOD, qtl_pos, pos) %>% 
+  mutate_if( is.numeric, round, 2) %>% 
+  create_dt()
+  
+```
+
+
+Association mapping:
+
+```{r lb_stage_peak13_as}
+#| warning: false
+#| message: false
+pmap_Mbp <- lapply( pmap, function(x){x/1e06})
+attr(genoprobs, "is_x_chr") <- NULL
+
+lb_stage_peak13_as <- scan1snps(genoprobs = genoprobs,
+                     map = pmap_Mbp,
+                     pheno = lb_pheno_rankZ,
+                     kinship = kinship_loco[[peak_chr13$chr]],
+                     addcovar = covar[,"sex",drop=F],
+                     chr = as.character(peak_chr13$chr),
+                     query_func = query_variants,
+                     start = peak_chr13$pos/1e06 - 5,
+                     end = peak_chr13$pos/1e06 + 5,
+                     keep_all_snps = T,
+                     cores = 32
+                     )
+genes <- query_genes( peak_chr13$chr,
+                      peak_chr13$pos/1e06 - 5,
+                      peak_chr13$pos/1e06 + 5) %>%
+  distinct()
+
+```
+
+```{r lb_stage_peak13_as_plot}
+#| warning: false
+#| message: false
+#| fig-width: 16
+#| fig-height: 8
+
+par(mar=c(4.1, 4.1,2, 1))
+
+plot(lb_stage_peak13_as$lod,
+     lb_stage_peak13_as$snpinfo,
+     drop_hilit = 1,
+     genes = genes,
+     xlim=c(peak_chr13$pos/1e06 - 2.5,peak_chr13$pos/1e06 + 2.5))
+
+
+```
+
+SNPs with matching 3:5 in the area.
+
+```{r lb_stage_peak13_as_snp_annot}
+#| warning: false
+#| message: false
+#| cache: true
+
+lb_stage_peak13_as_snps <- lb_stage_peak13_as$lod |> 
+  as.data.frame( ) |> 
+  rownames_to_column("snp") |> 
+  left_join( lb_stage_peak13_as$snpinfo) |> 
+  filter( LB_stage > 4) |> 
+  select( LOD = LB_stage,
+          snp ,
+          pos ,
+          ref,
+          alt,
+          consequence = max_csq ,
+          # gene_id = ensembl_gene ,
+          `129` = sample_129S1_SvImJ,
+          `AJ` = sample_A_J,
+          `CAST` = sample_CAST_EiJ,
+          `NZO` = sample_NZO_HlLtJ,
+          `PWK` = sample_PWK_PhJ,
+          `B6` = sample_C57BL_6J,
+          `NOD` = sample_NOD_ShiLtJ,
+          `WSB` = sample_WSB_EiJ
+          )  |>  
+  filter( `129`==`B6`, B6==NOD , NOD==AJ, AJ==WSB &
+            CAST == NZO, NZO == PWK) 
+
+# connect to ensembl
+if (!exists("ensembl") || is.null(ensembl)) {
+  # Connect to the Ensembl Variation database
+  ensembl <- biomaRt::useMart("ENSEMBL_MART_SNP", dataset = "mmusculus_snp")
+}
+# Get annotations for the SNPs
+lb_stage_peak13_as_snp_annotations <- biomaRt::getBM(
+  attributes = c("refsnp_id", "ensembl_gene_stable_id", "ensembl_gene_name","consequence_type_tv","sift_score","reg_consequence_types","motif_consequence_types"),
+  filters = "snp_filter",
+  values = lb_stage_peak13_as_snps$snp,
+  mart = ensembl
+)
+```
+
+Although none of these have any genes attached to them some are regulatory region variants meaning that they are found within an enhancer or a promoter. For example [rs257533331](https://useast.ensembl.org/Mus_musculus/Variation/Mappings?db=core;fdb=funcgen;r=13:107605659-107606659;rf=ENSMUSR13_BRCL2;v=rs257533331;vdb=variation;vf=110560865) is found within [ENSMUSR13_BRCL2](https://useast.ensembl.org/Mus_musculus/Regulation/Summary?db=core;fdb=funcgen;r=13:107605659-107606659;rf=ENSMUSR13_BRCL2;v=rs257533331;vdb=variation;vf=110560865;regulation_view=variation_feature_variation=normal) which is active in regulating "embryonic facial prominence (m, 14.5 dpf)". 
+
+
+```{r lb_stage_peak13_as_snp_table2}
+#| warning: false
+#| message: false
+lb_stage_peak13_as_snps |> 
+  left_join( lb_stage_peak13_as_snp_annotations |> 
+               select( snp = refsnp_id, gene_id = ensembl_gene_stable_id ,reg_consequence_types)) |> 
+  left_join( all.genes_v105 |> select( gene_id, symbol)) |> 
+  mutate_if(is.numeric, round, 2) |> 
+  select(LOD, snp, gene_id, symbol, pos, ref, alt, consequence, reg_consequence_types,founders) |> 
+  create_dt()
+```
+
+Looking at LB stage values by genotype:
+
+```{r}
+
+cols = gray(10000:1/10000)
+label_col = as.character(qtl2::CCcolors)
+founders = c("AJ", "B6", "129", "NOD", "NZO", "CAST", "PWK", "WSB")
+sorted_pheno <- sort( lb_pheno_rankZ[,"LB_stage"])
+image(genoprobs[[peak_chr13$chr]][names(sorted_pheno), rev(LETTERS[1:8]), chr13_pc1_peak_n$marker]*2,yaxt = "n", xaxt = "n", col = cols)
+axis(2, at = seq(0, 8, 1 + 1/8)/8, labels = FALSE, 
+       lty = 0, srt = 90, las = 2)
+mtext(text = "", side = 3, padj = -1, cex = 1.25)
+mtext(text = rev(founders), side = 2, col = rev(label_col), at = seq(0, 1, length.out = 8), 
+        las = 1, cex = 1.25, adj = 1.25, font = 2)
+mtext(text = paste("lower", "<-- LB stage -->", "higher"), side = 1, padj = 1.25, cex = 1.25)
+
+
+
+
+```
+
+
+
+:::
+
+## Genetic mapping with pinky nub
+
+```{r map_pn}
+#| warning: false
+#| message: false
+#| fig-width: 12
+#| fig-height: 6
+
+pn_pheno <- sample_annot %>% 
+  select(sample, pinky_nub) %>% 
+  mutate( pn = case_when( is.na(pinky_nub)~0,
+                          pinky_nub =="pn"~1) ) %>% 
+  select(sample, pn) %>% 
+  column_to_rownames('sample') %>% 
+  as.matrix()
+
+pn_scan <- scan1( genoprobs = genoprobs, 
+                  pheno = pn_pheno[,"pn",drop=FALSE], 
+                  #kinship = kinship_loco, 
+                  addcovar = covar[,"sex",drop = FALSE],
+                  model = "binary",
+                  cores = 32)
+
+
+#plot(pn_scan, pmap)
+
+```
+
+```{r pn_perm}
+#| warning: false
+#| message: false
+#| cache: true
+
+pn_perm <- scan1perm(genoprobs = genoprobs, 
+                     pheno = pn_pheno[,"pn",drop=FALSE],
+                     #kinship = kinship_loco, 
+                     addcovar = covar[,"sex",drop = FALSE], 
+                     n_perm = 1000,
+                     model = "binary", 
+                  cores = 32
+                  )
+```
+
+We identified a significant QTL on chromosome 7 and a suggestive QTL on chromosome 14 for pinky nub phenotype.
+
+::: panel-tabset
+### LOD plot
+
+```{r pn_lod_plot}
+#| warning: false
+#| message: false
+#| fig-width: 14
+#| fig-height: 4
+
+thres <- summary(pn_perm, alpha = c(0.05, 0.1)) %>% 
+  as_tibble( rownames = "alpha")
+
+pn_peaks <- find_peaks(pn_scan, threshold = thres$pn[2], pmap)
+
+chroms <-names(chrom_lens)
+chrom_segments <- tibble( start = 0, 
+                          end = chrom_lens,
+                          chr = chroms,
+                          type = as.character(rep(c(0,1),10)))
+chrom_segments$start <- chrom_segments$start+ chrom_lens_offset[chrom_segments$chr]
+chrom_segments$end <- chrom_segments$end+ chrom_lens_offset[chrom_segments$chr]
+
+pn_scan_df <- pn_scan %>% 
+  as_tibble( rownames = "marker") %>% 
+  left_join(map_dat2) 
+pn_scan_df$pos_bp_offset <- pn_scan_df$pos_bp+chrom_lens_offset[pn_scan_df$chr]
+
+ggplot()+
+  geom_rect( data = chrom_segments, 
+             aes( xmin =start, 
+                  xmax = end, 
+                  ymin = 0, 
+                  ymax = 10, 
+                  fill = type), 
+             inherit.aes = FALSE, alpha = 0.2, show.legend = FALSE)+
+  scale_fill_manual(values = c("dark gray","white"))+
+  geom_line(data = pn_scan_df ,
+            aes( x = pos_bp_offset, y = pn),
+            size = 1, 
+            col =strain_colors[[3]],
+             inherit.aes = FALSE )+
+  theme_pubclean(base_size = 16)+
+  scale_x_discrete( name = "Chr",
+                    limits = chrom_lens_midpt, 
+                    labels = names(chrom_lens), 
+                    expand = expansion( mult = 0.02))+
+  ylab("LOD")+
+  ylim(0,10)+
+  geom_hline( yintercept = thres$pn[1], col = "red", lty = 2)+
+  geom_hline( yintercept = thres$pn[2], col = "red", lty = 3)
+
+```
+
+### Significant QTL on chromosome 7
+
+```{r pn_peak_chr7}
+
+peak_chr7 <- find_peaks( pn_scan, threshold = thres$pn[2], pmap) |> filter(chr ==7)
+
+peak_chr7_eff <- scan1blup( genoprobs = genoprobs[,"7"], 
+                             pheno = pn_pheno, 
+                             kinship = kinship_loco[["7"]], 
+                             addcovar = covar[,"sex",drop = FALSE])
+
+markers <- select(map_dat2, chrom, pos_bp) %>% dplyr::rename(start=pos_bp) %>%
+  mutate(end=start) %>% GenomicRanges::GRanges()   # length 69,005
+# Get the bounding markers for each QTL peak
+# i.e. markers on the 69k grid that are up- and downstream of the peak
+query <- peak_chr7 %>% dplyr::select(chr, pos) %>%
+  dplyr::rename(chrom=chr, start=pos) %>% mutate(end=start) %>%
+  GenomicRanges::GRanges()  # filter based on LOD
+subject <- markers
+# peak_chr7$before <- map_dat2$marker[GenomicRanges::follow(query, subject)]
+# peak_chr7$after <- map_dat2$marker[GenomicRanges::precede(query, subject)]
+peak_chr7$marker <- map_dat2$marker[GenomicRanges::nearest(query, subject)]
+peak_chr7_eff_sum <- (peak_chr7_eff[c(peak_chr7$marker), LETTERS[1:8]])
+#plot_coefCC(peak_chr7_eff, map = pmap, scan1_output = pn_scan )
+
+peak_chr7_lod_plot <- pn_scan_df %>% 
+  filter( chr == 7) %>% 
+  ggplot()+
+  aes( 
+    x= pos_bp/1e06,
+    y = pn
+  )+
+  geom_line( size = 1.5, col =strain_colors[[3]],)+
+  theme_pubclean( base_size = 18)+
+  xlab(paste0("Chr 7 location (Mbp)"))+
+  ylab( "LOD score")
+
+peak_chr7_eff_plot <- peak_chr7_eff_sum %>%
+  as_tibble(rownames = "effect") %>% 
+  mutate( type = "pn") %>% 
+  mutate( effect = case_when( effect == "A" ~ "AJ",
+                              effect == "B" ~ "B6",
+                              effect == "C" ~ "129",
+                              effect == "D" ~ "NOD",
+                              effect == "E" ~ "NZO",
+                              effect == "F" ~ "CAST",
+                              effect == "G" ~ "PWK",
+                              effect == "H" ~ "WSB")) %>% 
+  ggplot()+
+  aes( x = effect,
+       y = value,
+       group = type)+
+  geom_point(size = 4, show.legend = FALSE, col =strain_colors[[3]],)+
+  geom_line(show.legend = T, size = 1.2, col =strain_colors[[3]],)+
+  theme_pubclean(base_size = 18)+
+  ylab("Haplotype effects")+
+  xlab("")+
+  #ylim(-2,1.1)+
+  geom_hline( yintercept = 0)+
+  theme(axis.line.x = element_blank(),
+        axis.title = element_text(size = 18))+
+  coord_flip( clip ="off")+
+  theme(legend.position = "none")
+
+```
+
+```{r pn_peak7_plot}
+#| fig-width: 12
+#| fig-height: 5
+#| message: false
+#| warning: false
+
+
+peak7_plot<- ggarrange( peak_chr7_lod_plot, peak_chr7_eff_plot, widths = c(1, 0.5))
+peak7_plot
+
+```
+
+Mediation results for Chr7 peak:
+
+```{r chr7_pn_mediation}
+#| warning: false
+#| message: false
+#| results: hide
+
+# mediate with RNA data
+peak7_marker <- map_dat2 %>%  filter( pos_bp == peak_chr7$pos)
+qtl_geno <- pull_genoprobpos(genoprobs, peak7_marker$marker)
+
+peak7_meds <- mediation.scan( target =as.matrix(pn_pheno),
+                               mediator = exprZ[rownames(pn_pheno),all_genes_palate$gene_id,drop=F], 
+                               annotation =  all_genes_palate %>%
+                                 mutate(chr=chromosome,pos=abs(end+start)/2),
+                               qtl.geno = qtl_geno[rownames(pn_pheno),],
+                               covar = covar[rownames(pn_pheno),"sex",drop=FALSE])
+
+```
+```{r chr7_meds_table}
+
+peak7_meds %>% 
+  mutate( qtl_pos = peak_chr7$pos, qtl_chr = peak_chr7$chr, qtl_lod = peak_chr7$lod) %>% 
+  mutate( scaled_LOD = scale(LOD)) %>% 
+  filter( abs(qtl_pos-midpoint) <= 10e6 &   # filter within 10Mb
+            qtl_chr == chr
+  ) %>% 
+  arrange( LOD) %>% 
+  head(5) %>% 
+  arrange(midpoint) %>% 
+  select( symbol, chr, qtl_lod, mediation_lod = LOD, qtl_pos, pos) %>% 
+  mutate_if( is.numeric, round, 2) %>% 
+  create_dt()
+  
+```
+
+Association mapping:
+```{r pn_peak_chr7_as}
+#| warning: false
+#| message: false
+pmap_Mbp <- lapply( pmap, function(x){x/1e06})
+attr(genoprobs, "is_x_chr") <- NULL
+
+pn_peak_chr7_as <- scan1snps(genoprobs = genoprobs,
+                     map = pmap_Mbp,
+                     pheno = pn_pheno[,"pn",drop=FALSE],
+                     kinship = kinship_loco[[peak_chr7$chr]],
+                     addcovar = covar[,"sex",drop=F],
+                     chr = "1",
+                     query_func = query_variants,
+                     start = peak_chr7$pos/1e06 - 5,
+                     end = peak_chr7$pos/1e06 + 5,
+                     keep_all_snps = T
+                     )
+genes <- query_genes( peak_chr7$chr,
+                      peak_chr7$pos/1e06 - 5,
+                      peak_chr7$pos/1e06 + 5) %>%
+  distinct()
+
+```
+
+```{r pn_peak_chr7_as_plot}
+#| warning: false
+#| message: false
+#| fig-width: 16
+#| fig-height: 8
+
+par(mar=c(4.1, 4.1,2, 1))
+
+plot(pn_peak_chr7_as$lod,
+     pn_peak_chr7_as$snpinfo,
+     drop_hilit = .5,
+     genes = genes,
+     xlim=c(peak_chr7$pos/1e06 - 2.5,peak_chr7$pos/1e06 + 2.5))
+
+
+```
+
+
+### Suggestive QTL on chromosome 14
+
+```{r pn_peak_chr14}
+
+peak_chr14 <- find_peaks( pn_scan, threshold = thres$pn[2], pmap) |> filter(chr ==14)
+
+peak_chr14_eff <- scan1blup( genoprobs = genoprobs[,"14"], 
+                             pheno = pn_pheno, 
+                             kinship = kinship_loco[["14"]], 
+                             addcovar = covar[,"sex",drop = FALSE])
+
+markers <- select(map_dat2, chrom, pos_bp) %>% dplyr::rename(start=pos_bp) %>%
+  mutate(end=start) %>% GenomicRanges::GRanges()   # length 69,005
+# Get the bounding markers for each QTL peak
+# i.e. markers on the 69k grid that are up- and downstream of the peak
+query <- peak_chr14 %>% dplyr::select(chr, pos) %>%
+  dplyr::rename(chrom=chr, start=pos) %>% mutate(end=start) %>%
+  GenomicRanges::GRanges()  # filter based on LOD
+subject <- markers
+# peak_chr14$before <- map_dat2$marker[GenomicRanges::follow(query, subject)]
+# peak_chr14$after <- map_dat2$marker[GenomicRanges::precede(query, subject)]
+peak_chr14$marker <- map_dat2$marker[GenomicRanges::nearest(query, subject)]
+peak_chr14_eff_sum <- (peak_chr14_eff[c(peak_chr14$marker), LETTERS[1:8]])
+#plot_coefCC(peak_chr14_eff, map = pmap, scan1_output = pn_scan )
+
+peak_chr14_lod_plot <- pn_scan_df %>% 
+  filter( chr == 14) %>% 
+  ggplot()+
+  aes( 
+    x= pos_bp/1e06,
+    y = pn
+  )+
+  geom_line( size = 1.5, col =strain_colors[[3]],)+
+  theme_pubclean( base_size = 18)+
+  xlab(paste0("Chr 14 location (Mbp)"))+
+  ylab( "LOD score")
+
+peak_chr14_eff_plot <- peak_chr14_eff_sum %>%
+  as_tibble(rownames = "effect") %>% 
+  mutate( type = "pn") %>% 
+  mutate( effect = case_when( effect == "A" ~ "AJ",
+                              effect == "B" ~ "B6",
+                              effect == "C" ~ "129",
+                              effect == "D" ~ "NOD",
+                              effect == "E" ~ "NZO",
+                              effect == "F" ~ "CAST",
+                              effect == "G" ~ "PWK",
+                              effect == "H" ~ "WSB")) %>% 
+  ggplot()+
+  aes( x = effect,
+       y = value,
+       group = type)+
+  geom_point(size = 4, show.legend = FALSE, col =strain_colors[[3]],)+
+  geom_line(show.legend = T, size = 1.2, col =strain_colors[[3]],)+
+  theme_pubclean(base_size = 18)+
+  ylab("Haplotype effects")+
+  xlab("")+
+  #ylim(-2,1.1)+
+  geom_hline( yintercept = 0)+
+  theme(axis.line.x = element_blank(),
+        axis.title = element_text(size = 18))+
+  coord_flip( clip ="off")+
+  theme(legend.position = "none")
+
+```
+
+```{r pn_peak14_plot}
+#| fig-width: 12
+#| fig-height: 5
+#| message: false
+#| warning: false
+
+
+peak14_plot<- ggarrange( peak_chr14_lod_plot, peak_chr14_eff_plot, widths = c(1, 0.5))
+peak14_plot
+
+```
+
+Mediation results for Chr14 peak:
+
+```{r chr14_pn_mediation}
+#| warning: false
+#| message: false
+#| results: hide
+
+# mediate with RNA data
+peak14_marker <- map_dat2 %>%  filter( pos_bp == peak_chr14$pos)
+qtl_geno <- pull_genoprobpos(genoprobs, peak14_marker$marker)
+
+peak14_meds <- mediation.scan( target =as.matrix(pn_pheno),
+                               mediator = exprZ[rownames(pn_pheno),all_genes_palate$gene_id,drop=F], 
+                               annotation =  all_genes_palate %>%
+                                 mutate(chr=chromosome,pos=abs(end+start)/2),
+                               qtl.geno = qtl_geno[rownames(pn_pheno),],
+                               covar = covar[rownames(pn_pheno),"sex",drop=FALSE])
+
+```
+
+```{r chr14_pn_meds_table}
+
+peak14_meds %>% 
+  mutate( qtl_pos = peak_chr14$pos, qtl_chr = peak_chr14$chr, qtl_lod = peak_chr14$lod) %>% 
+  mutate( scaled_LOD = scale(LOD)) %>% 
+  filter( abs(qtl_pos-midpoint) <= 10e6 &   # filter within 10Mb
+            qtl_chr == chr
+  ) %>% 
+  arrange( LOD) %>% 
+  head(5) %>% 
+  arrange(midpoint) %>% 
+  select( symbol, chr, qtl_lod, mediation_lod = LOD, qtl_pos, pos) %>% 
+  mutate_if( is.numeric, round, 2) %>% 
+  create_dt()
+
+```
+
+Association mapping:
+```{r pn_peak_chr14_as}
+#| warning: false
+#| message: false
+pmap_Mbp <- lapply( pmap, function(x){x/1e06})
+attr(genoprobs, "is_x_chr") <- NULL
+
+pn_peak_chr14_as <- scan1snps(genoprobs = genoprobs,
+                     map = pmap_Mbp,
+                     pheno = pn_pheno[,"pn",drop=FALSE],
+                     kinship = kinship_loco[[peak_chr14$chr]],
+                     addcovar = covar[,"sex",drop=F],
+                     chr = "1",
+                     query_func = query_variants,
+                     start = peak_chr14$pos/1e06 - 5,
+                     end = peak_chr14$pos/1e06 + 5,
+                     keep_all_snps = T,
+                     cores = 32
+                     )
+genes <- query_genes( peak_chr14$chr,
+                      peak_chr14$pos/1e06 - 5,
+                      peak_chr14$pos/1e06 + 5) %>%
+  distinct()
+
+```
+
+```{r pn_peak_chr14_as_plot}
+#| warning: false
+#| message: false
+#| fig-width: 16
+#| fig-height: 8
+
+par(mar=c(4.1, 4.1,2, 1))
+
+plot(pn_peak_chr14_as$lod,
+     pn_peak_chr14_as$snpinfo,
+     drop_hilit = 1,
+     genes = genes,
+     xlim = c(peak_chr14$pos/1e06 - 2.5,
+                      peak_chr14$pos/1e06 + 2.5)
+)
+
+
+```
+
+
+
+```{r}
+#| eval: false
+
+require(openxlsx)
+list_of_datasets <- list("chr1" = chr1.eQTL1, 
+                         "chr2" = chr2.eQTL1,
+                         "chr4" = chr4.eQTL1,
+                         "chr8" = chr8.eQTL1,
+                         "chr13" = chr13.eQTL1)
+write.xlsx(list_of_datasets, file = here("_data","DO_palate_eQTL_hotspots_09062023.xlsx"))
+
+```
+
+:::
+
+
