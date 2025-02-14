@@ -705,7 +705,7 @@ Table with the full list of PC1 driver genes:
 pc1_drivers %>% 
   left_join(
     all_genes_palate %>% 
-      select(symbol, chromosome)
+      select(gene_id, chromosome)
   ) %>% 
   arrange(desc(abs(PC1))) %>% 
   mutate_if(is.numeric, round, 2) %>% 
@@ -774,7 +774,7 @@ Table with the full list of PC2 driver genes:
 pc2_drivers %>% 
     left_join(
     all_genes_palate %>% 
-      select(symbol, chromosome)
+      select(gene_id, chromosome)
   ) %>% 
   arrange(desc(abs(PC2))) %>% 
   mutate_if(is.numeric, round, 2) %>% 
@@ -844,7 +844,7 @@ Table with the full list of PC3 driver genes:
 pc3_drivers %>% 
   left_join(
     all_genes_palate %>% 
-      select(symbol, chromosome)
+      select(gene_id, chromosome)
   ) %>% 
   arrange(desc(abs(PC3))) %>% 
   mutate_if(is.numeric, round, 2) %>% 
@@ -911,7 +911,7 @@ Table with the full list of PC4 driver genes:
 pc4_drivers %>% 
   left_join(
     all_genes_palate %>% 
-      select(symbol, chromosome)
+      select(gene_id, chromosome)
   ) %>% 
   arrange(desc(abs(PC4))) %>% 
   mutate_if(is.numeric, round, 2) %>% 
@@ -967,54 +967,10 @@ pc5_drivers %>%
   # ) |> 
   left_join(
     all_genes_palate %>% 
-      select(symbol, chromosome)
+      select(gene_id, chromosome)
   ) %>% 
   mutate_if(is.numeric, round, 2) %>% 
   create_dt()
-
-```
-
-```{r}
-#| label: pc5_3d_loadings
-#| eval: false
-
-p <- plot_ly(pca_df, 
-               x = ~PC1, 
-               y = ~PC2, 
-               z = ~PC5,
-               mode = "markers",
-               type = "scatter3d"
-               
-)
-p <- p %>% 
-  layout(scene = list(xaxis = list(title = paste0("PC1 (",100*round(var_explained[1],2),"%)")),
-                                   yaxis = list(title = paste0("PC2 (",100*round(var_explained[2],2),"%)")),
-                                   zaxis = list(title = paste0("PC5 (",100*round(var_explained[5],2),"%)")))
-)
-
-
-loadings <- pca$rotation[all_genes_palate_filtered$gene_id,,drop=F]
-rownames(loadings) <- all_genes_palate_filtered$symbol
- # Extracting the loadings for PC5
-loadings_pc5 <- loadings[, 5]
-
-# Identifying the top contributors
-top_contributors <- order(abs(loadings_pc5), decreasing = TRUE)[1:10] 
-# Adding vectors for loadings
-for (i in 1:nrow(loadings)) {
-  p <- add_trace(p, x = c(0, loadings[i, 1]), y = c(0, loadings[i, 2]), z = c(0, loadings[i, 5]), 
-                 mode = 'lines', line = list(color = 'red'), name = rownames(loadings)[i])
-}
-
-
-
-# Adding labels for the top contributors
-for (i in top_contributors) {
-  p <- add_annotations(p, x = loadings[i, 1], y = loadings[i, 2], z = loadings[i, 3], 
-                       text = rownames(loadings)[i], showarrow = TRUE, arrowhead = 2)
-}
-
-p
 
 ```
 
@@ -1101,7 +1057,7 @@ Let's plot some of them to see what they look like, I am choosing the ones with 
 ```{r}
 #| label: plot_outliers
 #| eval: true
-#| #| warning: false
+#| warning: false
 #| message: false
 #| fig-width: 14
 #| fig-height: 10
@@ -1140,9 +1096,42 @@ log1p(t(assay(dds_all_norm)[top_out_genes,])) |>
 
 ```
 
+Below are over-representated biological processes and pathways:
+```{r}
+#| label: ora_outliers
+#| eval: true
+#| warning: false
+#| message: false
+#| cache: true
+
+g.outlier <- gost(
+  query = (out_genes_zscore |> left_join( all_genes_palate_filtered |> select(gene_id, symbol)))$symbol,
+  organism = "mmusculus",
+  domain_scope = "custom",
+  custom_bg = all_genes_palate_filtered$symbol,
+  evcodes = TRUE
+)
+g.outlier$result <- g.outlier$result %>% filter(term_size < 660)
+
+
+```
+
+```{r}
+#| label: ora_outliers_table
+#| eval: true
+#| warning: false
+#| message: false
+g.outlier$result %>% 
+  select( term_name, source, FDR = p_value, term_size, intersection_size, intersection) %>% 
+  filter( FDR <0.05) %>% 
+  mutate_if( is.numeric, formatC, digits =2) %>% 
+  create_dt()
+
+```
+
 ## PC6 groups samples by sex
 
-```{r pc7_pc1}
+```{r pc6_pc1}
 #| message: false
 #| warning: false
 #| fig-width: 8
@@ -1183,7 +1172,7 @@ pc6_drivers %>%
   dplyr::rename("value" = "PC6") |> 
   left_join(
     all_genes_palate %>% 
-      select(symbol, chromosome)
+      select(gene_id, chromosome)
   ) %>% 
   # rbind(
   #   pc7_drivers |>
@@ -1457,6 +1446,8 @@ Based on previous analyses, we settled on running WGCNA:
 -   Using the intersection of genes between top 10% variable genes in B6 and CAST strains (n = `r formatC(nrow(b6_expr_final),big.mark=",")`).
 
 -   Running WGCNA separately for each background, then comparing the modules.
+
+Note that I start with the unfiltered, raw data expression for all the samples (B6, CAST and DO) then I collapse the replicates and normalize using vst. Next, I subset and filter the B6 and CAST strain samples for the top 10% most variable genes. Finally, I take the intersection of the filtered genes between the B6 and CAST strains which leads to `r formatC( nrow(wgcna_genes), big.mark = ",")` genes in total and I subset all three expression data sets including the DO data using this final list of genes. Using the same set of genes allows us to compare modules and look at module preservation across the WGCNA networks identified for each strain.
 
 ::: {#WGCNA_results .panel-tabset .nav-pills}
 
@@ -2729,8 +2720,8 @@ for(mod in modules){
 #| warning: false
 #| message: false
 #| results: asis
-#| fig-width: 16
-#| fig-height: 20
+#| fig-width: 12
+#| fig-height: 10
 
 modules <- unique(net_cast$genes_and_modules$Modules)
 for( mod in modules){
@@ -2905,11 +2896,13 @@ plot_module_overlap <- function(comparison_results, p_threshold = 0.05, highligh
 
 ```
 
-Let's compare modules by calculating the # of genes that overlap between modules and the Jaccard Index. The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets.
+Let's compare modules by calculating the # of genes that overlap between modules and the Jaccard Index. The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets. The modules colored red with an asterisk are also identified as B6 modules preserved in CAST network. We can use the Jaccard index and the significant overlap according to Fisher's test to identify which CAST modules likely correspond to the conserved B6 modules For example, the B6 green module has a significant overlap and high Jaccard index with the CAST dark turquoise module suggesting that it is the equivalent module in the CAST data. 
 
 
 ```{r}
 #| label: compare_b6_to_cast
+#| warning: false
+#| message: false
 #| fig-height: 6
 #| fig-width: 12
 
@@ -2991,7 +2984,8 @@ net_do <- exp2gcn(
 # plot_eigengene_network(net_do)
 # plot_ngenes_per_module(net_do)
 
-
+# saving the network to use in the qtl mapping notebook
+# save(net_do,  file = here("_data",paste0("/DO_WGCNA_network_",Sys.Date(), ".RData")) ) 
 ```
 
 
@@ -3371,8 +3365,8 @@ for(mod in modules){
 #| warning: false
 #| message: false
 #| results: asis
-#| fig-width: 16
-#| fig-height: 20
+#| fig-width: 12
+#| fig-height: 10
 
 modules <- unique(net_do$genes_and_modules$Modules)
 for( mod in modules){
@@ -3442,14 +3436,15 @@ pres_b6_do$p.values |>
 ```
 
 
-Let's compare modules by calculating the # of genes that overlap between modules and the Jaccard Index. The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets.
+Let's compare modules by calculating the # of genes that overlap between modules and the Jaccard Index. The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets. The modules colored red with an asterisk are also identified as B6 modules preserved in the DO network. We can use the Jaccard index and the significant overlap according to Fisher's test to identify which DO modules likely correspond to the conserved B6 modules. 
 
 
 ```{r}
 #| label: compare_b6_to_do
 #| fig-height: 6
 #| fig-width: 12
-
+#| warning: false
+#| message: false
 network1 <- net_b6$genes_and_modules |> 
   rename(gene = Genes, module = Modules)
 network2 <- net_do$genes_and_modules |> 
@@ -3499,13 +3494,14 @@ pres_cast_do$p.values |>
 
 ```
 
-Let's compare modules by calculating the # of genes that overlap between modules and the Jaccard Index. The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets.
+Let's compare modules by calculating the # of genes that overlap between modules and the Jaccard Index. The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets. The modules colored red with an asterisk are also identified as CAST modules preserved in the DO network. We can use the Jaccard index and the significant overlap according to Fisher's test to identify which DO modules likely correspond to the conserved CAST modules. 
 
 ```{r}
 #| label: compare_cast_to_do
 #| fig-height: 6
 #| fig-width: 12
-
+#| warning: false
+#| message: false
 network1 <- net_cast$genes_and_modules |> 
   rename(gene = Genes, module = Modules)
 network2 <- net_do$genes_and_modules |> 
@@ -3592,6 +3588,8 @@ b6_genie3 |>
   left_join( b6_grn_hubs |> select( Regulator = Gene, Degree)) |> 
   left_join( all_genes_palate |> select(Regulator = gene_id, Regulator_symbol = symbol)) |> 
   left_join( all_genes_palate |> select(Target = gene_id, Target_symbol = symbol)) |> 
+  mutate( Regulator_symbol = ifelse( is.na(Regulator_symbol), Regulator, Regulator_symbol)) |> 
+  mutate( Target_symbol = ifelse( is.na(Target_symbol), Target, Target_symbol)) |> 
   select(-Regulator, -Target) |>
   mutate( hub = ifelse( is.na(Degree), "No", "Yes")) |> 
   select( Regulator = Regulator_symbol, Target = Target_symbol, `Is it a hub?`=hub, `Degree of connection`=Degree) |> 
@@ -3654,6 +3652,8 @@ cast_genie3 |>
   left_join( cast_grn_hubs |> select( Regulator = Gene, Degree)) |> 
   left_join( all_genes_palate |> select(Regulator = gene_id, Regulator_symbol = symbol)) |> 
   left_join( all_genes_palate |> select(Target = gene_id, Target_symbol = symbol)) |> 
+  mutate( Regulator_symbol = ifelse( is.na(Regulator_symbol), Regulator, Regulator_symbol)) |> 
+  mutate( Target_symbol = ifelse( is.na(Target_symbol), Target, Target_symbol)) |> 
   select(-Regulator, -Target) |>
   mutate( hub = ifelse( is.na(Degree), "No", "Yes")) |> 
   select( Regulator = Regulator_symbol, Target = Target_symbol, `Is it a hub?`=hub, `Degree of connection`=Degree) |> 
@@ -3719,6 +3719,8 @@ do_genie3 |>
   left_join( do_grn_hubs |> select( Regulator = Gene, Degree)) |> 
   left_join( all_genes_palate |> select(Regulator = gene_id, Regulator_symbol = symbol)) |> 
   left_join( all_genes_palate |> select(Target = gene_id, Target_symbol = symbol)) |> 
+  mutate( Regulator_symbol = ifelse( is.na(Regulator_symbol), Regulator, Regulator_symbol)) |> 
+  mutate( Target_symbol = ifelse( is.na(Target_symbol), Target, Target_symbol)) |> 
   select(-Regulator, -Target) |>
   mutate( hub = ifelse( is.na(Degree), "No", "Yes")) |> 
   select( Regulator = Regulator_symbol, Target = Target_symbol, `Is it a hub?`=hub, `Degree of connection`=Degree) |> 
@@ -3739,13 +3741,13 @@ library(MOFA2)
 set.seed(2020)
 
 # prep data to run mofa/mefisto on the interactive cluster
-final_expr_all <- assay(dds_all_norm)[intersect(rownames(b6_expr), rownames(cast_expr)),,drop=F] |> 
+final_expr_all <- assay(dds_all_norm)[wgcna_genes$gene_id,,drop=F] |> 
  as_tibble( rownames = "feature") |> 
   pivot_longer( cols = 2:(ncol(assay(dds_all_norm))+1) , names_to = "sample",values_to = "value") |> 
   left_join(colData(dds_all_norm) |> 
               as_tibble() |> 
               select(sample = unique_sampleid, 
-                     group = strain, 
+                     view = strain, 
                      domain = AP_domain, 
                      time = LB_stage)
              ) 
@@ -3764,7 +3766,7 @@ gg_input
 data_opts <- get_default_data_options(MOFAobject_untrained)
 
 model_opts <- get_default_model_options(MOFAobject_untrained)
-model_opts$num_factors <- 5
+model_opts$num_factors <- 10
 
 
 train_opts <- get_default_training_options(MOFAobject_untrained)
@@ -3772,10 +3774,10 @@ train_opts$seed <- 2020
 train_opts$convergence_mode <- "medium" # use "fast" for faster training
 
 mefisto_opts <- get_default_mefisto_options(MOFAobject_untrained)
-mefisto_opts$warping <- TRUE
-mefisto_opts$warping_ref <- "B6"
-mefisto_opts$model_groups <- TRUE
-mefisto_opts$new_values <- 12:16 
+# mefisto_opts$warping <- TRUE
+# mefisto_opts$warping_ref <- "B6"
+# mefisto_opts$model_groups <- FALSE
+# mefisto_opts$new_values <- 12:16 
 
 MOFAobject_untrained <- prepare_mofa(
   object = MOFAobject_untrained,
@@ -3785,10 +3787,10 @@ MOFAobject_untrained <- prepare_mofa(
   mefisto_options = mefisto_opts
 ) 
 
-save(MOFAobject_untrained, file = here("_data/mefisto_trial_untrained_model_justStrain.Rdata"))
+save(MOFAobject_untrained, file = here("_data/mefisto_trial_untrained_model_strain_view_10factors.Rdata"))
 
 # running on the interactive cluster using the docker container
-outfile <- ("/projects/munger-lab/projects/palate-project-murray-munger/analysis/_data/mefisto_trial_just_strain_5factors.hdf5")
+outfile <- ("/projects/munger-lab/projects/palate-project-murray-munger/analysis/_data/mefisto_trial_strain_view_10factors.hdf5")
 MOFAobject <- MOFA2::run_mofa(MOFAobject_untrained, outfile = outfile)
 
 ```
@@ -3799,6 +3801,15 @@ Here is what MEFISTO does from their [website](https://biofam.github.io/MOFA2/ME
 
 If multiple groups of samples are present, e.g. timecourses from different individuals, MEFISTO furthermore models the heterogeneity of the temporal or spatial patterns across groups and allows to align timepoints across the groups in cases where there are no clear or imperfect correspondences between groups."
 
+
+I ran MEFISTO with two different setting, I am displaying both results in tabs below since they each looked interesting. 
+
+  1.    Using strains as group and time as covariate. In this setup, MEFISTO looks for sources of variation within groups hence doesn't compare the strains to each other. The use of groups allows us to align the developmental time points between the different strain backgrounds using B6 as the reference.
+  
+  2.    Using strains as views and time as covariate. In this setup, MEFISTO identifies factors that separates the different strains. As you can see below, this leads to Factors 1-3 being highly correlated to time but explaining variation in each individual strain background. 
+  
+I used over-representation analysis to functionally characterize each factor and included tables with factor weights for genes as well as plots so you can see the top drivers of each factor.
+  
 ::: {#Mefisto_results .panel-tabset .nav-pills}
 
 ## Strains as group and time as covariate
@@ -3826,39 +3837,326 @@ sample_metadata <- colData(dds_all_norm) |>
 
 samples_metadata(MOFAobject) <- sample_metadata
 
+var_exp <- get_variance_explained(MOFAobject)
+# get factors
+factors <- get_factors(MOFAobject,  factors = "all", scale = T, as.data.frame = T)
+# get weights
+weights <- get_weights(MOFAobject, views = "all", factors = "all", as.data.frame = T)
 
+
+```
+
+This is the data being inputted into MEFISTO:
+
+```{r}
+#| warning: false
+#| message: false
 plot_data_overview(MOFAobject,
                                show_covariate = TRUE,
                                show_dimensions = TRUE)
+```
 
+The MEFISTO model can capture variation across the three strains:
+```{r}
 p <- plot_variance_explained(MOFAobject, plot_total = T)
+p[[2]] + theme(axis.text.x = element_text(angle = 90))
+```
+
+Individual factors capture variation at different amounts across strains:
+
+```{r}
 p[[1]] + theme(axis.text.x = element_text(angle = 90))
 
-p[[2]] + theme(axis.text.x = element_text(angle = 90))
-
-
+```
+Looking at factors over time and across domains (unaligned):
+```{r}
 # Factors versus developmental time (before alignment)
 plot_factors_vs_cov(MOFAobject, color_by = "group",shape_by = "domain",
                     covariate = "time",  warped = FALSE) 
+
+```
+
+Looking at factors over time and across domains aligned to B6:
+```{r}
+#| warning: false
+#| message: false
 # Factors versus developmental time (after alignment)
 plot_factors_vs_cov(MOFAobject, color_by = "group",shape_by = "domain",
                     covariate = "time", scale = FALSE)
+```
 
-plot_interpolation_vs_covariate(MOFAobject, only_mean = FALSE)
-
-
-plot_factors(MOFAobject, 1:5, color_by = "time", shape_by = "domain") 
-
+Aligned time points vs the reference (B6) time point for each strain:
+```{r}
+#| warning: false
+#| message: false
 plot_alignment(MOFAobject)
-
-plot_group_kernel(MOFAobject, factors = "all")
+```
+Are the factors shared across the groups (i.e. strains)? 
+```{r}
+#| warning: false
+#| message: false
+#plot_group_kernel(MOFAobject, factors = "all")
 
 plot_sharedness(MOFAobject) 
-
-correlate_factors_with_covariates(object = MOFAobject,
-                                  covariates = sample_metadata)
+```
 
 
+How are the factors correlated to the covariates in the data? Displaying -lop10(pvalue). 
+```{r}
+#| warning: false
+#| message: false
+factor_cov_cor <- correlate_factors_with_covariates(object = MOFAobject,
+                                  covariates = sample_metadata,return_data = T)
+
+factor_cov_cor |> 
+  as_tibble( rownames = "Factor") |> 
+  mutate_if( is.numeric, round, 2) |> 
+  select(Factor, "LB stage" = time, "AP domain" = domain, sex) |> 
+  create_dt()
+```
+
+
+Functional characterization of each factor using ORA:
+
+```{r }
+#| label: mefisto_module_ora
+#| message: false
+#| warning: false
+#| cache: true
+#| eval: true
+
+
+## ORA for each module
+mefisto_ora_results <- c()
+
+for( fac in unique(factors$factor)){
+  
+  facGenes <- weights |> 
+    filter( factor == fac) |> 
+    filter( abs(value) >= quantile(abs(value),.95)) |> 
+    left_join(wgcna_genes, by =c("feature"="gene_id"))
+  
+  
+  g.fac <- gost(query =  unique(facGenes$symbol),
+                        organism = "mmusculus",
+                        domain_scope = "custom",
+                        custom_bg = wgcna_genes$symbol,
+                        evcodes = TRUE)
+  mefisto_ora_results[[fac]] <- g.fac
+}
+
+```
+
+```{r }
+#| label: mefisto_ora_results_table
+#| warning: false
+#| message: false
+#| eval: true
+do.call( rbind, mefisto_ora_results) %>%
+  as_tibble(rownames = "Factor") %>%
+  select(-meta) %>%
+  unnest("result") %>%
+  select(Factor,  term_name, source, FDR = p_value, term_size, intersection_size,intersection) %>%
+    filter( FDR <0.05, term_size < 500) %>%
+  mutate_if( is.numeric, formatC, digits =2) %>%
+  create_dt()
+
+
+```
+
+Each factor value per sample:
+```{r}
+#| warning: false
+#| message: false
+
+factors |> 
+  mutate( value = formatC(value, digits = 2, format = "e")) |> 
+  create_dt()
+```
+
+Weights for each gene per factor:
+```{r}
+#| warning: false
+#| message: false
+
+weights |> 
+  rename("gene_id" = "feature") |> 
+  left_join( all_genes_palate |> select(gene_id, symbol)) |> 
+  select( gene_id, symbol, factor, weight = value) |> 
+  mutate( weight = formatC(weight, digits = 2, format = "e")) |> 
+  create_dt()
+```
+
+
+## Strain as view and time as covariate
+
+```{r}
+#| label: load_trained_model_strain_views
+#| eval: true
+#| warning: false
+#| message: false
+
+library(MOFA2)
+MOFAobject2 <- load_model( here("_data/mefisto_trial_strain_view_5factors.hdf5"))
+
+sample_metadata <- colData(dds_all_norm) |> 
+  as.data.frame() |> 
+  select(sample = unique_sampleid,
+         sex,
+         domain = AP_domain,
+         view = strain, 
+         Palate_ori,
+         time = LB_stage
+         )
+
+samples_metadata(MOFAobject2) <- sample_metadata
+
+var_exp2 <- get_variance_explained(MOFAobject2 )
+# get factors
+factors2 <- get_factors(MOFAobject2,  factors = "all", scale = T, as.data.frame = T)
+# get weights
+weights2 <- get_weights(MOFAobject2, views = "all", factors = "all", as.data.frame = T)
+
+```
+
+This is the data being inputted into MEFISTO:
+```{r}
+#| warning: false
+#| message: false
+plot_data_overview(MOFAobject2,
+                               show_covariate = TRUE,
+                               show_dimensions = TRUE)
+```
+
+The MEFISTO model can capture variation across the three strains:
+```{r}
+#| warning: false
+#| message: false
+p <- plot_variance_explained(MOFAobject2, plot_total = T)
+p[[2]] + theme(axis.text.x = element_text(angle = 90))
+
+```
+
+Individual factors capture variation at different amounts across strains:
+```{r}
+#| warning: false
+#| message: false
+p[[1]] + theme(axis.text.x = element_text(angle = 90))
+```
+
+Looking at factors over time and across domains:
+```{r}
+#| warning: false
+#| message: false
+# Factors versus developmental time 
+plot_factors_vs_cov(MOFAobject2, color_by = "view",shape_by = "domain",
+                    covariate = "time",  warped = FALSE) 
+```
+
+How are the factors correlated to the covariates in the data? Displaying -lop10(pvalue). 
+```{r}
+#| warning: false
+#| message: false
+factor_cov_cor2 <- correlate_factors_with_covariates(object = MOFAobject2,
+                                  covariates = sample_metadata,return_data = T)
+
+factor_cov_cor2 |> 
+  as_tibble( rownames = "Factor") |> 
+  mutate_if( is.numeric, round, 2) |> 
+  select(Factor, "LB stage" = time, "AP domain" = domain, sex) |> 
+  create_dt()
+```
+
+Functional characterization of each factor using ORA:
+
+```{r }
+#| label: mefisto_module_ora2
+#| message: false
+#| warning: false
+#| cache: true
+#| eval: true
+
+
+## ORA for each module
+mefisto_ora_results2 <- c()
+
+for( fac in unique(factors2$factor)){
+  
+  facGenes <- weights2 |>
+    filter( factor == fac) |> 
+    group_by( view) |> 
+    filter( abs(value) >= quantile(abs(value),.95)) |> 
+    mutate( gene_id = gsub( paste0("_",view), "",feature)) |> 
+    left_join(wgcna_genes)
+  
+  
+  g.fac_b6 <- gost(query =  (facGenes |> filter( view == "B6"))$symbol,
+                        organism = "mmusculus",
+                        domain_scope = "custom",
+                        custom_bg = wgcna_genes$symbol,
+                        evcodes = TRUE)
+  
+  g.fac_cast <- gost(query =  (facGenes |> filter( view == "CAST"))$symbol,
+                        organism = "mmusculus",
+                        domain_scope = "custom",
+                        custom_bg = wgcna_genes$symbol,
+                        evcodes = TRUE)
+  g.fac_do <- gost(query =  (facGenes |> filter( view == "DO"))$symbol,
+                        organism = "mmusculus",
+                        domain_scope = "custom",
+                        custom_bg = wgcna_genes$symbol,
+                        evcodes = TRUE)
+      
+  mefisto_ora_results2[[paste0(fac,"_B6")]] <- g.fac_b6
+  mefisto_ora_results2[[paste0(fac,"_CAST")]] <- g.fac_cast
+  mefisto_ora_results2[[paste0(fac,"_DO")]] <- g.fac_do
+  
+}
+
+```
+
+```{r }
+#| label: mefisto_ora_results_table2
+#| eval: true
+#| warning: false
+#| message: false
+
+do.call( rbind, mefisto_ora_results2) %>%
+  as_tibble(rownames = "Factor") %>%
+  separate( Factor, into = c("Factor","Strain"), sep = "_") |> 
+  select(-meta) %>%
+  unnest("result") %>%
+  select(Factor, Strain, term_name, source, FDR = p_value, term_size, intersection_size,intersection) %>%
+    filter( FDR <0.05, term_size < 500) %>%
+  mutate_if( is.numeric, formatC, digits =2) %>%
+  create_dt()
+
+
+```
+
+Each factor value per sample:
+```{r}
+#| warning: false
+#| message: false
+
+factors2 |> 
+  mutate( value = formatC(value, digits = 2, format = "e")) |> 
+  select(-group) |> 
+  create_dt()
+
+```
+
+Weights for each gene per factor:
+```{r}
+#| warning: false
+#| message: false
+
+weights2 |> 
+  separate(feature, into= c("gene_id","strain"), sep = "_") |> 
+  left_join( all_genes_palate |> select(gene_id, symbol)) |> 
+  select( gene_id, symbol, factor, view, weight = value) |> 
+  mutate( weight = formatC(weight, digits = 2, format = "e")) |> 
+  create_dt()
 
 ```
 
