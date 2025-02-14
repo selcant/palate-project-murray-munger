@@ -1517,7 +1517,7 @@ Using `r formatC(nrow(b6_expr_final),big.mark=",")` genes and `r formatC(ncol(b6
   
   -   `cor_method = "pearson"`: I chose Pearson correlation because our data is relatively clean.
   
-  -   `SFTpower =` `r b6_sft$power``: I chose 16 as the thresholding power since it is the power where the scale free topology fit R2 value reaches 0.79. 
+  -   `SFTpower =` `r b6_sft$power``: as the thresholding power.
   
   
 This leads to `r ncol(net_b6$MEs)` modules in total which are characterized below. Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
@@ -2367,7 +2367,7 @@ Using `r formatC(nrow(cast_expr_final),big.mark=",")` genes and `r formatC(ncol(
   
   -   `cor_method = "pearson"`: I chose Pearson correlation because our data is relatively clean.
   
-  -   `SFTpower =` `r cast_sft$power`: I chose 16 as the thresholding power since it is the power where the scale free topology fit R2 value reaches 0.79. 
+  -   `SFTpower =` `r cast_sft$power`: as the thresholding power.
   
 This leads to `r ncol(net_cast$MEs)` modules in total which are characterized below. Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
 
@@ -3011,7 +3011,7 @@ Using `r formatC(nrow(do_expr_final),big.mark=",")` genes and `r formatC(ncol(do
   
   -   `cor_method = "pearson"`: I chose Pearson correlation because our data is relatively clean.
   
-  -   `SFTpower =``r do_sft$power`: I chose 16 as the thresholding power since it is the power where the scale free topology fit R2 value reaches 0.79. 
+  -   `SFTpower =``r do_sft$power`: as the thresholding power.
   
 This leads to `r ncol(net_do$MEs)` modules in total which are characterized below. Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
 
