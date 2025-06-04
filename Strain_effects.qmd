@@ -249,17 +249,18 @@ tfs <- read_tsv(file = here("_data/search_result_from_tfcheckpoint.txt")) |>
 
 ```
 
-
-This notebook is analyzing the palate gene expression from different genetic backgrounds, AP domains obtained at various gestational stages. I divided the analyses over two notebooks since the results were too large to fit into one. 
+This notebook is analyzing the palate gene expression from different genetic backgrounds, AP domains obtained at various gestational stages.
+I divided the analyses over two notebooks since the results were too large to fit into one.
 
 This first notebook includes:
 
-  -   Principal component analysis using the filtered and normalized gene expression counts from DO, B6 and CAST mice to look at sources of variation.
-  -   Weighted gene coexpression network analysis using BioNERO package.
-  -   Consensus gene regulatory network inference with GENIE3, ARACNE and CLR using BioNERO package.
-  -   Use of MEFISTO to identify factors that change gradually along developmental time and other sources of variation that are independent of time.
-  
-Differential gene expression analysis is in the second notebook called `Strain_effects_degenes_GRCm39.html`. The genetic characterization of gene expression and developmental phenotypes using the DO strains can be found in `Palate_qtl_mapping.html` notebook.
+-   Principal component analysis using the filtered and normalized gene expression counts from DO, B6 and CAST mice to look at sources of variation.
+-   Weighted gene coexpression network analysis using BioNERO package.
+-   Consensus gene regulatory network inference with GENIE3, ARACNE and CLR using BioNERO package.
+-   Use of MEFISTO to identify factors that change gradually along developmental time and other sources of variation that are independent of time.
+
+Differential gene expression analysis is in the second notebook called `Strain_effects_degenes_GRCm39.html`.
+The genetic characterization of gene expression and developmental phenotypes using the DO strains can be found in `Palate_qtl_mapping.html` notebook.
 
 # Principal component analysis
 
@@ -298,12 +299,12 @@ var_explained <- (pca$sdev^2 / sum(pca$sdev^2))
 
 Raw data was processed as follows:
 
--   Genes with a median transcript per million (TPM) lower than 0.5 were filtered while samples were grouped by gestational stage. The grouping is necessary because there are uniquely expressed genes in each stage.
+-   Genes with a median transcript per million (TPM) lower than 0.5 were filtered while samples were grouped by gestational stage.
+    The grouping is necessary because there are uniquely expressed genes in each stage.
 
 -   The replicates in the data due to re-sequencing are merged using the `DESeq2::collapseReplicates()` function.
 
 -   Counts were normalized using variance stablizing transformation as implemented in DESeq2::vst() function.
-
 
 In the final data set we have `r formatC(nrow(assay( dds_all_norm)[rownames(expr_mat_all),,drop=F]), big.mark=",")` genes expressed across `r ncol(assay( dds_all_norm))` samples.
 
@@ -315,10 +316,10 @@ Brief summary of PCA results:
 
 -   PC3 and PC4 groups samples by domain with PC4 specifically separating the POST domain from the others.
 
--   PC5 is highlighting outlier samples that are mostly DO. I included a follow up analysis on these samples in that tab.
+-   PC5 is highlighting outlier samples that are mostly DO.
+    I included a follow up analysis on these samples in that tab.
 
 -   PC6 groups samples based on sex of the animals.
-
 
 ```{r pca_ora}
 #| cache: true
@@ -852,7 +853,6 @@ pc3_drivers %>%
 
 ```
 
-
 ```{r pc1_pc4_domain}
 #| message: false
 #| warning: false
@@ -974,7 +974,6 @@ pc5_drivers %>%
 
 ```
 
-
 ```{r}
 #| label: pc5_outliers
 
@@ -1014,7 +1013,8 @@ ggplotly(pca_plot, tooltip = c("label"))
 
 ```
 
-So the outlier samples are: 
+So the outlier samples are:
+
 ```{r}
 
 out_samples |> 
@@ -1023,9 +1023,10 @@ out_samples |>
   create_dt()
 ```
 
-
-Let's look through gene expression values and see for which genes these samples are also outliers. First method I will use is to simply ask if the expression for the `r nrow(out_samples)` outlier samples are at the edge of the normal distribution. I will convert the expression values for each gene to Z-scores and than ask where the outlier samples are falling within the distribution. Below is the list of genes where the expression is an outlier for all the samples ( abs(z-score) > 2) with PC5 values added for the genes that were also identified as PC5 drivers.
-
+Let's look through gene expression values and see for which genes these samples are also outliers.
+First method I will use is to simply ask if the expression for the `r nrow(out_samples)` outlier samples are at the edge of the normal distribution.
+I will convert the expression values for each gene to Z-scores and than ask where the outlier samples are falling within the distribution.
+Below is the list of genes where the expression is an outlier for all the samples ( abs(z-score) \> 2) with PC5 values added for the genes that were also identified as PC5 drivers.
 
 ```{r}
 #| label: outlier_follow_up_zscores
@@ -1050,7 +1051,6 @@ out_genes_zscore |>
   create_dt()
 
 ```
-
 
 Let's plot some of them to see what they look like, I am choosing the ones with the highest/lowest z-scores:
 
@@ -1097,6 +1097,7 @@ log1p(t(assay(dds_all_norm)[top_out_genes,])) |>
 ```
 
 Below are over-representated biological processes and pathways:
+
 ```{r}
 #| label: ora_outliers
 #| eval: true
@@ -1189,8 +1190,7 @@ pc6_drivers %>%
 ```
 :::
 
-
-# Weighted gene co-expression network analysis (WGCNA) 
+# Weighted gene co-expression network analysis (WGCNA)
 
 ```{r}
 #| label: wgcna_prep_all
@@ -1217,7 +1217,6 @@ dds_all <- collapseReplicates(dds_all, dds_all$unique_sampleid)
 dds_all_norm <- vst(dds_all)
 
 ```
-
 
 ```{r}
 #| label: wgcna_prep_b6
@@ -1284,7 +1283,6 @@ b6_expr <- SummarizedExperiment(assays=list(counts=t(log1p(b6_datExpr))),
 
 
 ```
-
 
 ```{r}
 #| message: false
@@ -1440,18 +1438,19 @@ wgcna_genes <- all_genes_palate |>
   filter( gene_id %in% intersect(rownames(b6_expr), rownames(cast_expr)))
 ```
 
-
 Based on previous analyses, we settled on running WGCNA:
 
 -   Using the intersection of genes between top 10% variable genes in B6 and CAST strains (n = `r formatC(nrow(b6_expr_final),big.mark=",")`).
 
 -   Running WGCNA separately for each background, then comparing the modules.
 
-Note that I start with the unfiltered, raw data expression for all the samples (B6, CAST and DO) then I collapse the replicates and normalize using vst. Next, I subset and filter the B6 and CAST strain samples for the top 10% most variable genes. Finally, I take the intersection of the filtered genes between the B6 and CAST strains which leads to `r formatC( nrow(wgcna_genes), big.mark = ",")` genes in total and I subset all three expression data sets including the DO data using this final list of genes. Using the same set of genes allows us to compare modules and look at module preservation across the WGCNA networks identified for each strain.
+Note that I start with the unfiltered, raw data expression for all the samples (B6, CAST and DO) then I collapse the replicates and normalize using vst.
+Next, I subset and filter the B6 and CAST strain samples for the top 10% most variable genes.
+Finally, I take the intersection of the filtered genes between the B6 and CAST strains which leads to `r formatC( nrow(wgcna_genes), big.mark = ",")` genes in total and I subset all three expression data sets including the DO data using this final list of genes.
+Using the same set of genes allows us to compare modules and look at module preservation across the WGCNA networks identified for each strain.
 
-::: {#WGCNA_results .panel-tabset .nav-pills}
-
-## B6 
+:::::::::::: {#WGCNA_results .panel-tabset .nav-pills}
+## B6
 
 ```{r}
 #| warning: false
@@ -1460,7 +1459,11 @@ Note that I start with the unfiltered, raw data expression for all the samples (
 #| results: hide
 
 # Choose a set of soft-thresholding powers
-b6_sft <- SFT_fit(b6_expr_final, net_type = "unsigned", cor_method = "pearson")
+b6_sft <- SFT_fit(b6_expr_final, 
+                  net_type = "signed",  
+                  cor_method = "pearson",
+                  rsquared = 0.7 
+                  )
 ```
 
 ```{r}
@@ -1469,7 +1472,6 @@ b6_sft <- SFT_fit(b6_expr_final, net_type = "unsigned", cor_method = "pearson")
 #| fig-height: 5
 b6_sft$plot 
 ```
-
 
 ```{r}
 #| label: run_wgcna_b6
@@ -1481,7 +1483,7 @@ power_b6 <- b6_sft$power
 
 net_b6 <- exp2gcn(
     b6_expr_final, 
-    net_type = "unsigned", 
+    net_type = "signed", 
     #module_merging_threshold = 0.75,
     SFTpower = power_b6, 
     cor_method = "pearson"
@@ -1493,7 +1495,6 @@ net_b6 <- exp2gcn(
 
 
 ```
-
 
 Assessing module stability by re-sampling:
 
@@ -1510,22 +1511,19 @@ module_stability(b6_expr_final, net_b6, nRuns = 50)
 
 ```
 
+Using `r formatC(nrow(b6_expr_final),big.mark=",")` genes and `r formatC(ncol(b6_expr_final),big.mark=",")` samples.
+For gene coexpression network inference I am using the `exp2gcn` function in BioNero with the following options:
 
-Using `r formatC(nrow(b6_expr_final),big.mark=",")` genes and `r formatC(ncol(b6_expr_final),big.mark=",")` samples. For gene coexpression network inference I am using the `exp2gcn` function in BioNero with the following options:
+-   `net_type = "signed"` : I chose this option to get more biologically meaningful networks where the sign of the correlation is preserved and module detection focuses on positively correlated genes.
 
-  -   `net_type = "unsigned"` : I chose this option so that we can treat positive and negative correlations equally and focus on the strength of the relationship rather than the sign.
-  
-  -   `cor_method = "pearson"`: I chose Pearson correlation because our data is relatively clean.
-  
-  -   `SFTpower =` `r b6_sft$power``: as the thresholding power.
-  
-  
-This leads to `r ncol(net_b6$MEs)` modules in total which are characterized below. Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
+-   `cor_method = "pearson"`: I chose Pearson correlation because our data is relatively clean.
 
+-   `SFTpower =` `r power_b6`: as the threshold for power since it is where the 0.7 R\^2 threshold is crossed the first time.
 
-::: {#WGCNA_results .panel-tabset .nav-pills}
+This leads to `r ncol(net_b6$MEs)` modules in total which are characterized below.
+Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
 
-
+::::: {.panel-tabset .nav-pills}
 ### Eigengene adjacency plot
 
 ```{r}
@@ -1705,7 +1703,6 @@ for(mod in names(module_colors)){
 # ggsave(a, filename = here("_figures","test.pdf"), width = 8, height = 6)
 
 ```
-
 :::
 
 ### Module-trait correlations
@@ -1721,20 +1718,20 @@ for(mod in names(module_colors)){
 # bioNERO function module_trait_cor can only handle one trait at a time! 
 # but the fact that it separates each trait and shows the directionality makes things easier to interpret so I will use that and just loop over the traits.
 b6_me_trait_cor <- c()
-for(i in 1:(ncol(b6_datTraits_alt))){
+for(i in 1:(ncol(b6_datTraits_alt)-1)){
   
   b6_me_trait_cor[[colnames(b6_datTraits_alt)[i]]] <- module_trait_cor( exp = assay(b6_expr_final), # get just the expression
                                             metadata = b6_datTraits_alt[,i,drop=F], # pass metadata manually
                                             MEs = net_b6$MEs,
-                                            continuous_trait = is.numeric(b6_datTraits_alt[1,i]),
-                                            palette = "PRGn",
+                                            #continuous_trait = is.numeric(b6_datTraits_alt[1,i]),
+                                            #palette = "PRGn",
                                             cor_method = "pearson"
                                             )
 }
 
 corandp_b6 <- reshape2::melt(b6_me_trait_cor) |> 
+  select(-L1) |> 
   pivot_wider( names_from = variable, values_from = value) |> 
-  rename( "group"="L1") |> 
   group_by( group) |> 
   rstatix::adjust_pvalue( p.col = "pvalue") |> 
   ungroup()
@@ -1830,10 +1827,12 @@ do.call( rbind, ora_results) %>%
 
 ```
 
-
 ### Hub genes
 
-Hub genes are often identified using two different metrics: module membership (MM) (i.e., correlation of a gene to its module eigengene) and degree (i.e., sum of connection weights of a gene to all other genes in the module). Some researchers consider the top 10% genes with the highest degree as hubs, while others consider those with MM > 0.8. To avoid false positives, BioNERO’s algorithm combines both metrics and defines hub genes as the top 10% genes with highest degree that have MM > 0.8. Hubs are identigied with the function `get_hubs_gcn()` below.
+Hub genes are often identified using two different metrics: module membership (MM) (i.e., correlation of a gene to its module eigengene) and degree (i.e., sum of connection weights of a gene to all other genes in the module).
+Some researchers consider the top 10% genes with the highest degree as hubs, while others consider those with MM \> 0.8.
+To avoid false positives, BioNERO’s algorithm combines both metrics and defines hub genes as the top 10% genes with highest degree that have MM \> 0.8.
+Hubs are identigied with the function `get_hubs_gcn()` below.
 
 ```{r}
 #| label: get_hub_genes_b6
@@ -1849,8 +1848,12 @@ hubs_b6 |>
 
 ```
 
-
-Below I am getting the sub-networks within each module then plotting them per module. I am also plotting the protein-protein interaction networks within each module with communities detected in each one. Note that some modules are really big, hence the networks are really big as well! I am only labeling the 15 top hub genes in each network. Some of the images look really ugly! I can regenerate them manually, I am looping through them here so they all have the same figure settings.
+Below I am getting the sub-networks within each module then plotting them per module.
+I am also plotting the protein-protein interaction networks within each module with communities detected in each one.
+Note that some modules are really big, hence the networks are really big as well!
+I am only labeling the 15 top hub genes in each network.
+Some of the images look really ugly!
+I can regenerate them manually, I am looping through them here so they all have the same figure settings.
 
 ```{r}
 #| label: get_subnetworks_b6
@@ -2294,12 +2297,8 @@ for( mod in modules){
 
 
 ```
-
 :::
-
-:::
-
-
+:::::
 
 ## CAST
 
@@ -2310,7 +2309,11 @@ for( mod in modules){
 #| results: hide
 
 # Choose a set of soft-thresholding powers
-cast_sft <- SFT_fit(cast_expr_final, net_type = "unsigned", cor_method = "pearson")
+cast_sft <- SFT_fit(cast_expr_final, 
+                    net_type = "signed",  
+                  cor_method = "pearson",
+                  rsquared = 0.7 
+                  )
 ```
 
 ```{r}
@@ -2319,7 +2322,6 @@ cast_sft <- SFT_fit(cast_expr_final, net_type = "unsigned", cor_method = "pearso
 #| fig-height: 5
 cast_sft$plot 
 ```
-
 
 ```{r}
 #| label: run_wgcna_cast
@@ -2331,7 +2333,7 @@ power_cast <- cast_sft$power
 
 net_cast <- exp2gcn(
     cast_expr_final, 
-    net_type = "unsigned", 
+    net_type = "signed", 
   #  module_merging_threshold = 0.75,
     SFTpower = power_cast, 
     cor_method = "pearson"
@@ -2343,7 +2345,6 @@ net_cast <- exp2gcn(
 
 
 ```
-
 
 Assessing module stability by re-sampling:
 
@@ -2360,20 +2361,18 @@ module_stability(cast_expr_final, net_cast, nRuns = 50)
 
 ```
 
+Using `r formatC(nrow(cast_expr_final),big.mark=",")` genes and `r formatC(ncol(cast_expr_final),big.mark=",")` samples.
 
-Using `r formatC(nrow(cast_expr_final),big.mark=",")` genes and `r formatC(ncol(cast_expr_final),big.mark=",")` samples. 
+-   `net_type = "signed"` : I chose this option to get more biologically meaningful networks where the sign of the correlation is preserved and module detection focuses on positively correlated genes.
 
-  -   `net_type = "unsigned"` : I chose this option so that we can treat positive and negative correlations equally and focus on the strength of the relationship rather than the sign.
-  
-  -   `cor_method = "pearson"`: I chose Pearson correlation because our data is relatively clean.
-  
-  -   `SFTpower =` `r cast_sft$power`: as the thresholding power.
-  
-This leads to `r ncol(net_cast$MEs)` modules in total which are characterized below. Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
+-   `cor_method = "pearson"`: I chose Pearson correlation because our data is relatively clean.
 
+-   `SFTpower =` `r power_cast`: as the threshold for power since it is where the 0.7 R\^2 threshold is reached first.
 
-::: {#WGCNA_results .panel-tabset .nav-pills}
+This leads to `r ncol(net_cast$MEs)` modules in total which are characterized below.
+Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
 
+::::: {.panel-tabset .nav-pills}
 ### Eigengene adjacency plot
 
 ```{r}
@@ -2475,7 +2474,7 @@ module_eigengenes_long_cast |>
 
 ```
 
-::: {#WGCNA_module_eigengenes .panel-tabset .nav-pills}
+::: {.panel-tabset .nav-pills}
 ```{r}
 #| label: module_eigengene_plots_cast
 #| warning: false
@@ -2552,7 +2551,6 @@ for(mod in names(module_colors_cast)){
 
 
 ```
-
 :::
 
 ### Module-trait correlations
@@ -2568,20 +2566,20 @@ for(mod in names(module_colors_cast)){
 # bioNERO function module_trait_cor can only handle one trait at a time! 
 # but the fact that it separates each trait and shows the directionality makes things easier to interpret so I will use that and just loop over the traits.
 cast_me_trait_cor <- c()
-for(i in 1:(ncol(cast_datTraits_alt))){
+for(i in 1:(ncol(cast_datTraits_alt)-1)){
   
   cast_me_trait_cor[[colnames(cast_datTraits_alt)[i]]] <- module_trait_cor( exp = assay(cast_expr_final), # get just the expression
                                             metadata = cast_datTraits_alt[,i,drop=F], # pass metadata manually
                                             MEs = net_cast$MEs,
-                                            continuous_trait = is.numeric(cast_datTraits_alt[1,i]),
-                                            palette = "PRGn",
+                                            #continuous_trait = is.numeric(cast_datTraits_alt[1,i]),
+                                            #palette = "PRGn",
                                             cor_method = "pearson"
                                             )
 }
 
 corandp_cast <- reshape2::melt(cast_me_trait_cor) |> 
+  select(-L1) |> 
   pivot_wider( names_from = variable, values_from = value) |> 
-  rename( "group"="L1") |> 
   group_by( group) |> 
   rstatix::adjust_pvalue( p.col = "pvalue") |> 
   ungroup()
@@ -2678,7 +2676,10 @@ do.call( rbind, ora_results) %>%
 
 ### Hub genes
 
-Hub genes are often identified using two different metrics: module membership (MM) (i.e., correlation of a gene to its module eigengene) and degree (i.e., sum of connection weights of a gene to all other genes in the module). Some researchers consider the top 10% genes with the highest degree as hubs, while others consider those with MM > 0.8. To avoid false positives, BioNERO’s algorithm combines both metrics and defines hub genes as the top 10% genes with highest degree that have MM > 0.8. Hubs are identigied with the function `get_hubs_gcn()` below.
+Hub genes are often identified using two different metrics: module membership (MM) (i.e., correlation of a gene to its module eigengene) and degree (i.e., sum of connection weights of a gene to all other genes in the module).
+Some researchers consider the top 10% genes with the highest degree as hubs, while others consider those with MM \> 0.8.
+To avoid false positives, BioNERO’s algorithm combines both metrics and defines hub genes as the top 10% genes with highest degree that have MM \> 0.8.
+Hubs are identigied with the function `get_hubs_gcn()` below.
 
 ```{r}
 #| label: get_hub_genes_cast
@@ -2694,7 +2695,10 @@ hubs_cast |>
 
 ```
 
-Below I am getting the sub-networks within each module then plotting them per module. I am also plotting the protein-protein interaction networks within each module with communities detected in each one. Note that some modules are really big, hence the networks are really big as well! I am only labeling the 15 top hub genes in each network.
+Below I am getting the sub-networks within each module then plotting them per module.
+I am also plotting the protein-protein interaction networks within each module with communities detected in each one.
+Note that some modules are really big, hence the networks are really big as well!
+I am only labeling the 15 top hub genes in each network.
 
 ```{r}
 #| label: get_subnetworks_cast
@@ -2749,14 +2753,13 @@ for( mod in modules){
 
 
 ```
-
 :::
-
-:::
+:::::
 
 ## Comparison of B6 and CAST modules
 
-Module preservation: The B6 modules named below are preserved in the CAST data. 
+Module preservation: The B6 modules named below are preserved in the CAST data.
+
 ```{r}
 #| label: b6_cast_mod_preservation
 #| warning: false
@@ -2896,8 +2899,10 @@ plot_module_overlap <- function(comparison_results, p_threshold = 0.05, highligh
 
 ```
 
-Let's compare modules by calculating the # of genes that overlap between modules and the Jaccard Index. The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets. The modules colored red with an asterisk are also identified as B6 modules preserved in CAST network. We can use the Jaccard index and the significant overlap according to Fisher's test to identify which CAST modules likely correspond to the conserved B6 modules For example, the B6 green module has a significant overlap and high Jaccard index with the CAST dark turquoise module suggesting that it is the equivalent module in the CAST data. 
-
+Let's compare modules by calculating the \# of genes that overlap between modules and the Jaccard Index.
+The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets.
+The modules colored red with an asterisk are also identified as B6 modules preserved in CAST network.
+We can use the Jaccard index and the significant overlap according to Fisher's test to identify which CAST modules likely correspond to the conserved B6 modules For example, the B6 green module has a significant overlap and high Jaccard index with the CAST dark turquoise module suggesting that it is the equivalent module in the CAST data.
 
 ```{r}
 #| label: compare_b6_to_cast
@@ -2923,13 +2928,9 @@ plot_module_overlap(comparison_results, p_threshold = 0.01, highlight_modules = 
 
 ```
 
-
-
-
-
 ```{r}
 #| eval: false
-consensus <- consensus_modules(b6_and_cast, power = c(20,20), cor_method = "pearson", net_type = "unsigned")
+consensus <- consensus_modules(b6_and_cast, power = c(20,20), cor_method = "pearson", net_type = "signed")
 
 names(consensus)
 
@@ -2941,10 +2942,7 @@ head(consensus_trait)
 
 ```
 
-
-
 ## DO - only MAX domain
-
 
 ```{r}
 #| warning: false
@@ -2953,7 +2951,7 @@ head(consensus_trait)
 #| results: hide
 
 # Choose a set of soft-thresholding powers
-do_sft <- SFT_fit(do_expr_final, net_type = "unsigned", cor_method = "pearson")
+do_sft <- SFT_fit(do_expr_final, net_type = "signed", cor_method = "pearson")
 ```
 
 ```{r}
@@ -2962,7 +2960,6 @@ do_sft <- SFT_fit(do_expr_final, net_type = "unsigned", cor_method = "pearson")
 #| fig-height: 5
 do_sft$plot 
 ```
-
 
 ```{r}
 #| label: run_wgcna_do
@@ -2974,7 +2971,7 @@ power_do <- do_sft$power
 
 net_do <- exp2gcn(
     do_expr_final, 
-    net_type = "unsigned", 
+    net_type = "signed", 
     #module_merging_threshold = 0.75,
     SFTpower = power_do, 
     cor_method = "pearson"
@@ -2987,7 +2984,6 @@ net_do <- exp2gcn(
 # saving the network to use in the qtl mapping notebook
 # save(net_do,  file = here("_data",paste0("/DO_WGCNA_network_",Sys.Date(), ".RData")) ) 
 ```
-
 
 Assessing module stability by re-sampling:
 
@@ -3004,20 +3000,18 @@ module_stability(do_expr_final, net_do, nRuns = 30)
 
 ```
 
+Using `r formatC(nrow(do_expr_final),big.mark=",")` genes and `r formatC(ncol(do_expr_final),big.mark=",")` samples.
 
-Using `r formatC(nrow(do_expr_final),big.mark=",")` genes and `r formatC(ncol(do_expr_final),big.mark=",")` samples. 
-  
-  -   `net_type = "unsigned"` : I chose this option so that we can treat positive and negative correlations equally and focus on the strength of the relationship rather than the sign.
-  
-  -   `cor_method = "pearson"`: I chose Pearson correlation because our data is relatively clean.
-  
-  -   `SFTpower =``r do_sft$power`: as the thresholding power.
-  
-This leads to `r ncol(net_do$MEs)` modules in total which are characterized below. Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
+-   `net_type = "signed"` : I chose this option so that we can treat positive and negative correlations equally and focus on the strength of the relationship rather than the sign.
 
+-   `cor_method = "pearson"`: I chose Pearson correlation because our data is relatively clean.
 
-::: {#WGCNA_results .panel-tabset .nav-pills}
+-   ``` SFTpower =``r do_sft$power ```: as the thresholding power.
 
+This leads to `r ncol(net_do$MEs)` modules in total which are characterized below.
+Remember the 'grey' module is a catch all module where WGCNA places the genes that cannot be assigned to any specific module.
+
+::::: {.panel-tabset .nav-pills}
 ### Eigengene adjacency plot
 
 ```{r}
@@ -3119,7 +3113,7 @@ module_eigengenes_long_do |>
 
 ```
 
-::: {#WGCNA_module_eigengenes .panel-tabset .nav-pills}
+::: {.panel-tabset .nav-pills}
 ```{r}
 #| label: module_eigengene_plots_do
 #| warning: false
@@ -3196,7 +3190,6 @@ for(mod in names(module_colors_do)){
 
 
 ```
-
 :::
 
 ### Module-trait correlations
@@ -3212,20 +3205,22 @@ for(mod in names(module_colors_do)){
 # bioNERO function module_trait_cor can only handle one trait at a time! 
 # but the fact that it separates each trait and shows the directionality makes things easier to interpret so I will use that and just loop over the traits.
 do_me_trait_cor <- c()
+do_datTraits_alt <- do_datTraits_alt |> 
+  select(-strain, -AP_domain, -Gest_stage)
 for(i in 1:(ncol(do_datTraits_alt))){
   
   do_me_trait_cor[[colnames(do_datTraits_alt)[i]]] <- module_trait_cor( exp = assay(do_expr_final), # get just the expression
                                             metadata = do_datTraits_alt[,i,drop=F], # pass metadata manually
                                             MEs = net_do$MEs,
-                                            continuous_trait = is.numeric(do_datTraits_alt[1,i]),
-                                            palette = "PRGn",
+                                            #continuous_trait = is.numeric(do_datTraits_alt[1,i]),
+                                            #palette = "PRGn",
                                             cor_method = "pearson"
                                             )
 }
 
 corandp_do <- reshape2::melt(do_me_trait_cor) |> 
+  select(-L1) |> 
   pivot_wider( names_from = variable, values_from = value) |> 
-  rename( "group"="L1") |> 
   group_by( group) |> 
   rstatix::adjust_pvalue( p.col = "pvalue") |> 
   ungroup()
@@ -3320,10 +3315,12 @@ do.call( rbind, ora_results) %>%
 
 ```
 
-
 ### Hub genes
 
-Hub genes are often identified using two different metrics: module membership (MM) (i.e., correlation of a gene to its module eigengene) and degree (i.e., sum of connection weights of a gene to all other genes in the module). Some researchers consider the top 10% genes with the highest degree as hubs, while others consider those with MM > 0.8. To avoid false positives, BioNERO’s algorithm combines both metrics and defines hub genes as the top 10% genes with highest degree that have MM > 0.8. Hubs are identigied with the function `get_hubs_gcn()` below.
+Hub genes are often identified using two different metrics: module membership (MM) (i.e., correlation of a gene to its module eigengene) and degree (i.e., sum of connection weights of a gene to all other genes in the module).
+Some researchers consider the top 10% genes with the highest degree as hubs, while others consider those with MM \> 0.8.
+To avoid false positives, BioNERO’s algorithm combines both metrics and defines hub genes as the top 10% genes with highest degree that have MM \> 0.8.
+Hubs are identigied with the function `get_hubs_gcn()` below.
 
 ```{r}
 #| label: get_hub_genes_do
@@ -3339,7 +3336,10 @@ hubs_do |>
 
 ```
 
-Below I am getting the sub-networks within each module then plotting them per module. I am also plotting the protein-protein interaction networks within each module with communities detected in each one. Note that some modules are really big, hence the networks are really big as well! I am only labeling the 15 top hub genes in each network.
+Below I am getting the sub-networks within each module then plotting them per module.
+I am also plotting the protein-protein interaction networks within each module with communities detected in each one.
+Note that some modules are really big, hence the networks are really big as well!
+I am only labeling the 15 top hub genes in each network.
 
 ```{r}
 #| label: get_subnetworks_do
@@ -3359,7 +3359,7 @@ for(mod in modules){
 
 ```
 
-::: {#WGCNA_subnetworks_cast .panel-tabset .nav-pills}
+::: {.panel-tabset .nav-pills}
 ```{r}
 #| label: do_gcn_plots
 #| warning: false
@@ -3394,14 +3394,13 @@ for( mod in modules){
 
 
 ```
-
 :::
-
-:::
+:::::
 
 ## Comparison of DO modules with B6 and CAST
 
-Module preservation: The B6 modules named below are preserved in the DO data. 
+Module preservation: The B6 modules named below are preserved in the DO data.
+
 ```{r}
 #| label: do_b6_mod_preservation
 #| warning: false
@@ -3435,9 +3434,10 @@ pres_b6_do$p.values |>
 
 ```
 
-
-Let's compare modules by calculating the # of genes that overlap between modules and the Jaccard Index. The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets. The modules colored red with an asterisk are also identified as B6 modules preserved in the DO network. We can use the Jaccard index and the significant overlap according to Fisher's test to identify which DO modules likely correspond to the conserved B6 modules. 
-
+Let's compare modules by calculating the \# of genes that overlap between modules and the Jaccard Index.
+The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets.
+The modules colored red with an asterisk are also identified as B6 modules preserved in the DO network.
+We can use the Jaccard index and the significant overlap according to Fisher's test to identify which DO modules likely correspond to the conserved B6 modules.
 
 ```{r}
 #| label: compare_b6_to_do
@@ -3462,7 +3462,8 @@ plot_module_overlap(comparison_results, p_threshold = 0.01, highlight_modules = 
 
 ```
 
-Module preservation: The CAST modules named below are preserved in the DO data. 
+Module preservation: The CAST modules named below are preserved in the DO data.
+
 ```{r}
 #| label: do_cast_mod_preservation
 #| warning: false
@@ -3494,7 +3495,10 @@ pres_cast_do$p.values |>
 
 ```
 
-Let's compare modules by calculating the # of genes that overlap between modules and the Jaccard Index. The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets. The modules colored red with an asterisk are also identified as CAST modules preserved in the DO network. We can use the Jaccard index and the significant overlap according to Fisher's test to identify which DO modules likely correspond to the conserved CAST modules. 
+Let's compare modules by calculating the \# of genes that overlap between modules and the Jaccard Index.
+The Jaccard Index is a way to measure how similar two sets are by comparing the number of items they have in common to the total number of unique items in both sets.
+The modules colored red with an asterisk are also identified as CAST modules preserved in the DO network.
+We can use the Jaccard index and the significant overlap according to Fisher's test to identify which DO modules likely correspond to the conserved CAST modules.
 
 ```{r}
 #| label: compare_cast_to_do
@@ -3518,22 +3522,23 @@ plot_module_overlap(comparison_results, p_threshold = 0.01, highlight_modules = 
       )
 
 ```
+::::::::::::
 
-:::
+# Gene regulatory network inference
 
-# Gene regulatory network inference 
-
-
-I am using BioNero's `exp2grn` function to get a consensus network. I obtained the TFs from the [TFcheckpoint website](https://www.tfcheckpoint.org/). I am using the same gene set used in WGCNA for consistency. 
-
+I am using BioNero's `exp2grn` function to get a consensus network.
+I obtained the TFs from the [TFcheckpoint website](https://www.tfcheckpoint.org/).
+I am using the same gene set used in WGCNA for consistency.
 
 Here is the description of the function from BioNero:
 
-
-Inferring GRNs based on the wisdom of the crowds principle can be done with a single function: exp2grn(). This function will infer GRNs with GENIE3, ARACNE and CLR, calculate average ranks for each interaction and filter the resulting network based on the optimal scale-free topology (SFT) fit. In the filtering step, n different networks are created by subsetting the top n quantiles. For instance, if a network of 10,000 edges is given as input with nsplit = 10, 10 different networks will be created: the first with 1,000 edges, the second with 2,000 edges, and so on, with the last network being the original input network. Then, for each network, the function will calculate the SFT fit and select the best fit.
+Inferring GRNs based on the wisdom of the crowds principle can be done with a single function: exp2grn().
+This function will infer GRNs with GENIE3, ARACNE and CLR, calculate average ranks for each interaction and filter the resulting network based on the optimal scale-free topology (SFT) fit.
+In the filtering step, n different networks are created by subsetting the top n quantiles.
+For instance, if a network of 10,000 edges is given as input with nsplit = 10, 10 different networks will be created: the first with 1,000 edges, the second with 2,000 edges, and so on, with the last network being the original input network.
+Then, for each network, the function will calculate the SFT fit and select the best fit.
 
 ::: {#GRN_results .panel-tabset .nav-pills}
-
 ## B6
 
 ```{r}
@@ -3551,6 +3556,7 @@ b6_genie3 <- exp2grn(exp = b6_expr_final,
 ```
 
 B6 consensus network:
+
 ```{r}
 #| label: plot_grn_b6
 #| warning: false
@@ -3564,6 +3570,7 @@ plot_grn( edgelist_grn = b6_genie3, gene_annots = all_genes_palate, interactive 
 ```
 
 Let's plot interactively too: Too big!
+
 ```{r}
 #| label: plot_grn_b6_int
 #| warning: false
@@ -3615,6 +3622,7 @@ cast_genie3 <- exp2grn(exp = cast_expr_final,
 ```
 
 CAST consensus network:
+
 ```{r}
 #| label: plot_grn_cast
 #| warning: false
@@ -3628,6 +3636,7 @@ plot_grn( edgelist_grn = cast_genie3, gene_annots = all_genes_palate, interactiv
 ```
 
 Let's plot interactively too: Too big!
+
 ```{r}
 #| label: plot_grn_cast_int
 #| warning: false
@@ -3679,7 +3688,9 @@ do_genie3 <- exp2grn(exp = do_expr_final,
 
 ```
 
-DO consensus network is very big (>100k interactions) ! I am not sure what is happening but will try and follow up.
+DO consensus network is very big (\>100k interactions) !
+I am not sure what is happening but will try and follow up.
+
 ```{r}
 #| label: plot_grn_do
 #| warning: false
@@ -3693,6 +3704,7 @@ plot_grn( edgelist_grn = do_genie3, gene_annots = all_genes_palate, interactive 
 ```
 
 Let's plot interactively too: Too big!
+
 ```{r}
 #| label: plot_grn_do_int
 #| warning: false
@@ -3706,7 +3718,9 @@ plot_grn( edgelist_grn = do_genie3, gene_annots = all_genes_palate, interactive 
 
 ```
 
-The table is too big to display here as well. I am getting >100k interactions.
+The table is too big to display here as well.
+I am getting \>100k interactions.
+
 ```{r}
 #| label: grn_table_do
 #| warning: false
@@ -3727,8 +3741,6 @@ do_genie3 |>
   create_dt()
 
 ```
-
-
 :::
 
 # Using MEFISTO to identify temporal gene expression
@@ -3801,20 +3813,23 @@ Here is what MEFISTO does from their [website](https://biofam.github.io/MOFA2/ME
 
 If multiple groups of samples are present, e.g. timecourses from different individuals, MEFISTO furthermore models the heterogeneity of the temporal or spatial patterns across groups and allows to align timepoints across the groups in cases where there are no clear or imperfect correspondences between groups."
 
+I ran MEFISTO with two different setting, I am displaying both results in tabs below since they each looked interesting.
 
-I ran MEFISTO with two different setting, I am displaying both results in tabs below since they each looked interesting. 
+1.  Using strains as group and time as covariate.
+    In this setup, MEFISTO looks for sources of variation within groups hence doesn't compare the strains to each other.
+    The use of groups allows us to align the developmental time points between the different strain backgrounds using B6 as the reference.
 
-  1.    Using strains as group and time as covariate. In this setup, MEFISTO looks for sources of variation within groups hence doesn't compare the strains to each other. The use of groups allows us to align the developmental time points between the different strain backgrounds using B6 as the reference.
-  
-  2.    Using strains as views and time as covariate. In this setup, MEFISTO identifies factors that separates the different strains. As you can see below, this leads to Factors 1-3 being highly correlated to time but explaining variation in each individual strain background. 
-  
+2.  Using strains as views and time as covariate.
+    In this setup, MEFISTO identifies factors that separates the different strains.
+    As you can see below, this leads to Factors 1-3 being highly correlated to time but explaining variation in each individual strain background.
+
 I used over-representation analysis to functionally characterize each factor and included tables with factor weights for genes as well as plots so you can see the top drivers of each factor.
-  
-::: {#Mefisto_results .panel-tabset .nav-pills}
 
+::: {#Mefisto_results .panel-tabset .nav-pills}
 ## Strains as group and time as covariate
 
-Note from MOFA: The aim of the multi-group framework is to identify the sources of variability *within* the groups. If your aim is to find a factor that 'separates' the groups, you DO NOT want to use the multi-group framework. 
+Note from MOFA: The aim of the multi-group framework is to identify the sources of variability *within* the groups.
+If your aim is to find a factor that 'separates' the groups, you DO NOT want to use the multi-group framework.
 
 ```{r}
 #| label: load_trained_model_strain_only
@@ -3857,6 +3872,7 @@ plot_data_overview(MOFAobject,
 ```
 
 The MEFISTO model can capture variation across the three strains:
+
 ```{r}
 p <- plot_variance_explained(MOFAobject, plot_total = T)
 p[[2]] + theme(axis.text.x = element_text(angle = 90))
@@ -3868,7 +3884,9 @@ Individual factors capture variation at different amounts across strains:
 p[[1]] + theme(axis.text.x = element_text(angle = 90))
 
 ```
+
 Looking at factors over time and across domains (unaligned):
+
 ```{r}
 # Factors versus developmental time (before alignment)
 plot_factors_vs_cov(MOFAobject, color_by = "group",shape_by = "domain",
@@ -3877,6 +3895,7 @@ plot_factors_vs_cov(MOFAobject, color_by = "group",shape_by = "domain",
 ```
 
 Looking at factors over time and across domains aligned to B6:
+
 ```{r}
 #| warning: false
 #| message: false
@@ -3886,12 +3905,15 @@ plot_factors_vs_cov(MOFAobject, color_by = "group",shape_by = "domain",
 ```
 
 Aligned time points vs the reference (B6) time point for each strain:
+
 ```{r}
 #| warning: false
 #| message: false
 plot_alignment(MOFAobject)
 ```
-Are the factors shared across the groups (i.e. strains)? 
+
+Are the factors shared across the groups (i.e. strains)?
+
 ```{r}
 #| warning: false
 #| message: false
@@ -3900,8 +3922,9 @@ Are the factors shared across the groups (i.e. strains)?
 plot_sharedness(MOFAobject) 
 ```
 
+How are the factors correlated to the covariates in the data?
+Displaying -lop10(pvalue).
 
-How are the factors correlated to the covariates in the data? Displaying -lop10(pvalue). 
 ```{r}
 #| warning: false
 #| message: false
@@ -3914,7 +3937,6 @@ factor_cov_cor |>
   select(Factor, "LB stage" = time, "AP domain" = domain, sex) |> 
   create_dt()
 ```
-
 
 Functional characterization of each factor using ORA:
 
@@ -3965,6 +3987,7 @@ do.call( rbind, mefisto_ora_results) %>%
 ```
 
 Each factor value per sample:
+
 ```{r}
 #| warning: false
 #| message: false
@@ -3975,6 +3998,7 @@ factors |>
 ```
 
 Weights for each gene per factor:
+
 ```{r}
 #| warning: false
 #| message: false
@@ -3986,7 +4010,6 @@ weights |>
   mutate( weight = formatC(weight, digits = 2, format = "e")) |> 
   create_dt()
 ```
-
 
 ## Strain as view and time as covariate
 
@@ -4020,6 +4043,7 @@ weights2 <- get_weights(MOFAobject2, views = "all", factors = "all", as.data.fra
 ```
 
 This is the data being inputted into MEFISTO:
+
 ```{r}
 #| warning: false
 #| message: false
@@ -4029,6 +4053,7 @@ plot_data_overview(MOFAobject2,
 ```
 
 The MEFISTO model can capture variation across the three strains:
+
 ```{r}
 #| warning: false
 #| message: false
@@ -4038,6 +4063,7 @@ p[[2]] + theme(axis.text.x = element_text(angle = 90))
 ```
 
 Individual factors capture variation at different amounts across strains:
+
 ```{r}
 #| warning: false
 #| message: false
@@ -4045,6 +4071,7 @@ p[[1]] + theme(axis.text.x = element_text(angle = 90))
 ```
 
 Looking at factors over time and across domains:
+
 ```{r}
 #| warning: false
 #| message: false
@@ -4053,7 +4080,9 @@ plot_factors_vs_cov(MOFAobject2, color_by = "view",shape_by = "domain",
                     covariate = "time",  warped = FALSE) 
 ```
 
-How are the factors correlated to the covariates in the data? Displaying -lop10(pvalue). 
+How are the factors correlated to the covariates in the data?
+Displaying -lop10(pvalue).
+
 ```{r}
 #| warning: false
 #| message: false
@@ -4135,6 +4164,7 @@ do.call( rbind, mefisto_ora_results2) %>%
 ```
 
 Each factor value per sample:
+
 ```{r}
 #| warning: false
 #| message: false
@@ -4147,6 +4177,7 @@ factors2 |>
 ```
 
 Weights for each gene per factor:
+
 ```{r}
 #| warning: false
 #| message: false
@@ -4162,53 +4193,57 @@ weights2 |>
 
 <!-- ## Strains as group, domains as view and time as covariate -->
 
-
 <!-- Note from MOFA: The aim of the multi-group framework is to identify the sources of variability *within* the groups. If your aim is to find a factor that 'separates' the groups, you DO NOT want to use the multi-group framework.  -->
 
 <!-- ```{r} -->
+
 <!-- #| label: load_trained_model_strain_and_domain -->
+
 <!-- #| eval: true -->
+
 <!-- #| warning: false -->
+
 <!-- #| message: false -->
 
-
 <!-- MOFAobject2 <- load_model( here("_data/mefisto_trial_strain_and_domain_5Factors.hdf5"), load_interpol_Z = TRUE) -->
+
 <!-- samples_metadata(MOFAobject2) <- sample_metadata -->
 
-
 <!-- # plot_data_overview(MOFAobject2, -->
+
 <!-- #                                show_covariate = TRUE, -->
+
 <!-- #                                show_dimensions = TRUE) -->
 
 <!-- p <- plot_variance_explained(MOFAobject2, plot_total = T) -->
+
 <!-- p[[1]] + theme(axis.text.x = element_text(angle = 90)) -->
 
 <!-- p[[2]] + theme(axis.text.x = element_text(angle = 90)) -->
 
 <!-- # Factors versus developmental time (before alignment) -->
+
 <!-- plot_factors_vs_cov(MOFAobject2, color_by = "group", -->
+
 <!--                     covariate = "time",  warped = FALSE)  -->
+
 <!-- # Factors versus developmental time (after alignment) -->
+
 <!-- plot_factors_vs_cov(MOFAobject2, color_by = "group", -->
+
 <!--                     covariate = "time", scale = FALSE) -->
 
 <!-- plot_interpolation_vs_covariate(MOFAobject2, only_mean = FALSE) -->
-
 
 <!-- plot_factors(MOFAobject2, 1:5, color_by = "time")  -->
 
 <!-- plot_alignment(MOFAobject2) -->
 
 <!-- plot_group_kernel(MOFAobject2, factors = "all") -->
+
 <!-- plot_sharedness(MOFAobject2)  -->
 
 <!-- correlate_factors_with_covariates(object = MOFAobject2, covariates = sample_metadata) -->
 
-
-
-
 <!-- ``` -->
-
 :::
-
-
