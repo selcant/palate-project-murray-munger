@@ -1045,7 +1045,7 @@ pheatmap( mat = log1p(expr[morpho_gene_set$gene_id,]),
 #| label: load_do_wgcna
 
 # I ran this already in the Strain_effects.qmd notebook and will load here.
-load( here("_data/DO_WGCNA_network_2025-02-12.RData")) # net_do
+load( here("_data/DO_WGCNA_network_2025-06-04.RData")) # net_do
 
 ```
 
@@ -1084,7 +1084,7 @@ wgcna_qtl_scan <- scan1( genoprobs = genoprobs,
 #| fig-width: 12
 #| fig-height: 6
 
-plot_lodpeaks(find_peaks(wgcna_qtl_scan, threshold = 7, pmap), pmap, main = "Peaks LOD > 6")
+plot_lodpeaks(find_peaks(wgcna_qtl_scan, threshold = 7, pmap), pmap, main = "Peaks LOD > 7")
 
 ```
 
