@@ -1091,12 +1091,12 @@ plot_lodpeaks(find_peaks(wgcna_qtl_scan, threshold = 7, pmap), pmap, main = "Pea
 ```{r wgcna_qtl_table}
 
 wgcna_qtl_peaks <- find_peaks(wgcna_qtl_scan, threshold = 7, gmap, peakdrop = 1) |> 
-  filter( lodcolumn != "MEgrey") 
-wgcna_qtl_peaks %>% 
+  filter( lodcolumn != "MEgrey") |> 
   mutate(phenotype=lodcolumn) %>%
   mutate( peak_chr = chr,
           peak_cM = pos) %>%
-  interp_bp(.) %>% 
+  interp_bp(.)
+wgcna_qtl_peaks  %>% 
   select( Module = lodcolumn, lod, chr, interp_bp_peak) %>% 
   arrange(chr) %>% 
   mutate_if(is.numeric, round, 2) %>% 
@@ -1213,6 +1213,8 @@ wgcna_peak_meds_merged %>%
   create_dt()
 
 ```
+
+
 
 :::
 
@@ -2179,6 +2181,57 @@ chr13_pc1_as_1_snps |>
 
 ```
 
+#### Overlap between hotspot targets and WGCNA module genes
+
+
+There are several modules that map to the same Chr 13.1 locus.
+
+```{r}
+#| label: chr13_1_module_overlap
+#| warning: false
+#| message: false
+
+
+chr13.1_modules <- wgcna_qtl_peaks |> 
+  filter(  interp_bp_peak >= filter( bands.rna,chr==13)$start[2] & 
+            interp_bp_peak <= filter( bands.rna,chr==13)$end[2] 
+  ) |> 
+  mutate( Modules =  gsub("ME","",phenotype))
+
+
+
+net_do$genes_and_modules |> 
+  #inner_join( chr13.eQTL1 , by = c("Genes"="gene_id")) |> 
+  inner_join( peaks_annotated |> filter( peak_chr == 13,
+                                         interp_bp_peak >= filter( bands.rna,chr==13)$start[2],
+                                         interp_bp_peak <= filter( bands.rna,chr==13)$end[2] ),
+              by = c("Genes"="gene_id")) |> 
+  left_join( net_do$kIN |> as_tibble( rownames = "Genes")) |> 
+  inner_join( chr13.1_modules |> select(Modules, `Module QTL peak location` = interp_bp_peak)) |> 
+  select(
+    Modules,
+    Gene = symbol,
+    `eQTL peak location` = interp_bp_peak,
+    `Gene chr` = chromosome,
+    local,
+    `Module QTL peak location`,
+    lod,
+    `Intramodular connectivity` = kWithin,
+    `Total connectivity` = kTotal,
+    LETTERS[1:8]
+  ) |> 
+  arrange(Modules) |> 
+  mutate_if(is.numeric, round, 2) |> 
+  create_dt()
+
+
+
+## then make plots to visualize at things
+## add correlation to the alelle effects of the module qtl
+## plot the lod of module qtl vs lod of the gene and color by correlation of the allele effects + add the gene name as hover display in the interactive plot
+
+```
+
 :::
 
 ### Chr13.2
@@ -2790,6 +2843,52 @@ chr13_pc1_as_2_snps |>
   mutate_if(is.numeric, round, 2) |> 
   select(LOD, snp, gene_id, symbol, pos, ref, alt, consequence,reg_consequence_types, founders) |> 
   create_dt()
+```
+
+
+
+#### Overlap between hotspot targets and WGCNA module genes
+
+
+There are several modules that map to the same Chr 13.2 locus.
+
+```{r}
+#| label: chr13_2_module_overlap
+#| warning: false
+#| message: false
+
+
+chr13.2_modules <- wgcna_qtl_peaks |> 
+  filter(  interp_bp_peak >= filter( bands.rna,chr==13)$start[3] & 
+            interp_bp_peak <= filter( bands.rna,chr==13)$end[3] 
+  ) |> 
+  mutate( Modules =  gsub("ME","",phenotype))
+
+net_do$genes_and_modules |> 
+  #inner_join( chr13.eQTL2 , by = c("Genes"="gene_id")) |> 
+  inner_join( peaks_annotated |> filter( peak_chr == 13,
+                                         interp_bp_peak >= filter( bands.rna,chr==13)$start[3],
+                                         interp_bp_peak <= filter( bands.rna,chr==13)$end[3] ),
+              by = c("Genes"="gene_id")) |> 
+  left_join( net_do$kIN |> as_tibble( rownames = "Genes")) |> 
+  inner_join( chr13.2_modules |> select(Modules, `Module QTL peak location` = interp_bp_peak)) |> 
+  select(
+    Modules,
+    Gene = symbol,
+    `eQTL peak location` = interp_bp_peak,
+    `Gene chr` = chromosome,
+    local,
+    `Module QTL peak location`,
+    lod,
+    `Intramodular connectivity` = kWithin,
+    `Total connectivity` = kTotal,
+    LETTERS[1:8]
+  ) |> 
+  arrange(Modules) |> 
+  mutate_if(is.numeric, round, 2) |> 
+  create_dt()
+
+
 ```
 
 :::
