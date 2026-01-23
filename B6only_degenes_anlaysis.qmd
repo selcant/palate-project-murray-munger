@@ -1,0 +1,1806 @@
+---
+title: "Investigating strain and developmental stage effects - Part 1"
+author: "Selcan Aydin"
+date: "`r Sys.Date()`"
+format: 
+  html:
+      embed-resources: true
+      standalone: true
+include-in-header:
+  - text: |
+      <style>
+      .panel-tabset > .nav-tabs,
+      .panel-tabset > .tab-content {
+        border: none;
+      }
+      </style>
+code-fold: true
+toc: true
+toc-depth: 5
+toc-expand: true
+editor: 
+  markdown: 
+    wrap: sentence
+comments:
+  hypothesis: 
+    theme: clean
+---
+
+
+```{r setup}
+#| message: false
+#| warning: false
+
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 12,
+  fig.height = 8
+)
+# load packages
+suppressPackageStartupMessages(library(tidyverse))
+
+library(pheatmap)
+library(plotly)
+library(GGally)
+library(ggpubr)
+library(ggplot2)
+library(corrplot)
+library(simplifyEnrichment)
+library(patchwork)
+
+library(DESeq2)
+library(DEGreport)
+library(gprofiler2)
+set_base_url("https://biit.cs.ut.ee/gprofiler_archive3/e108_eg55_p17/")
+library(BioNERO)
+set.seed(123) # for reproducibility
+# library(WGCNA)
+
+library(DT)
+
+library(here)
+
+select <- dplyr::select # I am adding this explicitly
+rename <- dplyr::rename # I am adding this explicitly
+filter <- dplyr::filter # I am adding this explicitly
+summarize <- dplyr::summarize # I am adding this explicitly
+
+# functions
+create_dt <- function(x){
+  DT::datatable(x,
+                extensions = 'Buttons',
+                rownames = FALSE, 
+                filter="top",
+                options = list(dom = 'Blfrtip',
+                               buttons = c('copy', 'csv', 'excel'),
+                               pageLength = 5, 
+                               scrollX= TRUE
+                               ))
+  
+}
+
+# reading in the sample details
+sample_details <- read_csv("/projects/munger-lab/projects/palate-project-murray-munger/samplesheet.csv") 
+
+# domain colors
+domain_colors <- c(PM=rgb(252,206,93, maxColorValue = 255), 
+                   MAX=rgb(163,82,157, maxColorValue = 255), 
+                   POST=rgb(158,156,201, maxColorValue = 255)
+                   )
+
+# strain colors
+strain_colors <- c( B6 = "#555555", 
+                    CAST = "#009E73",
+                    DO = rgb(163,82,157, maxColorValue = 255))
+
+
+
+```
+
+```{r plotting-functions}
+# ===== FUNCTION 1: COMPARE UP VS DOWN IN SAME DOMAIN =====
+plot_domain_direction_comparison <- function(genes_up, genes_down, 
+                                             domain_name, count_data,
+                                             n_each = 2) {
+  
+  gene_col <- if("symbol" %in% names(count_data)) "symbol" else "symbol"
+  
+  # Get examples
+  up_examples <- genes_up[1:min(n_each, length(genes_up))]
+  down_examples <- genes_down[1:min(n_each, length(genes_down))]
+  
+  # Create plots for UP genes
+  plots_up <- lapply(up_examples, function(gid) {
+    gene_data <- count_data |> 
+      filter(gene_id == gid) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    
+    if(nrow(gene_data) == 0) return(NULL)
+    
+    gene_name <- unique(gene_data[[gene_col]])[1]
+    
+    ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
+      geom_point(alpha = 0.5, size = 2) +
+      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_color_manual(values = domain_colors) +
+      labs(title = gene_name,
+           subtitle = paste0("↑ in ", domain_name),
+           x = "Development stage",
+           y = "Counts") +
+      theme_pubclean(base_size = 10) +
+      theme(legend.position = "none",
+            plot.title = element_text(face = "bold", size = 11),
+            plot.subtitle = element_text(color = "darkgreen"))
+  })
+  
+  # Create plots for DOWN genes
+  plots_down <- lapply(down_examples, function(gid) {
+    gene_data <- count_data |> 
+      filter(gene_id == gid) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    
+    if(nrow(gene_data) == 0) return(NULL)
+    
+    gene_name <- unique(gene_data[[gene_col]])[1]
+    
+    ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
+      geom_point(alpha = 0.5, size = 2) +
+      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_color_manual(values = domain_colors) +
+      labs(title = gene_name,
+           subtitle = paste0("↓ in ", domain_name),
+           x = "Development stage",
+           y = "Counts") +
+      theme_pubclean(base_size = 10) +
+      theme(legend.position = "none",
+            plot.title = element_text(face = "bold", size = 11),
+            plot.subtitle = element_text(color = "darkred"))
+  })
+  
+  # Remove NULLs
+  plots_up <- plots_up[!sapply(plots_up, is.null)]
+  plots_down <- plots_down[!sapply(plots_down, is.null)]
+  
+  # Combine
+  all_plots <- c(plots_up, plots_down)
+  if(length(all_plots) == 0) return(NULL)
+  
+  if(length(all_plots) == 2) {
+    combined <- all_plots[[1]] / all_plots[[2]]
+  } else if(length(all_plots) == 4) {
+    combined <- (all_plots[[1]] | all_plots[[2]]) / (all_plots[[3]] | all_plots[[4]])
+  } else {
+    combined <- wrap_plots(all_plots, ncol = 2)
+  }
+  
+  combined <- combined +
+    plot_annotation(
+      title = paste0(domain_name, ": Higher (↑) vs Lower (↓)"),
+      theme = theme(plot.title = element_text(size = 14, face = "bold"))
+    )
+  
+  return(combined)
+}
+
+# ===== FUNCTION 2: PLOT DOMAIN HIERARCHY =====
+plot_domain_hierarchy <- function(genes_highest, domain_name, count_data, n = 3) {
+  
+  gene_col <- if("symbol" %in% names(count_data)) "symbol" else "symbol"
+  
+  example_genes <- genes_highest[1:min(n, length(genes_highest))]
+  
+  plots <- lapply(example_genes, function(gid) {
+    gene_data <- count_data |> 
+      filter(gene_id == gid) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    
+    if(nrow(gene_data) == 0) return(NULL)
+    
+    gene_name <- unique(gene_data[[gene_col]])[1]
+    
+    # Create both trajectory and boxplot
+    p1 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
+      geom_point(alpha = 0.5, size = 2) +
+      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_color_manual(values = domain_colors) +
+      labs(title = gene_name,
+           subtitle = paste0("Highest in ", domain_name),
+           x = "Development",
+           y = "Counts") +
+      theme_pubclean(base_size = 10) +
+      theme(legend.position = "bottom",
+            legend.text = element_text(size = 8),
+            plot.title = element_text(face = "bold"))
+    
+    p2 <- ggplot(gene_data, aes(x = AP_domain, y = count, fill = AP_domain)) +
+      geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+      geom_jitter(width = 0.2, alpha = 0.3, size = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_fill_manual(values = domain_colors) +
+      labs(x = "", y = "") +
+      theme_pubclean(base_size = 10) +
+      theme(legend.position = "none")
+    
+    return(p1 + p2 + plot_layout(widths = c(2, 1)))
+  })
+  
+  plots <- plots[!sapply(plots, is.null)]
+  if(length(plots) == 0) return(NULL)
+  
+  combined <- wrap_plots(plots, ncol = 1)
+  combined <- combined +
+    plot_annotation(
+      title = paste0("Genes Highest in ", domain_name),
+      theme = theme(plot.title = element_text(size = 14, face = "bold"))
+    )
+  
+  return(combined)
+}
+
+# ===== FUNCTION 3: PLOT A-P GRADIENTS =====
+plot_AP_gradient <- function(genes_decreasing, genes_increasing, count_data, n_each = 3) {
+  
+  gene_col <- if("symbol" %in% names(count_data)) "symbol" else "symbol"
+  
+  # Get examples
+  dec_examples <- genes_decreasing[1:min(n_each, length(genes_decreasing))]
+  inc_examples <- genes_increasing[1:min(n_each, length(genes_increasing))]
+  
+  # Function to create gradient plot
+  make_gradient_plot <- function(gid, gradient_type) {
+    gene_data <- count_data |> 
+      filter(gene_id == gid) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    
+    if(nrow(gene_data) == 0) return(NULL)
+    
+    gene_name <- unique(gene_data[[gene_col]])[1]
+    
+    # Summary by domain
+    domain_summary <- gene_data |> 
+      group_by(AP_domain) |> 
+      summarize(mean_count = mean(count, na.rm = TRUE), .groups = "drop")
+    
+    ggplot(domain_summary, aes(x = AP_domain, y = mean_count, fill = AP_domain)) +
+      geom_col(alpha = 0.8) +
+      geom_point(data = gene_data, aes(y = count), alpha = 0.3, size = 1.5,
+                 position = position_jitter(width = 0.1)) +
+      scale_fill_manual(values = domain_colors) +
+      scale_y_log10(labels = scales::comma) +
+      labs(title = gene_name,
+           subtitle = ifelse(gradient_type == "dec", "PM > MAX > POST", "POST > MAX > PM"),
+           x = "",
+           y = "Expression") +
+      theme_pubclean(base_size = 10) +
+      theme(legend.position = "none",
+            plot.title = element_text(face = "bold"),
+            plot.subtitle = element_text(color = ifelse(gradient_type == "dec", 
+                                                        "darkred", "darkgreen")))
+  }
+  
+  # Create plots
+  plots_dec <- lapply(dec_examples, function(gid) make_gradient_plot(gid, "dec"))
+  plots_inc <- lapply(inc_examples, function(gid) make_gradient_plot(gid, "inc"))
+  
+  # Remove NULLs
+  plots_dec <- plots_dec[!sapply(plots_dec, is.null)]
+  plots_inc <- plots_inc[!sapply(plots_inc, is.null)]
+  
+  # Combine
+  all_plots <- c(plots_dec, plots_inc)
+  if(length(all_plots) == 0) return(NULL)
+  
+  combined <- wrap_plots(all_plots, ncol = 3)
+  combined <- combined +
+    plot_annotation(
+      title = "Anterior-Posterior Expression Gradients",
+      subtitle = "Top: A→P decreasing | Bottom: A→P increasing",
+      theme = theme(
+        plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 12)
+      )
+    )
+  
+  return(combined)
+}
+
+# ===== FUNCTION 4: PLOT DOMAIN-SPECIFIC DYNAMICS =====
+plot_domain_specific_dynamics <- function(gene_ids, domain_name, direction,
+                                          count_data, slope_data, n = 3) {
+  
+  gene_col <- if("symbol" %in% names(count_data)) "symbol" else "symbol"
+  
+  example_genes <- gene_ids[1:min(n, length(gene_ids))]
+  
+  plots <- lapply(example_genes, function(gid) {
+    # Get count data
+    gene_data <- count_data |> 
+      filter(gene_id == gid) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    
+    if(nrow(gene_data) == 0) return(NULL)
+    
+    gene_name <- unique(gene_data[[gene_col]])[1]
+    
+    # Get slope data
+    gene_slopes <- slope_data |> 
+      filter(gene_id == gid) |> 
+      mutate(Domain = factor(Domain, levels = c("PM", "MAX", "POST")))
+    
+    # Trajectory plot
+    p1 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
+      geom_point(alpha = 0.5, size = 2) +
+      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_color_manual(values = domain_colors) +
+      labs(title = gene_name,
+           subtitle = paste0(direction, " in ", domain_name, " only"),
+           x = "Development",
+           y = "Counts") +
+      theme_pubclean(base_size = 10) +
+      theme(legend.position = "none",
+            plot.title = element_text(face = "bold"))
+    
+    # Slope plot
+    if(nrow(gene_slopes) > 0) {
+      p2 <- ggplot(gene_slopes, aes(x = Domain, y = log2FoldChange, fill = Domain)) +
+        geom_col(alpha = 0.8) +
+        geom_errorbar(aes(ymin = log2FoldChange - lfcSE,
+                          ymax = log2FoldChange + lfcSE),
+                      width = 0.3) +
+        geom_hline(yintercept = 0, linetype = "dashed") +
+        geom_text(aes(label = ifelse(padj < 0.001, "***",
+                                     ifelse(padj < 0.01, "**",
+                                            ifelse(padj < 0.05, "*", "ns")))),
+                  vjust = -0.5, size = 4) +
+        scale_fill_manual(values = domain_colors) +
+        labs(y = "Slope", x = "") +
+        theme_pubclean(base_size = 10) +
+        theme(legend.position = "none")
+      
+      return(p1 + p2 + plot_layout(widths = c(2, 1)))
+    } else {
+      return(p1)
+    }
+  })
+  
+  plots <- plots[!sapply(plots, is.null)]
+  if(length(plots) == 0) return(NULL)
+  
+  combined <- wrap_plots(plots, ncol = 1)
+  combined <- combined +
+    plot_annotation(
+      title = paste0("Domain-Specific Dynamics: ", domain_name, " ", direction),
+      theme = theme(plot.title = element_text(size = 14, face = "bold"))
+    )
+  
+  return(combined)
+}
+
+# ===== FUNCTION 5: PLOT DIVERGING PATTERNS =====
+plot_diverging_detailed <- function(genes_faster, genes_opposite, 
+                                    domain_name, count_data, n_each = 2) {
+  
+  gene_col <- if("symbol" %in% names(count_data)) "symbol" else "symbol"
+  
+  faster_examples <- genes_faster[1:min(n_each, length(genes_faster))]
+  opposite_examples <- genes_opposite[1:min(n_each, length(genes_opposite))]
+  
+  # Plot "faster" pattern
+  plots_faster <- lapply(faster_examples, function(gid) {
+    gene_data <- count_data |> 
+      filter(gene_id == gid) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    
+    if(nrow(gene_data) == 0) return(NULL)
+    
+    gene_name <- unique(gene_data[[gene_col]])[1]
+    
+    ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
+      geom_point(alpha = 0.5, size = 2) +
+      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_color_manual(values = domain_colors) +
+      labs(title = gene_name,
+           subtitle = paste0(domain_name, " increases faster"),
+           x = "Development",
+           y = "Counts") +
+      theme_pubclean(base_size = 10) +
+      theme(legend.position = "none",
+            plot.title = element_text(face = "bold"),
+            plot.subtitle = element_text(color = "darkgreen", size = 9))
+  })
+  
+  # Plot "opposite" pattern
+  plots_opposite <- lapply(opposite_examples, function(gid) {
+    gene_data <- count_data |> 
+      filter(gene_id == gid) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    
+    if(nrow(gene_data) == 0) return(NULL)
+    
+    gene_name <- unique(gene_data[[gene_col]])[1]
+    
+    ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
+      geom_point(alpha = 0.5, size = 2) +
+      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_color_manual(values = domain_colors) +
+      labs(title = gene_name,
+           subtitle = paste0(domain_name, " ↑, other ↓"),
+           x = "Development",
+           y = "Counts") +
+      theme_pubclean(base_size = 10) +
+      theme(legend.position = "none",
+            plot.title = element_text(face = "bold"),
+            plot.subtitle = element_text(color = "purple", size = 9))
+  })
+  
+  # Remove NULLs
+  plots_faster <- plots_faster[!sapply(plots_faster, is.null)]
+  plots_opposite <- plots_opposite[!sapply(plots_opposite, is.null)]
+  
+  all_plots <- c(plots_faster, plots_opposite)
+  if(length(all_plots) == 0) return(NULL)
+  
+  if(length(all_plots) <= 2) {
+    combined <- wrap_plots(all_plots, ncol = 1)
+  } else {
+    combined <- wrap_plots(all_plots, ncol = 2)
+  }
+  
+  combined <- combined +
+    plot_annotation(
+      title = paste0("Diverging Patterns: ", domain_name),
+      theme = theme(plot.title = element_text(size = 14, face = "bold"))
+    )
+  
+  return(combined)
+}
+
+# ===== FUNCTION 6: PLOT SIMPLE TRAJECTORIES =====
+plot_simple_trajectories <- function(gene_ids, count_data, title_text, n = 5) {
+  
+  gene_col <- if("symbol" %in% names(count_data)) "symbol" else "symbol"
+  
+  # Sample if needed
+  if(length(gene_ids) > n) {
+    set.seed(123)
+    gene_ids <- sample(gene_ids, n)
+  }
+  
+  plots <- lapply(gene_ids, function(gid) {
+    gene_data <- count_data |> 
+      filter(gene_id == gid) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    
+    if(nrow(gene_data) == 0) return(NULL)
+    
+    gene_name <- unique(gene_data[[gene_col]])[1]
+    
+    ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
+      geom_point(alpha = 0.5, size = 2) +
+      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_color_manual(values = domain_colors) +
+      labs(title = gene_name,
+           x = "Development",
+           y = "Counts") +
+      theme_pubclean(base_size = 10) +
+      theme(legend.position = "bottom",
+            legend.text = element_text(size = 8),
+            plot.title = element_text(face = "bold", size = 11))
+  })
+  
+  plots <- plots[!sapply(plots, is.null)]
+  if(length(plots) == 0) return(NULL)
+  
+  combined <- wrap_plots(plots, ncol = 3)
+  combined <- combined +
+    plot_annotation(
+      title = title_text,
+      theme = theme(plot.title = element_text(size = 14, face = "bold"))
+    )
+  
+  return(combined)
+}
+```
+
+```{r load_data_emase}
+#| message: false
+#| warning: false
+
+# loading the count data
+load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts_v4.RData") # raw_expr_mat, expr_mat_do, expr_mat_nondo 
+expr_mat <- expr_mat_nondo
+contam_samples <- c("B6_12.5_PM_1","B6_13.5_POST_3", "CAST_14.5_MAX_7", "B6_13.5_MAX_3")
+expr_mat <- expr_mat[ ,!colnames(expr_mat) %in% contam_samples]
+do_expr_mat <- expr_mat_do
+remove_samples <- c("DO_13.5_MAX_6", "DO_13.5_MAX_14", "DO_13.5_MAX_14_2",
+                    "DO_12.5_MAX_1" , "DO_12.5_MAX_2" ,"DO_13.5_MAX_97", "DO_13.5_MAX_96") # 96 & 97 are also 12.5 samples
+do_expr_mat <- do_expr_mat[ ,!colnames(do_expr_mat) %in% remove_samples]
+
+expr_mat_all <- cbind( expr_mat[intersect(rownames(expr_mat),rownames(do_expr_mat)),,drop=F],
+                       do_expr_mat[intersect(rownames(expr_mat),rownames(do_expr_mat)),,drop=F])
+rm(expr_mat_do, expr_mat_nondo)
+
+# Get v105 annotations from biomart
+all.genes_v105 <- read_tsv(here("_data","ENSMUSGid_to_symbol_v105.txt"),
+                           col_names = c("gene_id","symbol","gene_biotype","chromosome","start","end"), skip =1) |>  
+  mutate(midpoint = (start+end)/2)
+
+all_genes_palate <- all.genes_v105 %>%
+  filter(gene_id %in% rownames(raw_expr_mat))
+
+all_genes_palate_filtered <- all.genes_v105 %>%
+  filter(gene_id %in% rownames(expr_mat_all))
+
+# sample annotations
+sample_annot <- sample_details %>% 
+  #as_tibble( rownames = "sample") |> 
+  filter( !sample %in% contam_samples & sample %in% colnames(expr_mat)) %>% 
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% 
+  select(sample,sex, AP_domain,Gest_stage, strain,batch, Harvest_date,LB_stage, palate_closure, L_R_palate) %>% 
+  mutate( strain = case_when(strain =="B6J"~"B6",
+                             strain !="B6J"~strain)) |> 
+  mutate( LB_stage_binned = case_when(
+    ( LB_stage < 12.25 )~"exclude",
+    (between(LB_stage, 13.25, 13.5))~"exclude",
+    (between(LB_stage, 12.25,12.75))~"1",
+    (between(LB_stage, 13.5, 14))~"2",
+    (between(LB_stage, 14.25, 14.75))~"3",
+    (between(LB_stage, 15.1, 15.6))~"4"
+  )) |> 
+  mutate( LB_stage_binned = as_factor(LB_stage_binned)) |> 
+  separate( L_R_palate, into = c("temp","Palate_ori" ), sep = "_") |> 
+  select(-temp) |> 
+  mutate( Palate_ori = ifelse( Palate_ori == "L", "Left","Right")) 
+  
+
+sample_annot_all <- sample_details %>% 
+  #as_tibble( rownames = "sample") |> 
+  filter( !sample %in% contam_samples & sample %in% colnames(expr_mat_all)) %>% 
+  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% 
+  select(sample,sex, AP_domain,Gest_stage, strain,batch, Harvest_date,LB_stage, palate_closure,L_R_palate) %>% 
+  mutate( strain = case_when(strain =="B6J"~"B6",
+                             strain !="B6J"~strain)) |> 
+  separate( L_R_palate, into = c("temp","Palate_ori" ), sep = "_") |> 
+  select(-temp) |> 
+  mutate( Palate_ori = ifelse( Palate_ori == "L", "Left","Right")) |> 
+  mutate( LB_stage_binned = case_when(
+    ( LB_stage < 12.25 )~"exclude",
+    (between(LB_stage, 13.25, 13.5))~"exclude",
+    (between(LB_stage, 12.25,12.75))~"1",
+    (between(LB_stage, 13.5, 14))~"2",
+    (between(LB_stage, 14.25, 14.75))~"3",
+    (between(LB_stage, 15.1, 15.6))~"4"
+  )) 
+
+# Genes from Ian:
+pheno_gene_list <- readxl::read_xlsx(here("_data","Supp6_BoneGeneList.xlsx")) |> 
+  select( symbol = gene_name) |> 
+  distinct() |> 
+  mutate(type = "pheno", type_long = "bone phenotype gene list (Sabik et al 2020, Table S6)")
+
+skeletal_gene_table <- readxl::read_xlsx(here("_data","Skeletal_stem_progenitor_markers.xlsx")) |> 
+  dplyr::rename("symbol" = "gene") |> 
+  mutate(type = "MSC", type_long = "MSC/skeletal progenitor markers")
+
+figure_genes <- c(MSC =c("Axin2","Gli1","Meis2","Lepr","Prrx1"),
+           skeletal = c("Sox9","Runx2","Sp7","Nfatc1","Bcl11b","Msx2","Msx1","Egr1","Egr2"),
+           osteoclast = c("Spi1","Tnfsf11","Tnfrsf11","PParg","Fos","Junb","Csf1","Csf1r","Ostf1",
+                          "Acp5","Mmp9","Ctsk","Timp1","Atp6v0d2","Adgre1","Sfrp4","Dcstamp","Ocstamp","Htra1","Tcirg1","Itgb3","Gnptab"),
+           osteoblast = c("Alpl","Ibsp","Phospho1","Vdr","Sparc","Panx3","Enpp1","Bglap","Bglap2","Clecl11a","Sost","Dmp1","Col1a1","Col1a2","Bgn","Dcn","Thbs2")
+           
+           ) |> 
+  as_tibble(rownames = "type" ) |> 
+  rename( symbol = value  ) |> 
+  mutate(type = gsub("[0-9]","",type)) |> 
+  mutate( type_long = case_when(type =="MSC"~"MSC/skeletal progenitor markers",
+                                type =="skeletal"~"Skeletal speciation markers",
+                                type =="osteoclast"~"Osteoclast markers",
+                                type =="osteoblast"~"osteoblast/osteocyte markers"
+                                )) 
+
+morpho_genes <- readxl::read_xlsx(path = here("_data","abnormal craniofacial morphology-MGIBatchReport.xlsx")) |> 
+  select(symbol = Symbol, mgi_id = `MGI Gene/Marker ID`, gene_biotype = `Feature Type`) 
+
+# add gene names to MGI ids for genes
+# checked the overlap
+# length(intersect(mgi_id_annots$symbol, all_genes_palate$symbol)) # 16958/17146
+# most of the missing ones are RPXX-YY genes or Gms
+mgi_id_annots <- read_delim( file = here("_data","MRK_List1.rpt"),
+                             #MGI Marker Accession ID	Chromosome	cM Position	Genome Coordinate Start	Genome Coordinate End	Genome Strand	Marker Symbol	Status	Marker Name	Marker Type	Feature Types (|-delimted)	Marker Synonyms (|-delimited)
+                             col_names = c("mgi_id",
+                                           "chromosome",
+                                           "pos_cM",
+                                           "start",
+                                           "end",
+                                           "strand",
+                                           "symbol",
+                                           "status",
+                                           "marker_name",
+                                           "marker_type",
+                                           "feature_types",
+                                           "marker_synms"), skip = 1) 
+
+# getting the gene list for mammalian phenotypes
+mp_genes <- read_delim( file = here("_data","MGI_PhenoGenoMP.rpt"),
+                        # Allelic Composition	Allele Symbol(s)	Genetic Background	Mammalian Phenotype ID	PubMed ID	MGI Marker Accession ID (comma-delimited)
+                        col_names = c("allelic_comp",
+                                      "allele_symbol",
+                                      "genetic_background",
+                                      "mp_id",
+                                      "pubmed_id",
+                                      "mgi_id")) |> 
+  select(mp_id, mgi_id) |> 
+  distinct() |> 
+  separate_longer_delim( mgi_id, delim = "|") |> 
+  left_join(mgi_id_annots |> 
+              select(mgi_id, symbol)) 
+# add mammalian phenotype definitions
+mp_defs <- read_delim( file = here("_data","VOC_MammalianPhenotype.rpt"),
+                       col_names = c("mp_id","term_name","term_details")) 
+
+
+
+genes <- full_join( figure_genes, skeletal_gene_table ) |> 
+  #full_join( pheno_gene_list) |> 
+  left_join(all_genes_palate)
+# 
+# genes |> 
+#   group_by(symbol) |> 
+#   mutate(n = n()) |> 
+#   filter(n > 1) |> 
+#   arrange(symbol)
+
+tfs <- read_tsv(file = here("_data/search_result_from_tfcheckpoint.txt")) |> 
+  filter( !is.na(Gene_Name)) |> 
+  select( symbol = Gene_symbol) |> 
+  mutate( symbol = tools::toTitleCase(tolower(symbol)) ) |> 
+  distinct() |> 
+  left_join( all_genes_palate)
+
+```
+
+
+  
+# Differential gene expression analysis overview
+
+Briefly, I analyzed the B6 data on its own to identify genes differentially expressed across AP domains, over developmental time and change differently over time across domains. Next, I analyzed the B6 and CAST data together while separating the data by AP domains.
+
+For the individual strain analysis with B6:
+
+I am focusing on the data from only the B6 animals that includes males and females, and contain the three AP domains (PM, MAX and POST) obtained at various developmental stages (LB_stage). I merge the technical replicates due to resequencing of several samples using `collapseReplicates()` function from DESeq2. We expect to have genes that show significant differences between AP domains, over developmental time and genes with different trends over time across the three tissues.
+
+In order to identify differentially expressed genes between AP domains and over time I obtain the main effects for AP_domain and LB_stage while using a nesting for the AP domain since they are obtained from the same animal (~ AP_domain + LB_stage + AP_domain:ind).
+
+For identifying genes with different trends over time across the three AP domains and genes differentially expressed between domains variably over time I use the likelihood ratio test (LRT) to compare the initial simple model to the one that includes an interaction term between AP domain and limb bud stage (~ AP_domain + LB_stage + AP_domain:ind + AP_domain:LB_stage). Once I have this DE gene list, I then use the full model to get the effects of developmental time in all three domains. It doesn’t make biological sense to group these genes similar to the ones showing domain or stage effects without an interaction. Instead I am including the alternative grouping using clustering. I would appreciate any feedback on those and if any look interesting. I can also highlight any genes that looks interesting, I included some examples from the gene lists Ian has shared earlier.
+
+Note that we need to be very careful when interpreting the main effects with a linear model that contains an interaction term, they do not represent the overall effect of the predictor (e.g. LB_stage) since the predictors involved in an interaction do not have a single overall effect anymore! For example the main effect for LB_stage will represent the effect when AP_domain is at the reference level which is the PM domain in our data set.
+
+<!-- # Variance partition of B6 data -->
+
+<!-- Let's do variance partition to see how much variation is coming from each covariate. -->
+
+<!-- ```{r} -->
+<!-- #| label: var_part_prep_b6 -->
+<!-- #| warning: false -->
+<!-- #| message: false -->
+
+<!-- library(variancePartition) -->
+<!-- library(BiocParallel) -->
+
+<!-- param <- MulticoreParam(workers = 36, progressbar=TRUE)  # Use 4 cores -->
+
+<!-- # Convert to appropriate format -->
+<!-- # need normalization -->
+<!-- vsd_b6 <- vst(b6_dds_coll, blind = FALSE) -->
+<!-- expr_matrix_b6 <- assay(vsd_b6) -->
+
+
+<!-- # need to filter out low variance genes before running variance partition because there are 5,609 genes have essentially zero variance in the VST-transformed data.  -->
+<!-- gene_vars <- matrixStats::rowVars(expr_matrix_b6) -->
+<!-- # Filter out low-variance genes -->
+<!-- # Use a reasonable threshold - genes with meaningful biological variation -->
+<!-- keep <- gene_vars > 4e-04  # This results in 5,867 -- closest to the 5,609 number that fails! -->
+<!-- # cat("Removing", sum(!keep), "low-variance genes\n") -->
+<!-- # cat("Keeping", sum(keep), "genes for variance partition\n") -->
+
+<!-- expr_filtered_b6 <- expr_matrix_b6[keep,] -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- #| cache: true -->
+<!-- #| label: var_part_run_b6 -->
+<!-- #| warning: false -->
+<!-- #| message: false -->
+
+<!-- # Fit variance partition -->
+<!-- form_b6 <- ~ (1|sex) + (1|AP_domain) + (1|ind:AP_domain) + LB_stage_from_start -->
+<!-- varPart_b6 <- fitExtractVarPartModel( -->
+<!--   exprObj = log2(expr_filtered_b6 + 1), -->
+<!--   formula = form_b6, -->
+<!--   data = colData(b6_dds_coll), -->
+<!--   BPPARAM=param -->
+<!-- ) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- #| label: var_part_plot_b6 -->
+<!-- #| warning: false -->
+<!-- #| message: false -->
+<!-- #| fig-width: 8 -->
+<!-- #| fig-height: 4 -->
+
+<!-- # Plot variance explained -->
+<!-- plotVarPart(varPart_b6) -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- #| label: var_part_table_b6 -->
+<!-- #| warning: false -->
+<!-- #| message: false -->
+<!-- # # Summary -->
+<!-- print(summary(varPart_b6)) -->
+<!-- ``` -->
+
+# Differential gene expression in palate domains across developmental time in B6 mice
+
+```{r}
+#| label: prep_b6_for_deseq2
+#| warning: false
+#| message: false
+
+# Prep data for DESEQ2
+# subsetting for b6 samples only and adding unique sample ids
+b6_comp_samples <- sample_annot %>%
+  filter(strain %in% c("B6")) %>%
+  separate(sample, sep = "_", into = c("s","e","d","ind","rep"), remove = F) %>%
+  select(-e,-d) %>%
+  mutate( rep = ifelse( is.na(rep),1,rep)) %>%
+  unite( "unique_sampleid" , c(s,ind,AP_domain,Gest_stage),sep ="_", remove = F) # adding an individual column to match the domains to the same animal/embryo and rep column for replicates
+# making the coldata object to feed into deseq2
+b6_coldata <- b6_comp_samples %>%
+  select(sample, sex,ind, unique_sampleid, rep, AP_domain, Gest_stage, strain,LB_stage) %>%
+  filter(!is.na(sex) ) %>%
+  mutate_if(is.character, as.factor) %>%
+  mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
+  column_to_rownames("sample")
+# get the expression matrix to feed into deseq2 using raw seq and rounding to integers
+# note that I am using ALL the genes not the filtered list.
+b6_cts <- round(raw_expr_mat[all_genes_palate$gene_id,rownames(b6_coldata), drop = F])
+
+# let's make the dds object then collapse the technical replicates
+b6_dds <- DESeqDataSetFromMatrix( countData = b6_cts,
+                                      colData = b6_coldata,
+                                      design = ~1)
+# collapse the sequencing replicates
+b6_dds_coll <- collapseReplicates(b6_dds, b6_dds$unique_sampleid)
+# updating the LB-stage to have 0 as the starting point
+# Scale to start at 0
+min_LB_stage <- min(colData(b6_dds_coll)$LB_stage)
+colData(b6_dds_coll)$LB_stage_from_start <- 
+  colData(b6_dds_coll)$LB_stage - min_LB_stage
+
+```
+
+```{r}
+#| label: run_desesq2_b6
+#| warning: false
+#| message: false
+
+
+# Define design matrices
+b6_simple_model <- model.matrix(~ sex + ind:AP_domain + LB_stage_from_start + AP_domain, 
+                                data = colData(b6_dds_coll))
+b6_comp_model <- model.matrix(~ sex + ind:AP_domain + LB_stage_from_start * AP_domain, 
+                               data = colData(b6_dds_coll))
+
+# Run DESeq2 models
+b6_dds_simple <- DESeq(b6_dds_coll, betaPrior = FALSE, full = b6_simple_model)
+b6_dds_interaction <- DESeq(b6_dds_coll, betaPrior = FALSE, full = b6_comp_model)
+
+# Likelihood ratio test to identify genes with significant interaction
+b6_dds_lrt <- DESeq(b6_dds_coll, test = "LRT",
+                    full = b6_comp_model,
+                    reduced = b6_simple_model)
+
+# ===== IDENTIFY GENES WITH SIGNIFICANT INTERACTION =====
+
+genes_with_interaction <- results(b6_dds_lrt) |> 
+  as_tibble(rownames = "gene_id") |> 
+  filter(padj < 0.05) |> 
+  pull(gene_id)
+
+# cat("Genes with significant interaction:", length(genes_with_interaction), "\n")
+
+```
+
+
+```{r}
+#| label: get_DEgenes_b6
+#| warning: false
+#| message: false
+
+# ===== HELPER FUNCTION FOR CONSISTENT FILTERING =====
+
+filter_genes <- function(results_df, min_basemean = 50, max_lfcse = 1.5, 
+                         max_abs_lfc = 10, min_padj = 0.05, min_abs_lfc = 0.5) {
+  results_df %>%
+    filter(
+      baseMean > min_basemean,              # Sufficient expression
+      lfcSE < max_lfcse,                    # Not too uncertain
+      abs(log2FoldChange) < max_abs_lfc,    # Not extreme fold changes
+      abs(log2FoldChange) > min_abs_lfc,    # Meaningful fold change
+      padj < min_padj                       # Significant
+    )
+}
+
+# ===== MAIN EFFECTS (genes WITHOUT interaction) =====
+
+# cat("\n===== ANALYZING MAIN EFFECTS =====\n")
+
+# Domain effects from SIMPLE model
+b6_domain_max_vs_pm <- results(b6_dds_simple, name = "AP_domainMAX") |> 
+  as_tibble(rownames = "gene_id") |> 
+  filter(!gene_id %in% genes_with_interaction) |> 
+  mutate(Comparison = "MAX vs PM") |> 
+  left_join(all_genes_palate, by = "gene_id")
+
+b6_domain_post_vs_pm <- results(b6_dds_simple, name = "AP_domainPOST") |> 
+  as_tibble(rownames = "gene_id") |> 
+  filter(!gene_id %in% genes_with_interaction) |> 
+  mutate(Comparison = "POST vs PM") |> 
+  left_join(all_genes_palate, by = "gene_id")
+
+b6_domain_post_vs_max <- results(b6_dds_simple, 
+                                 contrast = list("AP_domainPOST", "AP_domainMAX")) |> 
+  as_tibble(rownames = "gene_id") |> 
+  filter(!gene_id %in% genes_with_interaction) |> 
+  mutate(Comparison = "POST vs MAX") |> 
+  left_join(all_genes_palate, by = "gene_id")
+
+# Combine domain effects
+b6_domain_main_effects <- bind_rows(
+  b6_domain_max_vs_pm,
+  b6_domain_post_vs_pm,
+  b6_domain_post_vs_max
+)
+
+# Apply filtering
+b6_domain_main_effects_clean <- filter_genes(
+  b6_domain_main_effects,
+  min_basemean = quantile(b6_domain_main_effects$baseMean, 0.1, na.rm = TRUE)
+)
+
+# cat("Domain main effects (filtered):", nrow(b6_domain_main_effects_clean), "\n")
+
+# Stage effects from SIMPLE model
+b6_stage_main_effects <- results(b6_dds_simple, name = "LB_stage_from_start") |> 
+  as_tibble(rownames = "gene_id") |> 
+  filter(!gene_id %in% genes_with_interaction) |> 
+  mutate(Direction = ifelse(log2FoldChange > 0, "Increase", "Decrease")) |> 
+  left_join(all_genes_palate, by = "gene_id")
+
+# Apply filtering
+b6_stage_main_effects_clean <- filter_genes(
+  b6_stage_main_effects,
+  min_basemean = quantile(b6_stage_main_effects$baseMean, 0.1, na.rm = TRUE)
+)
+
+# cat("Stage main effects (filtered):", nrow(b6_stage_main_effects_clean), "\n")
+
+# ===== INTERACTION EFFECTS (genes WITH interaction) =====
+
+# cat("\n===== ANALYZING INTERACTION EFFECTS =====\n")
+
+# 1. INITIAL DOMAIN DIFFERENCES (at earliest stage)
+initial_diff_MAX_vs_PM <- results(b6_dds_interaction, name = "AP_domainMAX") |>
+  as_tibble(rownames = "gene_id") |>
+  filter(gene_id %in% genes_with_interaction) |>
+  mutate(Comparison = "MAX vs PM at earliest stage") |>
+  left_join(all_genes_palate, by = "gene_id")
+
+initial_diff_POST_vs_PM <- results(b6_dds_interaction, name = "AP_domainPOST") |>
+  as_tibble(rownames = "gene_id") |>
+  filter(gene_id %in% genes_with_interaction) |>
+  mutate(Comparison = "POST vs PM at earliest stage") |>
+  left_join(all_genes_palate, by = "gene_id")
+
+initial_diff_POST_vs_MAX <- results(b6_dds_interaction, contrast =  list( c("AP_domainPOST","AP_domainMAX"))) |>
+  as_tibble(rownames = "gene_id") |>
+  filter(gene_id %in% genes_with_interaction) |>
+  mutate(Comparison = "POST vs MAX at earliest stage") |>
+  left_join(all_genes_palate, by = "gene_id")
+
+# Combine initial differences
+b6_initial_differences <- bind_rows(
+  initial_diff_MAX_vs_PM,
+  initial_diff_POST_vs_PM,
+  initial_diff_POST_vs_MAX
+)
+
+# 2. DEVELOPMENTAL SLOPES (rates of change in each domain)
+slope_PM <- results(b6_dds_interaction, name = "LB_stage_from_start") |> 
+  as_tibble(rownames = "gene_id") |> 
+  filter(gene_id %in% genes_with_interaction) |> 
+  mutate(Domain = "PM") |> 
+  left_join(all_genes_palate, by = "gene_id")
+
+slope_MAX <- results(b6_dds_interaction, 
+                     contrast = list(c("LB_stage_from_start", 
+                                      "AP_domainMAX.LB_stage_from_start"))) |> 
+  as_tibble(rownames = "gene_id") |> 
+  filter(gene_id %in% genes_with_interaction) |> 
+  mutate(Domain = "MAX") |> 
+  left_join(all_genes_palate, by = "gene_id")
+
+slope_POST <- results(b6_dds_interaction, 
+                      contrast = list(c("LB_stage_from_start", 
+                                       "AP_domainPOST.LB_stage_from_start"))) |> 
+  as_tibble(rownames = "gene_id") |> 
+  filter(gene_id %in% genes_with_interaction) |> 
+  mutate(Domain = "POST") |> 
+  left_join(all_genes_palate, by = "gene_id")
+
+# Combine all slopes
+b6_domain_slopes <- bind_rows(slope_PM, slope_MAX, slope_POST)
+
+# Apply filtering to slopes
+b6_domain_slopes_clean <- filter_genes(
+  b6_domain_slopes,
+  min_basemean = quantile(b6_domain_slopes$baseMean, 0.1, na.rm = TRUE),
+  max_lfcse = 2
+)
+
+# cat("Significant slopes (filtered):", 
+#     length(unique(b6_domain_slopes_clean$gene_id)), "genes\n")
+
+# 3. SLOPE DIFFERENCES (interaction terms - how different are the slopes?)
+slope_diff_MAX_vs_PM <- results(b6_dds_interaction, 
+                                name = "AP_domainMAX.LB_stage_from_start") |>
+  as_tibble(rownames = "gene_id") |>
+  filter(gene_id %in% genes_with_interaction) |>
+  mutate(Comparison = "MAX vs PM slope difference") |>
+  left_join(all_genes_palate, by = "gene_id")
+
+slope_diff_POST_vs_PM <- results(b6_dds_interaction, 
+                                 name = "AP_domainPOST.LB_stage_from_start") |>
+  as_tibble(rownames = "gene_id") |>
+  filter(gene_id %in% genes_with_interaction) |>
+  mutate(Comparison = "POST vs PM slope difference") |>
+  left_join(all_genes_palate, by = "gene_id")
+
+slope_diff_POST_vs_MAX <- results(b6_dds_interaction, 
+                                 contrast = list(c("AP_domainPOST.LB_stage_from_start","AP_domainMAX.LB_stage_from_start") ) ) |>
+  as_tibble(rownames = "gene_id") |>
+  filter(gene_id %in% genes_with_interaction) |>
+  mutate(Comparison = "POST vs MAX slope difference") |>
+  left_join(all_genes_palate, by = "gene_id")
+
+# Combine slope differences
+b6_slope_differences <- bind_rows(
+  slope_diff_MAX_vs_PM,
+  slope_diff_POST_vs_PM,
+  slope_diff_POST_vs_MAX
+)
+
+# ===== GET NORMALIZED COUNTS FOR PLOTTING =====
+
+b6_gene_counts <- counts(b6_dds_simple, normalized = TRUE) |> 
+  as_tibble(rownames = "gene_id") |>
+  pivot_longer(-gene_id, names_to = "sample", values_to = "count") |> 
+  left_join(
+    colData(b6_dds_simple) |> 
+      as_tibble(rownames = "sample"),
+    by = "sample"
+  ) |>
+  left_join(all_genes_palate, by = "gene_id")
+
+
+```
+
+```{r}
+#| label: run_pattern_detection
+#| warning: false
+#| message: false
+#| eval: true
+
+# source( here("DEgene_pattern_identification_B6.R")) # I ran this to get the files that I am reading in below.
+
+# Load pattern assignments and summaries
+pattern_summary <- read_csv(here("pattern_summary_detailed.csv"))
+gene_assignments <- read_csv(here("gene_pattern_assignments_detailed.csv"))
+domain_dynamics <- read_csv(here("domain_specific_dynamics_detailed.csv"))
+
+```
+
+This report presents a comprehensive analysis of gene expression patterns during palate development across three anatomical domains (PM, MAX, POST) and developmental time. We identified **`r nrow(gene_assignments)` genes** with significant spatiotemporal expression patterns, classified into six major categories:
+
+```{r summary-table}
+
+pattern_summary |> 
+  group_by(Category) |> 
+  summarize(
+    `Total Patterns` = n(),
+    `Total Genes` = sum(N_Genes),
+    .groups = "drop"
+  ) |> 
+  datatable(
+    options = list(pageLength = 10, scrollX = TRUE),
+    rownames = FALSE,
+    caption = "Summary of Gene Pattern Categories"
+  )
+
+```
+
+
+
+:::: {#B6_DESeq2_effects .panel-tabset .nav-pills}
+
+## Domain Main Effects 
+
+Here I am highlighting genes that show differences in expression between A-P domains in B6. In total there are `r length(unique(b6_domain_main_effects_clean$gene_id))` unique genes with a domain effect (i.e. differentially expressed between any two domains) that doesn’t change over developmental time (i.e. maintain parallel developmental trajectories). This means that while one domain might express a gene at higher or lower levels than another, all domains follow the same developmental pattern over time (all increasing, all decreasing, or all stable).
+
+::: {#B6_DESeq2_domain_effects .panel-tabset .nav-pills}
+
+### Overview
+
+```{r domain-main-overview}
+pattern_summary |>
+  filter(Category == "Domain Main Effects") |>
+  arrange(desc(N_Genes)) |>
+  datatable(
+    options = list(pageLength = 20, scrollX = TRUE),
+    rownames = FALSE,
+    caption = "Domain Main Effect Patterns"
+  )
+```
+
+### MAX vs PM
+
+```{r max-vs-pm}
+genes_MAX_higher_than_PM <- gene_assignments |>
+  filter(MAX_higher_PM) |>
+  pull(gene_id)
+
+genes_MAX_lower_than_PM <- gene_assignments |>
+  filter(MAX_lower_PM) |>
+  pull(gene_id)
+
+if(length(genes_MAX_higher_than_PM) > 0 & length(genes_MAX_lower_than_PM) > 0) {
+  plot_domain_direction_comparison(
+    genes_up = genes_MAX_higher_than_PM,
+    genes_down = genes_MAX_lower_than_PM,
+    domain_name = "MAX vs PM",
+    count_data = b6_gene_counts,
+    n_each = 2
+  )
+}
+```
+
+**Pattern:** Genes showing consistent differences between MAX and PM domains across development.
+
+**Biological Interpretation:** These genes define constitutive differences between maxillary and palatine midline regions, potentially representing:
+- **MAX higher than PM** (`r length(genes_MAX_higher_than_PM)` genes): MAX-specific identity or function
+- **MAX lower than PM** (`r length(genes_MAX_lower_than_PM)` genes): PM-enriched programs
+
+### POST vs PM
+
+```{r post-vs-pm}
+genes_POST_higher_than_PM <- gene_assignments |>
+  filter(POST_higher_PM) |>
+  pull(gene_id)
+
+genes_POST_lower_than_PM <- gene_assignments |>
+  filter(POST_lower_PM) |>
+  pull(gene_id)
+
+if(length(genes_POST_higher_than_PM) > 0 & length(genes_POST_lower_than_PM) > 0) {
+  plot_domain_direction_comparison(
+    genes_up = genes_POST_higher_than_PM,
+    genes_down = genes_POST_lower_than_PM,
+    domain_name = "POST vs PM",
+    count_data = b6_gene_counts,
+    n_each = 2
+  )
+}
+```
+
+**Pattern:** Consistent expression differences between posterior and palatine midline domains.
+
+**Biological Interpretation:**
+- **POST higher than PM** (`r length(genes_POST_higher_than_PM)` genes): Posterior-specific programs
+- **POST lower than PM** (`r length(genes_POST_lower_than_PM)` genes): Anterior/midline enriched
+
+### POST vs MAX
+
+```{r post-vs-max}
+genes_POST_higher_than_MAX <- gene_assignments |>
+  filter(POST_higher_MAX) |>
+  pull(gene_id)
+
+genes_POST_lower_than_MAX <- gene_assignments |>
+  filter(POST_lower_MAX) |>
+  pull(gene_id)
+
+if(length(genes_POST_higher_than_MAX) > 0 & length(genes_POST_lower_than_MAX) > 0) {
+  plot_domain_direction_comparison(
+    genes_up = genes_POST_higher_than_MAX,
+    genes_down = genes_POST_lower_than_MAX,
+    domain_name = "POST vs MAX",
+    count_data = b6_gene_counts,
+    n_each = 2
+  )
+}
+```
+
+**Pattern:** Expression differences between posterior and maxillary domains.
+
+### Highest in Each Domain
+
+#### MAX Highest
+
+```{r max-highest}
+genes_MAX_highest <- gene_assignments |>
+  filter(Highest_MAX) |>
+  pull(gene_id)
+
+if(length(genes_MAX_highest) > 0) {
+  n_show <- ifelse(length(genes_MAX_highest) < 15, length(genes_MAX_highest), 3)
+  plot_domain_hierarchy(
+    genes_highest = genes_MAX_highest,
+    domain_name = "MAX",
+    count_data = b6_gene_counts,
+    n = n_show
+  )
+}
+```
+
+**Pattern:** `r length(genes_MAX_highest)` genes showing highest expression in MAX compared to both PM and POST.
+
+**Biological Interpretation:** Core maxillary identity genes that distinguish lateral palate from both midline and posterior regions.
+
+#### POST Highest
+
+```{r post-highest}
+genes_POST_highest <- gene_assignments |>
+  filter(Highest_POST) |>
+  pull(gene_id)
+
+if(length(genes_POST_highest) > 0) {
+  n_show <- ifelse(length(genes_POST_highest) < 15, length(genes_POST_highest), 3)
+  plot_domain_hierarchy(
+    genes_highest = genes_POST_highest,
+    domain_name = "POST",
+    count_data = b6_gene_counts,
+    n = n_show
+  )
+}
+```
+
+**Pattern:** `r length(genes_POST_highest)` genes with peak expression in posterior domain.
+
+**Biological Interpretation:** Posterior identity genes, potentially involved in soft palate specification.
+
+#### PM Highest
+
+```{r pm-highest}
+genes_PM_highest <- gene_assignments |>
+  filter(Highest_PM) |>
+  pull(gene_id)
+
+if(length(genes_PM_highest) > 0) {
+  n_show <- ifelse(length(genes_PM_highest) < 15, length(genes_PM_highest), 3)
+  plot_domain_hierarchy(
+    genes_highest = genes_PM_highest,
+    domain_name = "PM",
+    count_data = b6_gene_counts,
+    n = n_show
+  )
+}
+```
+
+**Pattern:** `r length(genes_PM_highest)` genes with highest expression at the palatine midline.
+
+**Biological Interpretation:** Midline-specific genes, potentially involved in fusion processes.
+
+### A-P Gradients
+
+```{r ap-gradients}
+genes_AP_decreasing <- gene_assignments |>
+  filter(AP_decreasing) |>
+  pull(gene_id)
+
+genes_AP_increasing <- gene_assignments |>
+  filter(AP_increasing) |>
+  pull(gene_id)
+
+if(length(genes_AP_decreasing) > 0 | length(genes_AP_increasing) > 0) {
+  n_each <- 3
+  if(length(genes_AP_decreasing) < 15) n_each <- min(n_each, length(genes_AP_decreasing))
+  if(length(genes_AP_increasing) < 15) n_each <- min(n_each, length(genes_AP_increasing))
+  
+  plot_AP_gradient(
+    genes_decreasing = genes_AP_decreasing,
+    genes_increasing = genes_AP_increasing,
+    count_data = b6_gene_counts,
+    n_each = n_each
+  )
+}
+```
+
+**Pattern:** Monotonic gradients along the anterior-posterior axis.
+
+**Biological Interpretation:**
+- **A→P decreasing** (PM > MAX > POST): `r length(genes_AP_decreasing)` genes. Classic anterior specification or posterior repression.
+- **A→P increasing** (POST > MAX > PM): `r length(genes_AP_increasing)` genes. Posterior specification or anterior repression.
+
+
+:::
+
+
+## Stage Main Effects (Common Trajectories) 
+
+**These genes show developmental changes that are consistent across all three domains.** All domains increase or decrease together, representing shared developmental programs.
+
+::: {#B6_DESeq2_stage_effects .panel-tabset .nav-pills}
+
+### Overview
+
+```{r stage-main-overview}
+pattern_summary |>
+  filter(Category == "Stage Main Effects") |>
+  arrange(desc(N_Genes)) |>
+  datatable(
+    options = list(pageLength = 10, scrollX = TRUE, dom = 't'),
+    rownames = FALSE,
+    caption = "Stage Main Effect Patterns"
+  )
+```
+
+### Increasing with Development
+
+```{r dev-increasing}
+genes_increasing <- gene_assignments |>
+  filter(Dev_increasing) |>
+  pull(gene_id)
+
+if(length(genes_increasing) > 0) {
+  n_show <- ifelse(length(genes_increasing) < 15, length(genes_increasing), 5)
+  plot_simple_trajectories(
+    gene_ids = genes_increasing,
+    count_data = b6_gene_counts,
+    title_text = paste0("Increasing with Development (n=", length(genes_increasing), ")"),
+    n = n_show
+  )
+}
+```
+
+**Pattern:** `r length(genes_increasing)` genes increasing across all domains as development progresses.
+
+**Biological Interpretation:** Core developmental programs intensifying during palatogenesis, such as cell proliferation, differentiation markers, or ECM production.
+
+### Decreasing with Development
+
+```{r dev-decreasing}
+genes_decreasing <- gene_assignments |>
+  filter(Dev_decreasing) |>
+  pull(gene_id)
+
+if(length(genes_decreasing) > 0) {
+  n_show <- ifelse(length(genes_decreasing) < 15, length(genes_decreasing), 5)
+  plot_simple_trajectories(
+    gene_ids = genes_decreasing,
+    count_data = b6_gene_counts,
+    title_text = paste0("Decreasing with Development (n=", length(genes_decreasing), ")"),
+    n = n_show
+  )
+}
+```
+
+**Pattern:** `r length(genes_decreasing)` genes decreasing across all domains.
+
+**Biological Interpretation:** Early patterning factors, progenitor markers, or genes involved in completed morphogenetic events.
+
+:::
+
+
+## Diverging Trajectories (Interaction Effects) 
+
+**These genes show different developmental trajectories between domains** - true domain × stage interactions where domains respond differently to developmental cues.
+
+::: {#B6_DESeq2_diverging_traj .panel-tabset .nav-pills}
+
+### Overview
+
+```{r diverging-overview}
+pattern_summary |>
+  filter(Category == "Diverging") |>
+  arrange(desc(N_Genes)) |>
+  datatable(
+    options = list(pageLength = 10, scrollX = TRUE),
+    rownames = FALSE,
+    caption = "Diverging Trajectory Patterns"
+  )
+```
+
+### MAX Diverging from PM
+
+```{r max-div-pm}
+genes_MAX_div <- gene_assignments |>
+  filter(MAX_div_PM) |>
+  pull(gene_id)
+
+# Get faster vs opposite
+genes_MAX_faster <- b6_domain_slopes_clean |>
+  filter(gene_id %in% genes_MAX_div, Domain == "MAX", log2FoldChange > 0.5, padj < 0.05) |>
+  pull(gene_id)
+
+genes_MAX_opposite <- b6_domain_slopes_clean |>
+  filter(gene_id %in% genes_MAX_div) |>
+  select(gene_id, Domain, log2FoldChange) |>
+  pivot_wider(names_from = Domain, values_from = log2FoldChange) |>
+  filter(!is.na(MAX), !is.na(PM), MAX > 0, PM < 0) |>
+  pull(gene_id)
+
+if(length(genes_MAX_faster) > 0 | length(genes_MAX_opposite) > 0) {
+  n_each <- 2
+  if(length(genes_MAX_faster) < 15) n_each <- min(n_each, length(genes_MAX_faster))
+  if(length(genes_MAX_opposite) < 15) n_each <- min(n_each, length(genes_MAX_opposite))
+  
+  plot_diverging_detailed(
+    genes_faster = genes_MAX_faster,
+    genes_opposite = genes_MAX_opposite,
+    domain_name = "MAX vs PM",
+    count_data = b6_gene_counts,
+    n_each = n_each
+  )
+}
+```
+
+**Pattern:** MAX and PM follow different developmental trajectories.
+
+**Biological Interpretation:**
+- **MAX increases faster**: `r length(genes_MAX_faster)` genes becoming progressively enriched in MAX
+- **MAX up, PM down**: `r length(genes_MAX_opposite)` genes with opposite responses
+
+### POST Diverging from PM
+
+```{r post-div-pm}
+genes_POST_div <- gene_assignments |>
+  filter(POST_div_PM) |>
+  pull(gene_id)
+
+genes_POST_faster <- b6_domain_slopes_clean |>
+  filter(gene_id %in% genes_POST_div, Domain == "POST", log2FoldChange > 0.5, padj < 0.05) |>
+  pull(gene_id)
+
+genes_POST_opposite <- b6_domain_slopes_clean |>
+  filter(gene_id %in% genes_POST_div) |>
+  select(gene_id, Domain, log2FoldChange) |>
+  pivot_wider(names_from = Domain, values_from = log2FoldChange) |>
+  filter(!is.na(POST), !is.na(PM), POST > 0, PM < 0) |>
+  pull(gene_id)
+
+if(length(genes_POST_faster) > 0 | length(genes_POST_opposite) > 0) {
+  n_each <- 2
+  if(length(genes_POST_faster) < 15) n_each <- min(n_each, length(genes_POST_faster))
+  if(length(genes_POST_opposite) < 15) n_each <- min(n_each, length(genes_POST_opposite))
+  
+  plot_diverging_detailed(
+    genes_faster = genes_POST_faster,
+    genes_opposite = genes_POST_opposite,
+    domain_name = "POST vs PM",
+    count_data = b6_gene_counts,
+    n_each = n_each
+  )
+}
+```
+
+**Pattern:** POST and PM show divergent trajectories.
+
+### POST Diverging from MAX
+
+```{r post-div-max}
+genes_POST_div_MAX <- gene_assignments |>
+  filter(POST_div_MAX) |>
+  pull(gene_id)
+
+genes_POST_faster_MAX <- b6_domain_slopes_clean |>
+  filter(gene_id %in% genes_POST_div_MAX, Domain == "POST", log2FoldChange > 0.5, padj < 0.05) |>
+  pull(gene_id)
+
+genes_POST_opposite_MAX <- b6_domain_slopes_clean |>
+  filter(gene_id %in% genes_POST_div_MAX) |>
+  select(gene_id, Domain, log2FoldChange) |>
+  pivot_wider(names_from = Domain, values_from = log2FoldChange) |>
+  filter(!is.na(POST), !is.na(MAX), POST > 0, MAX < 0) |>
+  pull(gene_id)
+
+if(length(genes_POST_faster_MAX) > 0 | length(genes_POST_opposite_MAX) > 0) {
+  n_each <- 2
+  if(length(genes_POST_faster_MAX) < 15) n_each <- min(n_each, length(genes_POST_faster_MAX))
+  if(length(genes_POST_opposite_MAX) < 15) n_each <- min(n_each, length(genes_POST_opposite_MAX))
+  
+  plot_diverging_detailed(
+    genes_faster = genes_POST_faster_MAX,
+    genes_opposite = genes_POST_opposite_MAX,
+    domain_name = "POST vs MAX",
+    count_data = b6_gene_counts,
+    n_each = n_each
+  )
+}
+```
+
+**Pattern:** POST and MAX show divergent developmental responses.
+
+:::
+
+## Converging Trajectories (Interaction Effects)
+
+**These genes show domains becoming more similar over time**, with initially different expression levels that converge as development progresses.
+
+::: {#B6_DESeq2_conv_traj .panel-tabset .nav-pills}
+
+### Overview
+
+```{r converging-overview}
+pattern_summary |>
+  filter(Category == "Converging") |>
+  arrange(desc(N_Genes)) |>
+  datatable(
+    options = list(pageLength = 10, scrollX = TRUE),
+    rownames = FALSE,
+    caption = "Converging Trajectory Patterns"
+  )
+```
+
+### MAX Converging to PM
+
+```{r max-conv-pm}
+genes_MAX_conv <- gene_assignments |>
+  filter(MAX_conv_PM) |>
+  pull(gene_id)
+
+if(length(genes_MAX_conv) > 0) {
+  n_show <- ifelse(length(genes_MAX_conv) < 15, length(genes_MAX_conv), 5)
+  plot_simple_trajectories(
+    gene_ids = genes_MAX_conv,
+    count_data = b6_gene_counts,
+    title_text = paste0("MAX Converging to PM (n=", length(genes_MAX_conv), ")"),
+    n = n_show
+  )
+}
+```
+
+**Pattern:** `r length(genes_MAX_conv)` genes where MAX and PM become more similar over time.
+
+**Biological Interpretation:** Equalization of expression suggesting tissue integration or coordinated maturation.
+
+### POST Converging to PM
+
+```{r post-conv-pm}
+genes_POST_conv <- gene_assignments |>
+  filter(POST_conv_PM) |>
+  pull(gene_id)
+
+if(length(genes_POST_conv) > 0) {
+  n_show <- ifelse(length(genes_POST_conv) < 15, length(genes_POST_conv), 5)
+  plot_simple_trajectories(
+    gene_ids = genes_POST_conv,
+    count_data = b6_gene_counts,
+    title_text = paste0("POST Converging to PM (n=", length(genes_POST_conv), ")"),
+    n = n_show
+  )
+}
+```
+
+**Pattern:** `r length(genes_POST_conv)` genes converging between POST and PM.
+
+### POST Converging to MAX
+
+```{r post-conv-max}
+genes_POST_conv_MAX <- gene_assignments |>
+  filter(POST_conv_MAX) |>
+  pull(gene_id)
+
+if(length(genes_POST_conv_MAX) > 0) {
+  n_show <- ifelse(length(genes_POST_conv_MAX) < 15, length(genes_POST_conv_MAX), 5)
+  plot_simple_trajectories(
+    gene_ids = genes_POST_conv_MAX,
+    count_data = b6_gene_counts,
+    title_text = paste0("POST Converging to MAX (n=", length(genes_POST_conv_MAX), ")"),
+    n = n_show
+  )
+}
+```
+
+**Pattern:** `r length(genes_POST_conv_MAX)` genes converging between POST and MAX.
+
+:::
+
+## Domain-Specific Dynamics 
+
+**These genes show significant developmental changes in only one or two domains** while remaining stable in others.
+
+::: {#B6_DESeq2_domain_dyn .panel-tabset .nav-pills}
+
+### Overview
+
+```{r domain-specific-overview}
+pattern_summary |>
+  filter(Category == "Domain-Specific") |>
+  arrange(desc(N_Genes)) |>
+  datatable(
+    options = list(pageLength = 15, scrollX = TRUE),
+    rownames = FALSE,
+    caption = "Domain-Specific Dynamic Patterns"
+  )
+```
+
+### PM Only
+
+```{r pm-only}
+genes_PM_only_up <- gene_assignments |>
+  filter(PM_only_up) |>
+  pull(gene_id)
+
+genes_PM_only_down <- domain_dynamics |>
+  filter(PM_dynamic, !MAX_dynamic, !POST_dynamic, PM_slope < -0.5) |>
+  pull(gene_id)
+
+if(length(genes_PM_only_up) > 0) {
+  n_show <- ifelse(length(genes_PM_only_up) < 15, length(genes_PM_only_up), 3)
+  plot_domain_specific_dynamics(
+    gene_ids = genes_PM_only_up,
+    domain_name = "PM",
+    direction = "Increasing",
+    count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes_clean,
+    n = n_show
+  )
+}
+```
+
+**Pattern:** Developmental changes only in PM domain.
+
+**Biological Interpretation:** PM-specific processes like midline fusion. Found `r length(genes_PM_only_up)` increasing and `r length(genes_PM_only_down)` decreasing.
+
+### MAX Only
+
+```{r max-only}
+genes_MAX_only_up <- gene_assignments |>
+  filter(MAX_only_up) |>
+  pull(gene_id)
+
+genes_MAX_only_down <- domain_dynamics |>
+  filter(!PM_dynamic, MAX_dynamic, !POST_dynamic, MAX_slope < -0.5) |>
+  pull(gene_id)
+
+if(length(genes_MAX_only_up) > 0) {
+  n_show <- ifelse(length(genes_MAX_only_up) < 15, length(genes_MAX_only_up), 3)
+  plot_domain_specific_dynamics(
+    gene_ids = genes_MAX_only_up,
+    domain_name = "MAX",
+    direction = "Increasing",
+    count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes_clean,
+    n = n_show
+  )
+}
+```
+
+**Pattern:** Developmental changes only in MAX domain.
+
+**Biological Interpretation:** MAX-specific processes like lateral shelf morphogenesis. Found `r length(genes_MAX_only_up)` increasing and `r length(genes_MAX_only_down)` decreasing.
+
+### POST Only
+
+```{r post-only}
+genes_POST_only_up <- gene_assignments |>
+  filter(POST_only_up) |>
+  pull(gene_id)
+
+genes_POST_only_down <- domain_dynamics |>
+  filter(!PM_dynamic, !MAX_dynamic, POST_dynamic, POST_slope < -0.5) |>
+  pull(gene_id)
+
+if(length(genes_POST_only_up) > 0) {
+  n_show <- ifelse(length(genes_POST_only_up) < 15, length(genes_POST_only_up), 3)
+  plot_domain_specific_dynamics(
+    gene_ids = genes_POST_only_up,
+    domain_name = "POST",
+    direction = "Increasing",
+    count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes_clean,
+    n = n_show
+  )
+}
+```
+
+**Pattern:** Developmental changes only in POST domain.
+
+**Biological Interpretation:** Posterior-specific programs like soft palate differentiation. Found `r length(genes_POST_only_up)` increasing and `r length(genes_POST_only_down)` decreasing.
+
+:::
+
+## Complex Patterns
+
+**Genes showing particularly complex spatiotemporal dynamics** including opposite trajectories or three-way divergence.
+
+::: {#B6_DESeq2_comp_pat .panel-tabset .nav-pills}
+
+### Overview
+
+```{r complex-overview}
+pattern_summary |>
+  filter(Category == "Complex") |>
+  arrange(desc(N_Genes)) |>
+  datatable(
+    options = list(pageLength = 10, scrollX = TRUE, dom = 't'),
+    rownames = FALSE,
+    caption = "Complex Pattern Types"
+  )
+```
+
+### Opposite Slopes
+
+```{r opposite-slopes}
+genes_opposite <- gene_assignments |>
+  filter(Opposite_slopes) |>
+  pull(gene_id)
+
+if(length(genes_opposite) > 0) {
+  n_show <- ifelse(length(genes_opposite) < 15, length(genes_opposite), 5)
+  plot_simple_trajectories(
+    gene_ids = genes_opposite,
+    count_data = b6_gene_counts,
+    title_text = paste0("Genes with Opposite Slopes (n=", length(genes_opposite), ")"),
+    n = n_show
+  )
+}
+```
+
+**Pattern:** `r length(genes_opposite)` genes where at least one domain increases while another decreases.
+
+**Biological Interpretation:** Fundamentally different developmental programs between domains, potentially key regulators of domain identity.
+
+### Three-Way Divergent
+
+```{r three-way}
+genes_three_way <- gene_assignments |>
+  filter(Three_way) |>
+  pull(gene_id)
+
+if(length(genes_three_way) > 0) {
+  n_show <- ifelse(length(genes_three_way) < 15, length(genes_three_way), 5)
+  plot_simple_trajectories(
+    gene_ids = genes_three_way,
+    count_data = b6_gene_counts,
+    title_text = paste0("Three-Way Divergent Genes (n=", length(genes_three_way), ")"),
+    n = n_show
+  )
+}
+```
+
+**Pattern:** `r length(genes_three_way)` genes where all three domains show different developmental slopes.
+
+**Biological Interpretation:** Maximum spatiotemporal complexity, likely central regulators of domain-specific identity and function.
+
+:::
+
+## Pattern Overlap Analysis
+
+::: {#B6_DESeq2_pattern_overlap .panel-tabset .nav-pills}
+
+### Multi-Pattern Genes
+
+```{r pattern-overlap}
+multi_pattern_genes <- gene_assignments |>
+  filter(n_patterns > 1) |>
+  arrange(desc(n_patterns))
+
+multi_pattern_genes |>
+  select(symbol, n_patterns) |>
+  group_by(n_patterns) |>
+  summarize(n_genes = n(), .groups = "drop") |>
+  datatable(
+    options = list(pageLength = 10, dom = 't'),
+    rownames = FALSE,
+    caption = "Distribution of Pattern Memberships per Gene"
+  )
+```
+
+### Top Multi-Pattern Genes
+
+```{r top-multi-pattern}
+multi_pattern_genes |>
+  select(symbol, n_patterns) |>
+  head(20) |>
+  datatable(
+    options = list(pageLength = 20, scrollX = TRUE, dom = 't'),
+    rownames = FALSE,
+    caption = "Top 20 Genes by Pattern Membership"
+  )
+```
+
+:::
+
+## Comprehensive Tables
+
+::: {#B6_DESeq2_tables .panel-tabset .nav-pills}
+
+### All Patterns Summary
+
+```{r all-patterns-table}
+pattern_summary |>
+  datatable(
+    options = list(
+      pageLength = 25,
+      scrollX = TRUE,
+      order = list(list(0, 'asc'), list(2, 'desc'))
+    ),
+    rownames = FALSE,
+    filter = 'top',
+    caption = "Complete Pattern Summary - All Categories"
+  )
+```
+
+### Gene-Level Pattern Assignments
+
+```{r gene-assignments-table}
+gene_assignments |>
+  select(gene_id, symbol, n_patterns, everything()) |>
+  datatable(
+    options = list(
+      pageLength = 25,
+      scrollX = TRUE,
+      columnDefs = list(
+        list(visible = FALSE, targets = 0)
+      )
+    ),
+    rownames = FALSE,
+    filter = 'top',
+    caption = "Gene-Level Pattern Assignments"
+  )
+```
+
+:::
+
+## Conclusions
+
+### Key Findings
+
+1. **Domain Main Effects**: Identified spatial differences with parallel developmental trajectories across `r sum(pattern_summary$Category == "Domain Main Effects")` pattern types
+
+2. **Developmental Dynamics**: Found `r sum(gene_assignments$Dev_increasing)` genes increasing and `r sum(gene_assignments$Dev_decreasing)` genes decreasing uniformly across all domains
+
+3. **Diverging Trajectories**: Detected domain-specific developmental divergence in `r sum(pattern_summary$Category == "Diverging" & pattern_summary$N_Genes > 0)` pattern types
+
+4. **Domain-Specific Programs**: 
+   - PM only: `r sum(gene_assignments$PM_only)` genes
+   - MAX only: `r sum(gene_assignments$MAX_only)` genes  
+   - POST only: `r sum(gene_assignments$POST_only)` genes
+
+5. **Complex Patterns**: Found `r sum(gene_assignments$Opposite_slopes)` genes with opposite slopes and `r sum(gene_assignments$Three_way)` with three-way divergent trajectories
+
+### Biological Implications
+
+- **Spatial Organization**: Strong A-P and M-L organization of gene expression programs
+- **Temporal Dynamics**: Both shared and domain-specific developmental trajectories
+- **Regulatory Complexity**: Extensive domain-specific and interactive regulation
+- **Convergent Evolution**: Multiple genes showing convergent trajectories suggesting coordinated maturation
+
+
+::::
+
