@@ -1,5 +1,5 @@
 ---
-title: "Investigating strain and developmental stage effects - Part 1"
+title: "Investigating A-P domain and developmental stage effects in B6"
 author: "Selcan Aydin"
 date: "`r Sys.Date()`"
 format: 
