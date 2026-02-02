@@ -6,14 +6,6 @@ format:
   html:
       embed-resources: true
       standalone: true
-include-in-header:
-  - text: |
-      <style>
-      .panel-tabset > .nav-tabs,
-      .panel-tabset > .tab-content {
-        border: none;
-      }
-      </style>
 code-fold: true
 toc: true
 toc-depth: 5
@@ -26,7 +18,8 @@ comments:
     theme: clean
 ---
 
-```{r setup}
+```{r}
+#| label: setup
 #| message: false
 #| warning: false
 
@@ -37,1639 +30,1647 @@ knitr::opts_chunk$set(
   fig.width = 12,
   fig.height = 8
 )
-# load packages
+
 suppressPackageStartupMessages(library(tidyverse))
-
 library(pheatmap)
-library(plotly)
-library(GGally)
 library(ggpubr)
-library(ggplot2)
-library(corrplot)
-library(simplifyEnrichment)
 library(patchwork)
-
 library(DESeq2)
-library(DEGreport)
 library(gprofiler2)
 set_base_url("https://biit.cs.ut.ee/gprofiler_archive3/e108_eg55_p17/")
-library(BioNERO)
-set.seed(123) # for reproducibility
-# library(WGCNA)
-
 library(DT)
-
 library(here)
 
-select <- dplyr::select # I am adding this explicitly
-rename <- dplyr::rename # I am adding this explicitly
-filter <- dplyr::filter # I am adding this explicitly
-summarize <- dplyr::summarize # I am adding this explicitly
+set.seed(123)
+select <- dplyr::select 
+rename <- dplyr::rename 
+filter <- dplyr::filter 
+summarize <- dplyr::summarize 
+count <- dplyr::count
 
-# functions
+domain_colors <- c(PM = rgb(252,206,93, maxColorValue = 255), 
+                   MAX = rgb(163,82,157, maxColorValue = 255), 
+                   POST = rgb(158,156,201, maxColorValue = 255))
+
+strain_colors <- c(B6 = "#555555", CAST = "#009E73")
+
+
+# helper-functions
 create_dt <- function(x){
-  DT::datatable(x,
-                extensions = 'Buttons',
-                rownames = FALSE, 
-                filter="top",
-                options = list(dom = 'Blfrtip',
-                               buttons = c('copy', 'csv', 'excel'),
-                               pageLength = 5, 
-                               scrollX= TRUE
-                               ))
-  
-}
-
-# reading in the sample details
-sample_details <- read_csv("/projects/munger-lab/projects/palate-project-murray-munger/samplesheet.csv") 
-
-# domain colors
-domain_colors <- c(PM=rgb(252,206,93, maxColorValue = 255), 
-                   MAX=rgb(163,82,157, maxColorValue = 255), 
-                   POST=rgb(158,156,201, maxColorValue = 255)
-                   )
-
-# strain colors
-strain_colors <- c( B6 = "#555555", 
-                    CAST = "#009E73",
-                    DO = rgb(163,82,157, maxColorValue = 255))
-
-
-
-```
-
-```{r plotting-functions}
-# ===== FUNCTION 1: COMPARE UP VS DOWN IN SAME DOMAIN =====
-plot_domain_direction_comparison <- function(genes_up, genes_down, 
-                                             domain_name, count_data,
-                                             n_each = 2) {
-  
-  gene_col <- if("symbol" %in% names(count_data)) "symbol" else "symbol"
-  
-  # Get examples
-  up_examples <- genes_up[1:min(n_each, length(genes_up))]
-  down_examples <- genes_down[1:min(n_each, length(genes_down))]
-  
-  # Create plots for UP genes
-  plots_up <- lapply(up_examples, function(gid) {
-    gene_data <- count_data |> 
-      filter(gene_id == gid) |> 
-      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
-    
-    if(nrow(gene_data) == 0) return(NULL)
-    
-    gene_name <- unique(gene_data[[gene_col]])[1]
-    
-    ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
-      geom_point(alpha = 0.5, size = 2) +
-      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
-      scale_y_log10(labels = scales::comma) +
-      scale_color_manual(values = domain_colors) +
-      labs(title = gene_name,
-           subtitle = paste0("↑ in ", domain_name),
-           x = "Development stage",
-           y = "Counts") +
-      theme_pubclean(base_size = 10) +
-      theme(legend.position = "none",
-            plot.title = element_text(face = "bold", size = 11),
-            plot.subtitle = element_text(color = "darkgreen"))
-  })
-  
-  # Create plots for DOWN genes
-  plots_down <- lapply(down_examples, function(gid) {
-    gene_data <- count_data |> 
-      filter(gene_id == gid) |> 
-      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
-    
-    if(nrow(gene_data) == 0) return(NULL)
-    
-    gene_name <- unique(gene_data[[gene_col]])[1]
-    
-    ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
-      geom_point(alpha = 0.5, size = 2) +
-      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
-      scale_y_log10(labels = scales::comma) +
-      scale_color_manual(values = domain_colors) +
-      labs(title = gene_name,
-           subtitle = paste0("↓ in ", domain_name),
-           x = "Development stage",
-           y = "Counts") +
-      theme_pubclean(base_size = 10) +
-      theme(legend.position = "none",
-            plot.title = element_text(face = "bold", size = 11),
-            plot.subtitle = element_text(color = "darkred"))
-  })
-  
-  # Remove NULLs
-  plots_up <- plots_up[!sapply(plots_up, is.null)]
-  plots_down <- plots_down[!sapply(plots_down, is.null)]
-  
-  # Combine
-  all_plots <- c(plots_up, plots_down)
-  if(length(all_plots) == 0) return(NULL)
-  
-  if(length(all_plots) == 2) {
-    combined <- all_plots[[1]] / all_plots[[2]]
-  } else if(length(all_plots) == 4) {
-    combined <- (all_plots[[1]] | all_plots[[2]]) / (all_plots[[3]] | all_plots[[4]])
-  } else {
-    combined <- wrap_plots(all_plots, ncol = 2)
+  format_num <- function(val) {
+    case_when(
+      is.na(val) ~ NA_real_,
+      abs(val) < 0.01 ~ signif(val, 2),
+      TRUE ~ round(val, 2)
+    )
   }
-  
-  combined <- combined +
-    plot_annotation(
-      title = paste0(domain_name, ": Higher (↑) vs Lower (↓)"),
-      theme = theme(plot.title = element_text(size = 14, face = "bold"))
-    )
-  
-  return(combined)
+  x |> 
+    mutate(across(where(is.numeric), format_num)) |>
+    DT::datatable(
+      extensions = 'Buttons',
+      rownames = FALSE, 
+      filter = "top",
+      options = list(dom = 'Blfrtip',
+                     buttons = c('copy', 'csv', 'excel'),
+                     pageLength = 10, 
+                     scrollX = TRUE))
 }
 
-# ===== FUNCTION 2: PLOT DOMAIN HIERARCHY =====
-plot_domain_hierarchy <- function(genes_highest, domain_name, count_data, n = 3) {
-  
-  gene_col <- if("symbol" %in% names(count_data)) "symbol" else "symbol"
-  
-  example_genes <- genes_highest[1:min(n, length(genes_highest))]
-  
-  plots <- lapply(example_genes, function(gid) {
-    gene_data <- count_data |> 
-      filter(gene_id == gid) |> 
-      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
-    
-    if(nrow(gene_data) == 0) return(NULL)
-    
-    gene_name <- unique(gene_data[[gene_col]])[1]
-    
-    # Create both trajectory and boxplot
-    p1 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
-      geom_point(alpha = 0.5, size = 2) +
-      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
-      scale_y_log10(labels = scales::comma) +
-      scale_color_manual(values = domain_colors) +
-      labs(title = gene_name,
-           subtitle = paste0("Highest in ", domain_name),
-           x = "Development",
-           y = "Counts") +
-      theme_pubclean(base_size = 10) +
-      theme(legend.position = "bottom",
-            legend.text = element_text(size = 8),
-            plot.title = element_text(face = "bold"))
-    
-    p2 <- ggplot(gene_data, aes(x = AP_domain, y = count, fill = AP_domain)) +
-      geom_boxplot(alpha = 0.7, outlier.shape = NA) +
-      geom_jitter(width = 0.2, alpha = 0.3, size = 1) +
-      scale_y_log10(labels = scales::comma) +
-      scale_fill_manual(values = domain_colors) +
-      labs(x = "", y = "") +
-      theme_pubclean(base_size = 10) +
-      theme(legend.position = "none")
-    
-    return(p1 + p2 + plot_layout(widths = c(2, 1)))
-  })
-  
-  plots <- plots[!sapply(plots, is.null)]
-  if(length(plots) == 0) return(NULL)
-  
-  combined <- wrap_plots(plots, ncol = 1)
-  combined <- combined +
-    plot_annotation(
-      title = paste0("Genes Highest in ", domain_name),
-      theme = theme(plot.title = element_text(size = 14, face = "bold"))
-    )
-  
-  return(combined)
+get_normalized_counts <- function(dds, genes) {
+  vsd <- vst(dds, blind = FALSE)
+  assay(vsd)[genes, , drop = FALSE] |>
+    as.data.frame() |>
+    rownames_to_column("gene_id") |>
+    pivot_longer(-gene_id, names_to = "sample", values_to = "count") |>
+    left_join(colData(dds) |> as.data.frame() |> rownames_to_column("sample"), by = "sample") |>
+    left_join(all_genes_palate |> select(gene_id, symbol), by = "gene_id")
 }
 
-# ===== FUNCTION 3: PLOT A-P GRADIENTS =====
-plot_AP_gradient <- function(genes_decreasing, genes_increasing, count_data, n_each = 3) {
+run_enrichment_hybrid <- function(gene_ids, 
+                                  sources = c("GO:BP", "GO:MF", "GO:CC", "KEGG", "REAC"),
+                                  pval_threshold = 0.05) {
+  gene_symbols <- all_genes_palate |>
+    filter(gene_id %in% gene_ids) |>
+    pull(symbol) |> unique() |> na.omit()
   
-  gene_col <- if("symbol" %in% names(count_data)) "symbol" else "symbol"
+  if(length(gene_symbols) < 5) return(NULL)
   
-  # Get examples
-  dec_examples <- genes_decreasing[1:min(n_each, length(genes_decreasing))]
-  inc_examples <- genes_increasing[1:min(n_each, length(genes_increasing))]
-  
-  # Function to create gradient plot
-  make_gradient_plot <- function(gid, gradient_type) {
-    gene_data <- count_data |> 
-      filter(gene_id == gid) |> 
-      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
-    
-    if(nrow(gene_data) == 0) return(NULL)
-    
-    gene_name <- unique(gene_data[[gene_col]])[1]
-    
-    # Summary by domain
-    domain_summary <- gene_data |> 
-      group_by(AP_domain) |> 
-      summarize(mean_count = mean(count, na.rm = TRUE), .groups = "drop")
-    
-    ggplot(domain_summary, aes(x = AP_domain, y = mean_count, fill = AP_domain)) +
-      geom_col(alpha = 0.8) +
-      geom_point(data = gene_data, aes(y = count), alpha = 0.3, size = 1.5,
-                 position = position_jitter(width = 0.1)) +
-      scale_fill_manual(values = domain_colors) +
-      scale_y_log10(labels = scales::comma) +
-      labs(title = gene_name,
-           subtitle = ifelse(gradient_type == "dec", "PM > MAX > POST", "POST > MAX > PM"),
-           x = "",
-           y = "Expression") +
-      theme_pubclean(base_size = 10) +
-      theme(legend.position = "none",
-            plot.title = element_text(face = "bold"),
-            plot.subtitle = element_text(color = ifelse(gradient_type == "dec", 
-                                                        "darkred", "darkgreen")))
-  }
-  
-  # Create plots
-  plots_dec <- lapply(dec_examples, function(gid) make_gradient_plot(gid, "dec"))
-  plots_inc <- lapply(inc_examples, function(gid) make_gradient_plot(gid, "inc"))
-  
-  # Remove NULLs
-  plots_dec <- plots_dec[!sapply(plots_dec, is.null)]
-  plots_inc <- plots_inc[!sapply(plots_inc, is.null)]
-  
-  # Combine
-  all_plots <- c(plots_dec, plots_inc)
-  if(length(all_plots) == 0) return(NULL)
-  
-  combined <- wrap_plots(all_plots, ncol = 3)
-  combined <- combined +
-    plot_annotation(
-      title = "Anterior-Posterior Expression Gradients",
-      subtitle = "Top: A→P decreasing | Bottom: A→P increasing",
-      theme = theme(
-        plot.title = element_text(size = 14, face = "bold"),
-        plot.subtitle = element_text(size = 12)
-      )
-    )
-  
-  return(combined)
+  tryCatch({
+    gost_result <- gost(query = gene_symbols, organism = "mmusculus",
+                        sources = sources, significant = TRUE,
+                        user_threshold = pval_threshold,
+                        correction_method = "fdr", evcodes = TRUE)
+    if(is.null(gost_result$result) || nrow(gost_result$result) == 0) return(NULL)
+    gost_result
+  }, error = function(e) NULL)
 }
 
-# ===== FUNCTION 4: PLOT DOMAIN-SPECIFIC DYNAMICS =====
-plot_domain_specific_dynamics <- function(gene_ids, domain_name, direction,
-                                          count_data, slope_data, n = 3) {
-  
-  gene_col <- if("symbol" %in% names(count_data)) "symbol" else "symbol"
-  
+format_enrichment_result <- function(gost_result, max_terms = 50) {
+  if(is.null(gost_result$result)) return(NULL)
+  gost_result$result |>
+    select(Source = source, Term_ID = term_id, Term_Name = term_name,
+           P_Value = p_value, Term_Size = term_size, Query_Size = query_size,
+           Intersection_Size = intersection_size, Genes = intersection) |>
+    arrange(P_Value) |> head(max_terms) |>
+    mutate(P_Value = signif(P_Value, 3),
+           Gene_Ratio = paste0(Intersection_Size, "/", Query_Size))
+}
+
+
+# plotting-functions
+plot_main_strain_effect <- function(gene_ids, direction, count_data, n = 5) {
   example_genes <- gene_ids[1:min(n, length(gene_ids))]
   
   plots <- lapply(example_genes, function(gid) {
-    # Get count data
     gene_data <- count_data |> 
       filter(gene_id == gid) |> 
       mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
-    
     if(nrow(gene_data) == 0) return(NULL)
+    gene_name <- unique(gene_data$symbol)[1]
     
-    gene_name <- unique(gene_data[[gene_col]])[1]
-    
-    # Get slope data
-    gene_slopes <- slope_data |> 
-      filter(gene_id == gid) |> 
-      mutate(Domain = factor(Domain, levels = c("PM", "MAX", "POST")))
-    
-    # Trajectory plot
-    p1 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
-      geom_point(alpha = 0.5, size = 2) +
-      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
+    p1 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = strain)) +
+      geom_point(alpha = 0.4, size = 2) +
+      geom_smooth(method = "loess", se = TRUE, alpha = 0.2, linewidth = 1) +
+      facet_wrap(~ AP_domain, nrow = 1) +
       scale_y_log10(labels = scales::comma) +
-      scale_color_manual(values = domain_colors) +
-      labs(title = gene_name,
-           subtitle = paste0(direction, " in ", domain_name, " only"),
-           x = "Development",
-           y = "Counts") +
+      scale_color_manual(values = strain_colors) +
+      labs(title = gene_name, subtitle = direction, x = "Development stage", y = "Counts") +
       theme_pubclean(base_size = 10) +
-      theme(legend.position = "none",
-            plot.title = element_text(face = "bold"))
+      theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+            strip.text = element_text(face = "bold"))
     
-    # Slope plot
-    if(nrow(gene_slopes) > 0) {
-      p2 <- ggplot(gene_slopes, aes(x = Domain, y = log2FoldChange, fill = Domain)) +
-        geom_col(alpha = 0.8) +
-        geom_errorbar(aes(ymin = log2FoldChange - lfcSE,
-                          ymax = log2FoldChange + lfcSE),
-                      width = 0.3) +
-        geom_hline(yintercept = 0, linetype = "dashed") +
-        geom_text(aes(label = ifelse(padj < 0.001, "***",
-                                     ifelse(padj < 0.01, "**",
-                                            ifelse(padj < 0.05, "*", "ns")))),
-                  vjust = -0.5, size = 4) +
-        scale_fill_manual(values = domain_colors) +
-        labs(y = "Slope", x = "") +
-        theme_pubclean(base_size = 10) +
-        theme(legend.position = "none")
-      
-      return(p1 + p2 + plot_layout(widths = c(2, 1)))
-    } else {
-      return(p1)
-    }
+    p2 <- ggplot(gene_data, aes(x = strain, y = count, fill = strain)) +
+      geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+      geom_jitter(width = 0.2, alpha = 0.3, size = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_fill_manual(values = strain_colors) +
+      labs(x = "", y = "") +
+      theme_pubclean(base_size = 10) + theme(legend.position = "none")
+    
+    p1 + p2 + plot_layout(widths = c(3, 1))
   })
   
   plots <- plots[!sapply(plots, is.null)]
   if(length(plots) == 0) return(NULL)
-  
-  combined <- wrap_plots(plots, ncol = 1)
-  combined <- combined +
-    plot_annotation(
-      title = paste0("Domain-Specific Dynamics: ", domain_name, " ", direction),
-      theme = theme(plot.title = element_text(size = 14, face = "bold"))
-    )
-  
-  return(combined)
+  wrap_plots(plots, ncol = 1)
 }
 
-# ===== FUNCTION 5: PLOT DIVERGING PATTERNS =====
-plot_diverging_detailed <- function(genes_faster, genes_opposite, 
-                                    domain_name, count_data, n_each = 2) {
+plot_domain_strain_interaction <- function(gene_ids, pattern_desc, count_data, n = 5) {
+  example_genes <- gene_ids[1:min(n, length(gene_ids))]
   
-  gene_col <- if("symbol" %in% names(count_data)) "symbol" else "symbol"
-  
-  faster_examples <- genes_faster[1:min(n_each, length(genes_faster))]
-  opposite_examples <- genes_opposite[1:min(n_each, length(genes_opposite))]
-  
-  # Plot "faster" pattern
-  plots_faster <- lapply(faster_examples, function(gid) {
+  plots <- lapply(example_genes, function(gid) {
     gene_data <- count_data |> 
       filter(gene_id == gid) |> 
       mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
-    
     if(nrow(gene_data) == 0) return(NULL)
+    gene_name <- unique(gene_data$symbol)[1]
     
-    gene_name <- unique(gene_data[[gene_col]])[1]
+    strain_diffs <- gene_data |> 
+      group_by(AP_domain, strain) |> 
+      summarize(mean_count = mean(count, na.rm = TRUE), .groups = "drop") |> 
+      pivot_wider(names_from = strain, values_from = mean_count) |> 
+      mutate(pct_diff = (CAST - B6) / B6 * 100)
     
-    ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
-      geom_point(alpha = 0.5, size = 2) +
-      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
+    p1 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = strain)) +
+      geom_point(alpha = 0.4, size = 2) +
+      geom_smooth(method = "loess", se = TRUE, alpha = 0.2, linewidth = 1) +
+      facet_wrap(~ AP_domain, nrow = 1) +
       scale_y_log10(labels = scales::comma) +
-      scale_color_manual(values = domain_colors) +
-      labs(title = gene_name,
-           subtitle = paste0(domain_name, " increases faster"),
-           x = "Development",
-           y = "Counts") +
+      scale_color_manual(values = strain_colors) +
+      labs(title = gene_name, subtitle = pattern_desc, x = "Development", y = "Counts") +
       theme_pubclean(base_size = 10) +
-      theme(legend.position = "none",
-            plot.title = element_text(face = "bold"),
-            plot.subtitle = element_text(color = "darkgreen", size = 9))
-  })
-  
-  # Plot "opposite" pattern
-  plots_opposite <- lapply(opposite_examples, function(gid) {
-    gene_data <- count_data |> 
-      filter(gene_id == gid) |> 
-      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+      theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+            strip.text = element_text(face = "bold"))
     
-    if(nrow(gene_data) == 0) return(NULL)
+    p2 <- ggplot(strain_diffs, aes(x = AP_domain, y = pct_diff, fill = AP_domain)) +
+      geom_col(alpha = 0.8) + geom_hline(yintercept = 0, linetype = "dashed") +
+      scale_fill_manual(values = domain_colors) +
+      labs(y = "% Diff\n(CAST-B6)", x = "") +
+      theme_pubclean(base_size = 10) + theme(legend.position = "none")
     
-    gene_name <- unique(gene_data[[gene_col]])[1]
-    
-    ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
-      geom_point(alpha = 0.5, size = 2) +
-      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
-      scale_y_log10(labels = scales::comma) +
-      scale_color_manual(values = domain_colors) +
-      labs(title = gene_name,
-           subtitle = paste0(domain_name, " ↑, other ↓"),
-           x = "Development",
-           y = "Counts") +
-      theme_pubclean(base_size = 10) +
-      theme(legend.position = "none",
-            plot.title = element_text(face = "bold"),
-            plot.subtitle = element_text(color = "purple", size = 9))
-  })
-  
-  # Remove NULLs
-  plots_faster <- plots_faster[!sapply(plots_faster, is.null)]
-  plots_opposite <- plots_opposite[!sapply(plots_opposite, is.null)]
-  
-  all_plots <- c(plots_faster, plots_opposite)
-  if(length(all_plots) == 0) return(NULL)
-  
-  if(length(all_plots) <= 2) {
-    combined <- wrap_plots(all_plots, ncol = 1)
-  } else {
-    combined <- wrap_plots(all_plots, ncol = 2)
-  }
-  
-  combined <- combined +
-    plot_annotation(
-      title = paste0("Diverging Patterns: ", domain_name),
-      theme = theme(plot.title = element_text(size = 14, face = "bold"))
-    )
-  
-  return(combined)
-}
-
-# ===== FUNCTION 6: PLOT SIMPLE TRAJECTORIES =====
-plot_simple_trajectories <- function(gene_ids, count_data, title_text, n = 5) {
-  
-  gene_col <- if("symbol" %in% names(count_data)) "symbol" else "symbol"
-  
-  # Sample if needed
-  if(length(gene_ids) > n) {
-    set.seed(123)
-    gene_ids <- sample(gene_ids, n)
-  }
-  
-  plots <- lapply(gene_ids, function(gid) {
-    gene_data <- count_data |> 
-      filter(gene_id == gid) |> 
-      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
-    
-    if(nrow(gene_data) == 0) return(NULL)
-    
-    gene_name <- unique(gene_data[[gene_col]])[1]
-    
-    ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
-      geom_point(alpha = 0.5, size = 2) +
-      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
-      scale_y_log10(labels = scales::comma) +
-      scale_color_manual(values = domain_colors) +
-      labs(title = gene_name,
-           x = "Development",
-           y = "Counts") +
-      theme_pubclean(base_size = 10) +
-      theme(legend.position = "bottom",
-            legend.text = element_text(size = 8),
-            plot.title = element_text(face = "bold", size = 11))
+    p1 + p2 + plot_layout(widths = c(3, 1))
   })
   
   plots <- plots[!sapply(plots, is.null)]
   if(length(plots) == 0) return(NULL)
+  wrap_plots(plots, ncol = 1)
+}
+
+plot_time_strain_interaction <- function(gene_ids, pattern_desc, count_data, n = 5) {
+  example_genes <- gene_ids[1:min(n, length(gene_ids))]
   
-  combined <- wrap_plots(plots, ncol = 3)
-  combined <- combined +
-    plot_annotation(
-      title = title_text,
-      theme = theme(plot.title = element_text(size = 14, face = "bold"))
-    )
+  plots <- lapply(example_genes, function(gid) {
+    gene_data <- count_data |> 
+      filter(gene_id == gid) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    if(nrow(gene_data) == 0) return(NULL)
+    gene_name <- unique(gene_data$symbol)[1]
+    
+    p1 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = strain)) +
+      geom_point(aes(shape = AP_domain), alpha = 0.5, size = 2.5) +
+      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1.5) +
+      scale_y_log10(labels = scales::comma) +
+      scale_color_manual(values = strain_colors) +
+      labs(title = gene_name, subtitle = pattern_desc, x = "Development stage", y = "Counts") +
+      theme_pubclean(base_size = 11) + theme(legend.position = "right", plot.title = element_text(face = "bold"))
+    
+    p2 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = strain)) +
+      geom_point(alpha = 0.4, size = 1.5) +
+      geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
+      facet_wrap(~ AP_domain, nrow = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_color_manual(values = strain_colors) +
+      labs(x = "Development", y = "Counts") +
+      theme_pubclean(base_size = 9) +
+      theme(legend.position = "none", strip.text = element_text(face = "bold"))
+    
+    p1 / p2 + plot_layout(heights = c(2, 1))
+  })
   
-  return(combined)
+  plots <- plots[!sapply(plots, is.null)]
+  if(length(plots) == 0) return(NULL)
+  wrap_plots(plots, ncol = 1)
+}
+
+plot_threeway_interaction <- function(gene_ids, pattern_desc, count_data, n = 4) {
+  example_genes <- gene_ids[1:min(n, length(gene_ids))]
+  
+  plots <- lapply(example_genes, function(gid) {
+    gene_data <- count_data |> 
+      filter(gene_id == gid) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    if(nrow(gene_data) == 0) return(NULL)
+    gene_name <- unique(gene_data$symbol)[1]
+    
+    ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = strain)) +
+      geom_point(alpha = 0.5, size = 2) +
+      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
+      facet_wrap(~ AP_domain, nrow = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_color_manual(values = strain_colors) +
+      labs(title = gene_name, subtitle = pattern_desc, x = "Development", y = "Counts") +
+      theme_pubclean(base_size = 10) +
+      theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+            strip.text = element_text(face = "bold"))
+  })
+  
+  plots <- plots[!sapply(plots, is.null)]
+  if(length(plots) == 0) return(NULL)
+  wrap_plots(plots, ncol = 1)
+}
+
+plot_domain_specificity <- function(gene_ids, domains_affected, count_data, n = 5) {
+  example_genes <- gene_ids[1:min(n, length(gene_ids))]
+  
+  plots <- lapply(example_genes, function(gid) {
+    gene_data <- count_data |> 
+      filter(gene_id == gid) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    if(nrow(gene_data) == 0) return(NULL)
+    gene_name <- unique(gene_data$symbol)[1]
+    
+    p1 <- ggplot(gene_data, aes(x = AP_domain, y = count, fill = strain)) +
+      geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+      geom_point(aes(color = strain), position = position_jitterdodge(jitter.width = 0.1),
+                 alpha = 0.4, size = 1.5) +
+      scale_y_log10(labels = scales::comma) +
+      scale_fill_manual(values = strain_colors) +
+      scale_color_manual(values = strain_colors) +
+      labs(title = gene_name, subtitle = paste("Strain effect in", domains_affected),
+           x = "Domain", y = "Counts") +
+      theme_pubclean(base_size = 10) +
+      theme(legend.position = "bottom", plot.title = element_text(face = "bold"))
+    
+    p2 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = strain)) +
+      geom_point(alpha = 0.4, size = 1.5) +
+      geom_smooth(method = "loess", se = TRUE, alpha = 0.2) +
+      facet_wrap(~ AP_domain, nrow = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_color_manual(values = strain_colors) +
+      labs(x = "Development", y = "Counts") +
+      theme_pubclean(base_size = 9) +
+      theme(legend.position = "none", strip.text = element_text(face = "bold"))
+    
+    p1 / p2 + plot_layout(heights = c(1, 1))
+  })
+  
+  plots <- plots[!sapply(plots, is.null)]
+  if(length(plots) == 0) return(NULL)
+  wrap_plots(plots, ncol = 1)
 }
 ```
 
-```{r load_data_emase}
+```{r}
+#| label: load-data
 #| message: false
 #| warning: false
 
-# loading the count data
-load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts_v4.RData") # raw_expr_mat, expr_mat_do, expr_mat_nondo 
-expr_mat <- expr_mat_nondo
-contam_samples <- c("B6_12.5_PM_1","B6_13.5_POST_3", "CAST_14.5_MAX_7", "B6_13.5_MAX_3")
-expr_mat <- expr_mat[ ,!colnames(expr_mat) %in% contam_samples]
-do_expr_mat <- expr_mat_do
-remove_samples <- c("DO_13.5_MAX_6", "DO_13.5_MAX_14", "DO_13.5_MAX_14_2",
-                    "DO_12.5_MAX_1" , "DO_12.5_MAX_2" ,"DO_13.5_MAX_97", "DO_13.5_MAX_96") # 96 & 97 are also 12.5 samples
-do_expr_mat <- do_expr_mat[ ,!colnames(do_expr_mat) %in% remove_samples]
+sample_details <- read_csv("/projects/munger-lab/projects/palate-project-murray-munger/samplesheet.csv") 
 
-expr_mat_all <- cbind( expr_mat[intersect(rownames(expr_mat),rownames(do_expr_mat)),,drop=F],
-                       do_expr_mat[intersect(rownames(expr_mat),rownames(do_expr_mat)),,drop=F])
+load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts_v4.RData")
+
+contam_samples <- c("B6_12.5_PM_1","B6_13.5_POST_3", "CAST_14.5_MAX_7", "B6_13.5_MAX_3")
+expr_mat <- expr_mat_nondo[, !colnames(expr_mat_nondo) %in% contam_samples]
 rm(expr_mat_do, expr_mat_nondo)
 
-# Get v105 annotations from biomart
-all.genes_v105 <- read_tsv(here("_data","ENSMUSGid_to_symbol_v105.txt"),
-                           col_names = c("gene_id","symbol","gene_biotype","chromosome","start","end"), skip =1) |>  
-  mutate(midpoint = (start+end)/2)
-
-all_genes_palate <- all.genes_v105 %>%
+all_genes_palate <- read_tsv(here("_data","ENSMUSGid_to_symbol_v105.txt"),
+                              col_names = c("gene_id","symbol","gene_biotype","chromosome","start","end"), 
+                              skip = 1) |>  
+  mutate(midpoint = (start + end) / 2) |>
   filter(gene_id %in% rownames(raw_expr_mat))
 
-all_genes_palate_filtered <- all.genes_v105 %>%
-  filter(gene_id %in% rownames(expr_mat_all))
-
-# sample annotations
-sample_annot <- sample_details %>% 
-  #as_tibble( rownames = "sample") |> 
-  filter( !sample %in% contam_samples & sample %in% colnames(expr_mat)) %>% 
-  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% 
-  select(sample,sex, AP_domain,Gest_stage, strain,batch, Harvest_date,LB_stage, palate_closure, L_R_palate) %>% 
-  mutate( strain = case_when(strain =="B6J"~"B6",
-                             strain !="B6J"~strain)) |> 
-  mutate( LB_stage_binned = case_when(
-    ( LB_stage < 12.25 )~"exclude",
-    (between(LB_stage, 13.25, 13.5))~"exclude",
-    (between(LB_stage, 12.25,12.75))~"1",
-    (between(LB_stage, 13.5, 14))~"2",
-    (between(LB_stage, 14.25, 14.75))~"3",
-    (between(LB_stage, 15.1, 15.6))~"4"
-  )) |> 
-  mutate( LB_stage_binned = as_factor(LB_stage_binned)) |> 
-  separate( L_R_palate, into = c("temp","Palate_ori" ), sep = "_") |> 
-  select(-temp) |> 
-  mutate( Palate_ori = ifelse( Palate_ori == "L", "Left","Right")) 
-  
-
-sample_annot_all <- sample_details %>% 
-  #as_tibble( rownames = "sample") |> 
-  filter( !sample %in% contam_samples & sample %in% colnames(expr_mat_all)) %>% 
-  separate(Strain_stock, into = c("strain","tmp"), remove = F, sep = "_") %>% 
-  select(sample,sex, AP_domain,Gest_stage, strain,batch, Harvest_date,LB_stage, palate_closure,L_R_palate) %>% 
-  mutate( strain = case_when(strain =="B6J"~"B6",
-                             strain !="B6J"~strain)) |> 
-  separate( L_R_palate, into = c("temp","Palate_ori" ), sep = "_") |> 
-  select(-temp) |> 
-  mutate( Palate_ori = ifelse( Palate_ori == "L", "Left","Right")) |> 
-  mutate( LB_stage_binned = case_when(
-    ( LB_stage < 12.25 )~"exclude",
-    (between(LB_stage, 13.25, 13.5))~"exclude",
-    (between(LB_stage, 12.25,12.75))~"1",
-    (between(LB_stage, 13.5, 14))~"2",
-    (between(LB_stage, 14.25, 14.75))~"3",
-    (between(LB_stage, 15.1, 15.6))~"4"
-  )) 
-
-# Genes from Ian:
-pheno_gene_list <- readxl::read_xlsx(here("_data","Supp6_BoneGeneList.xlsx")) |> 
-  select( symbol = gene_name) |> 
-  distinct() |> 
-  mutate(type = "pheno", type_long = "bone phenotype gene list (Sabik et al 2020, Table S6)")
-
-skeletal_gene_table <- readxl::read_xlsx(here("_data","Skeletal_stem_progenitor_markers.xlsx")) |> 
-  dplyr::rename("symbol" = "gene") |> 
-  mutate(type = "MSC", type_long = "MSC/skeletal progenitor markers")
-
-figure_genes <- c(MSC =c("Axin2","Gli1","Meis2","Lepr","Prrx1"),
-           skeletal = c("Sox9","Runx2","Sp7","Nfatc1","Bcl11b","Msx2","Msx1","Egr1","Egr2"),
-           osteoclast = c("Spi1","Tnfsf11","Tnfrsf11","PParg","Fos","Junb","Csf1","Csf1r","Ostf1",
-                          "Acp5","Mmp9","Ctsk","Timp1","Atp6v0d2","Adgre1","Sfrp4","Dcstamp","Ocstamp","Htra1","Tcirg1","Itgb3","Gnptab"),
-           osteoblast = c("Alpl","Ibsp","Phospho1","Vdr","Sparc","Panx3","Enpp1","Bglap","Bglap2","Clecl11a","Sost","Dmp1","Col1a1","Col1a2","Bgn","Dcn","Thbs2")
-           
-           ) |> 
-  as_tibble(rownames = "type" ) |> 
-  rename( symbol = value  ) |> 
-  mutate(type = gsub("[0-9]","",type)) |> 
-  mutate( type_long = case_when(type =="MSC"~"MSC/skeletal progenitor markers",
-                                type =="skeletal"~"Skeletal speciation markers",
-                                type =="osteoclast"~"Osteoclast markers",
-                                type =="osteoblast"~"osteoblast/osteocyte markers"
-                                )) 
-
-morpho_genes <- readxl::read_xlsx(path = here("_data","abnormal craniofacial morphology-MGIBatchReport.xlsx")) |> 
-  select(symbol = Symbol, mgi_id = `MGI Gene/Marker ID`, gene_biotype = `Feature Type`) 
-
-# add gene names to MGI ids for genes
-# checked the overlap
-# length(intersect(mgi_id_annots$symbol, all_genes_palate$symbol)) # 16958/17146
-# most of the missing ones are RPXX-YY genes or Gms
-mgi_id_annots <- read_delim( file = here("_data","MRK_List1.rpt"),
-                             #MGI Marker Accession ID	Chromosome	cM Position	Genome Coordinate Start	Genome Coordinate End	Genome Strand	Marker Symbol	Status	Marker Name	Marker Type	Feature Types (|-delimted)	Marker Synonyms (|-delimited)
-                             col_names = c("mgi_id",
-                                           "chromosome",
-                                           "pos_cM",
-                                           "start",
-                                           "end",
-                                           "strand",
-                                           "symbol",
-                                           "status",
-                                           "marker_name",
-                                           "marker_type",
-                                           "feature_types",
-                                           "marker_synms"), skip = 1) 
-
-# getting the gene list for mammalian phenotypes
-mp_genes <- read_delim( file = here("_data","MGI_PhenoGenoMP.rpt"),
-                        # Allelic Composition	Allele Symbol(s)	Genetic Background	Mammalian Phenotype ID	PubMed ID	MGI Marker Accession ID (comma-delimited)
-                        col_names = c("allelic_comp",
-                                      "allele_symbol",
-                                      "genetic_background",
-                                      "mp_id",
-                                      "pubmed_id",
-                                      "mgi_id")) |> 
-  select(mp_id, mgi_id) |> 
-  distinct() |> 
-  separate_longer_delim( mgi_id, delim = "|") |> 
-  left_join(mgi_id_annots |> 
-              select(mgi_id, symbol)) 
-# add mammalian phenotype definitions
-mp_defs <- read_delim( file = here("_data","VOC_MammalianPhenotype.rpt"),
-                       col_names = c("mp_id","term_name","term_details")) 
-
-
-
-genes <- full_join( figure_genes, skeletal_gene_table ) |> 
-  #full_join( pheno_gene_list) |> 
-  left_join(all_genes_palate)
-# 
-# genes |> 
-#   group_by(symbol) |> 
-#   mutate(n = n()) |> 
-#   filter(n > 1) |> 
-#   arrange(symbol)
-
-tfs <- read_tsv(file = here("_data/search_result_from_tfcheckpoint.txt")) |> 
-  filter( !is.na(Gene_Name)) |> 
-  select( symbol = Gene_symbol) |> 
-  mutate( symbol = tools::toTitleCase(tolower(symbol)) ) |> 
-  distinct() |> 
-  left_join( all_genes_palate)
-
+sample_annot <- sample_details |>
+  filter(!sample %in% contam_samples & sample %in% colnames(expr_mat)) |>
+  separate(Strain_stock, into = c("strain","tmp"), remove = FALSE, sep = "_") |>
+  select(sample, sex, AP_domain, Gest_stage, strain, batch, Harvest_date, LB_stage, 
+         palate_closure, L_R_palate) |>
+  mutate(strain = if_else(strain == "B6J", "B6", strain)) |>
+  separate(L_R_palate, into = c("temp", "Palate_ori"), sep = "_") |>
+  select(-temp) |>
+  mutate(Palate_ori = if_else(Palate_ori == "L", "Left", "Right"))
 ```
-
 
 # Comparing B6 and CAST strains across AP domains and developmental time
 
-::: {#B6_CAST_DESeq2_results .panel-tabset .nav-pills}
+This analysis investigates how gene expression differs between B6 and CAST mouse strains across three palate domains (PM, MAX, POST) and developmental time. We decompose strain effects into:
 
-## Genes differentially expressed between B6 and CAST (no interaction with time or domain included)
+- **Main strain effect**: Genes consistently higher/lower in one strain across all conditions
+- **Domain × Strain interaction**: Strain differences that vary by palate domain
+- **Time × Strain interaction**: Strain differences that change over developmental time
+- **Three-way interaction**: Domain-specific strain effects that also change over time
 
 ```{r}
-#| label: b6_cast_comparison
-#| warning: false  
+#| label: prep-run-deseq2
 #| message: false
+#| warning: false
 
-b6_cast_samples <- sample_annot %>%
-  filter(strain %in% c("B6","CAST")) %>%
-  separate(sample, sep = "_", into = c("s","e","d","ind","rep"), remove = F) %>%
-  select(-e,-d) %>%
-  mutate( rep = ifelse( is.na(rep),1,rep)) %>%
-  unite( "unique_sampleid" , c(s,ind,AP_domain,Gest_stage),sep ="_", remove = F)
+b6_cast_samples <- sample_annot |>
+  filter(strain %in% c("B6", "CAST")) |>
+  separate(sample, sep = "_", into = c("s","e","d","ind","rep"), remove = FALSE) |>
+  select(-e, -d) |>
+  mutate(rep = if_else(is.na(rep), "1", rep)) |>
+  unite("unique_sampleid", c(s, ind, AP_domain, Gest_stage), sep = "_", remove = FALSE)
 
-coldata <- b6_cast_samples %>%
-  select(sample,unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, strain, LB_stage) %>%
-  #filter( rep ==1) %>%
-  filter(!is.na(sex) ) %>%
-  mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
+coldata <- b6_cast_samples |>
+  select(sample, unique_sampleid, sex, ind, rep, AP_domain, Gest_stage, strain, LB_stage) |>
+  filter(!is.na(sex)) |>
+  mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST"))) |>
   column_to_rownames("sample")
 
-cts <- round(raw_expr_mat[all_genes_palate$gene_id,rownames(coldata), drop = F])
+cts <- round(raw_expr_mat[all_genes_palate$gene_id, rownames(coldata), drop = FALSE])
 
-# let's make the dds object then collapse the technical replicates
-strain_dds <- DESeqDataSetFromMatrix( countData = cts,
-                                      colData = coldata,
-                                      design = ~1)
-
+strain_dds <- DESeqDataSetFromMatrix(countData = cts, colData = coldata, design = ~1)
 strain_dds_coll <- collapseReplicates(strain_dds, strain_dds$unique_sampleid)
 
-# https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#levels-without-samples
-# the domains are from the same animal! So I need to add that to the covariate matrix + try to add that info to deseq design. see:
-# https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#group-specific-condition-effects-individuals-nested-within-groups
-# I am not adding interactions for sex, mainly because we can't really parse them out and also I don't believe there to be significant interactions
-strain_simple_model <- model.matrix(~ strain + AP_domain + LB_stage + AP_domain:ind,
-                                  data = colData(strain_dds_coll))
-# all.zero <- apply(strain_simple_model, 2, function(x) all(x==0))
-# idx <- which(all.zero)
-# strain_simple_model <- strain_simple_model[,-idx]
-strain_dds_simple <- DESeq(strain_dds_coll, betaPrior = FALSE, full=strain_simple_model)
+min_LB_stage <- min(colData(strain_dds_coll)$LB_stage)
+colData(strain_dds_coll)$LB_stage_from_start <- colData(strain_dds_coll)$LB_stage - min_LB_stage
+colData(strain_dds_coll)$sex <- factor(colData(strain_dds_coll)$sex)
+colData(strain_dds_coll)$strain <- factor(colData(strain_dds_coll)$strain, levels = c("B6", "CAST"))
+colData(strain_dds_coll)$ind <- factor(colData(strain_dds_coll)$ind)
 
 
-# too complex! I will do this within each domain instead.
-# strain_comp_model <-  model.matrix(~ strain + AP_domain + LB_stage + AP_domain:ind +
-#                                      strain:AP_domain + strain:LB_stage + LB_stage:AP_domain +
-#                                      strain:AP_domain:LB_stage,
-#                                   data = colData(strain_dds_coll))
-# strain_dds_comp <- DESeq(strain_dds_coll, betaPrior = FALSE, full=strain_comp_model)
-# 
-# # Run LRT:
-# strain_dds_comp_simple_lrt <- DESeq(strain_dds_coll, test="LRT",
-#                                 full= strain_comp_model,
-#                                 reduced = strain_simple_model)
+# run-deseq2
+design(strain_dds_coll) <- ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + 
+                             strain + strain:AP_domain + strain:LB_stage_from_start + 
+                             strain:AP_domain:LB_stage_from_start
 
+strain_dds_lrt <- DESeq(strain_dds_coll, test = "LRT", 
+                        reduced = ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind,
+                        parallel = TRUE)
+res_strain_all <- results(strain_dds_lrt)
 
-strain_gene_counts <-  counts(strain_dds_simple, normalized=TRUE) %>%
-  as_tibble( rownames = "gene_id") %>%
-  pivot_longer(2:110, names_to = "sample", values_to = "count") %>%
-  left_join( colData(strain_dds_simple) %>%
-               as_tibble( rownames = "sample")
-             )
-```
+res_strain_main <- results(strain_dds_lrt, contrast = c("strain", "CAST", "B6"), test = "Wald")
 
+dds_strain_domain <- DESeq(strain_dds_coll, test = "LRT",
+                           full = ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + 
+                                  strain + strain:AP_domain + strain:LB_stage_from_start + 
+                                  strain:AP_domain:LB_stage_from_start,
+                           reduced = ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + 
+                                      strain + strain:LB_stage_from_start,
+                           parallel = TRUE)
+res_strain_domain_int <- results(dds_strain_domain)
 
-```{r}
-#| label: b6_cast_strain_eff_ora
-#| cache: true
-#| warning: false
-#| message: false
+dds_strain_time <- DESeq(strain_dds_coll, test = "LRT",
+                         full = ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + 
+                                strain + strain:AP_domain + strain:LB_stage_from_start + 
+                                strain:AP_domain:LB_stage_from_start,
+                         reduced = ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + 
+                                    strain + strain:AP_domain,
+                         parallel = TRUE)
+res_strain_time_int <- results(dds_strain_time)
 
-strain_eff_genes <- results(strain_dds_simple, name = "strainCAST" ) %>%
-  as_tibble( rownames = "gene_id") %>%
-  filter( padj < 0.05, abs(log2FoldChange) > .5) %>%
-  left_join(all_genes_palate) %>%
-  mutate( Comparison = ifelse( `log2FoldChange` < 0,
-          "Lower expression in CAST",
-          "Higher expression in CAST")
+dds_strain_3way <- DESeq(strain_dds_coll, test = "LRT",
+                         full = ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + 
+                                strain + strain:AP_domain + strain:LB_stage_from_start + 
+                                strain:AP_domain:LB_stage_from_start,
+                         reduced = ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + 
+                                    strain + strain:AP_domain + strain:LB_stage_from_start,
+                         parallel = TRUE)
+res_strain_3way_int <- results(dds_strain_3way)
+
+# categorize-genes
+strain_effects <- tibble(
+  gene_id = rownames(res_strain_all),
+  any_strain = res_strain_all$padj < 0.05,
+  main_effect = res_strain_main$padj < 0.05,
+  domain_int = res_strain_domain_int$padj < 0.05,
+  time_int = res_strain_time_int$padj < 0.05,
+  three_way_int = res_strain_3way_int$padj < 0.05
+) |>
+  replace_na(list(any_strain = FALSE, main_effect = FALSE, 
+                  domain_int = FALSE, time_int = FALSE, three_way_int = FALSE)) |>
+  mutate(pattern = case_when(
+    !any_strain ~ "No strain effect",
+    three_way_int ~ "3-way interaction",
+    domain_int & time_int ~ "Domain×strain + Time×strain",
+    domain_int ~ "Domain×strain interaction",
+    time_int ~ "Time×strain interaction",
+    main_effect ~ "Main strain effect only",
+    TRUE ~ "Other"
+  ))
+
+strain_effects_annotated <- strain_effects |>
+  left_join(all_genes_palate |> select(gene_id, symbol, gene_biotype, chromosome), by = "gene_id") |>
+  mutate(
+    any_strain_pval = res_strain_all$padj[match(gene_id, rownames(res_strain_all))],
+    main_effect_lfc = res_strain_main$log2FoldChange[match(gene_id, rownames(res_strain_main))],
+    main_effect_pval = res_strain_main$padj[match(gene_id, rownames(res_strain_main))],
+    domain_int_pval = res_strain_domain_int$padj[match(gene_id, rownames(res_strain_domain_int))],
+    time_int_pval = res_strain_time_int$padj[match(gene_id, rownames(res_strain_time_int))],
+    three_way_int_pval = res_strain_3way_int$padj[match(gene_id, rownames(res_strain_3way_int))]
   )
 
-g.strain_eff_cast_up <- gost( query = unique( (strain_eff_genes %>%
-                                                filter(log2FoldChange > 0))$symbol),
-                           organism = "mmusculus",
-                           domain_scope = "custom",
-                           custom_bg = all_genes_palate$symbol,
-                           evcodes = TRUE
-                           )
-g.strain_eff_cast_up$result <- g.strain_eff_cast_up$result %>% filter(term_size < 660)
+genes_main_only <- strain_effects_annotated |> filter(pattern == "Main strain effect only")
+genes_domain_int <- strain_effects_annotated |> filter(domain_int & !time_int & !three_way_int)
+genes_time_int <- strain_effects_annotated |> filter(time_int & !domain_int & !three_way_int)
+genes_domain_time <- strain_effects_annotated |> filter(domain_int & time_int & !three_way_int)
+genes_three_ways <- strain_effects_annotated |> filter(three_way_int)
 
+# load-patterns
+# source(here("DEgene_pattern_identification_CAST_B6.R"))
+pattern_summary <- read_csv(here("strain_pattern_summary.csv"))
+gene_assignments <- read_csv(here("strain_gene_pattern_assignments.csv"))
 
-g.strain_eff_cast_down <- gost( query = unique( (strain_eff_genes %>%
-                                                filter(log2FoldChange < 0))$symbol),
-                           organism = "mmusculus",
-                           domain_scope = "custom",
-                           custom_bg = all_genes_palate$symbol,
-                           evcodes = TRUE
-                           )
-g.strain_eff_cast_down$result <- g.strain_eff_cast_down$result %>% filter(term_size < 660)
+main_patterns <- if(file.exists(here("main_strain_effect_patterns.csv"))) 
+  read_csv(here("main_strain_effect_patterns.csv")) else NULL
+domain_patterns <- if(file.exists(here("domain_strain_patterns.csv"))) 
+  read_csv(here("domain_strain_patterns.csv")) else NULL
+time_patterns <- if(file.exists(here("time_strain_patterns.csv"))) 
+  read_csv(here("time_strain_patterns.csv")) else NULL
+threeway_patterns <- if(file.exists(here("threeway_patterns.csv"))) 
+  read_csv(here("threeway_patterns.csv")) else NULL
+domain_specificity <- if(file.exists(here("domain_specificity_patterns.csv"))) 
+  read_csv(here("domain_specificity_patterns.csv")) else NULL
 
+genes_CAST_high_strong <- gene_assignments |> filter(CAST_high_strong) |> pull(gene_id)
+genes_CAST_high_mod <- gene_assignments |> filter(CAST_high_mod) |> pull(gene_id)
+genes_B6_high_strong <- gene_assignments |> filter(B6_high_strong) |> pull(gene_id)
+genes_B6_high_mod <- gene_assignments |> filter(B6_high_mod) |> pull(gene_id)
+
+genes_PM_biggest_diff <- gene_assignments |> filter(PM_biggest_diff) |> pull(gene_id)
+genes_MAX_biggest_diff <- gene_assignments |> filter(MAX_biggest_diff) |> pull(gene_id)
+genes_POST_biggest_diff <- gene_assignments |> filter(POST_biggest_diff) |> pull(gene_id)
+genes_PM_CAST_high <- gene_assignments |> filter(PM_CAST_high) |> pull(gene_id)
+genes_MAX_CAST_high <- gene_assignments |> filter(MAX_CAST_high) |> pull(gene_id)
+genes_POST_CAST_high <- gene_assignments |> filter(POST_CAST_high) |> pull(gene_id)
+genes_opposite_directions <- gene_assignments |> filter(Opposite_directions) |> pull(gene_id)
+
+genes_both_increase_CAST_faster <- gene_assignments |> filter(Both_inc_CAST_faster) |> pull(gene_id)
+genes_both_decrease_CAST_faster <- gene_assignments |> filter(Both_dec_CAST_faster) |> pull(gene_id)
+genes_both_increase_B6_faster <- gene_assignments |> filter(Both_inc_B6_faster) |> pull(gene_id)
+genes_both_decrease_B6_faster <- gene_assignments |> filter(Both_dec_B6_faster) |> pull(gene_id)
+genes_B6_up_CAST_down <- gene_assignments |> filter(B6_up_CAST_down) |> pull(gene_id)
+genes_CAST_up_B6_down <- gene_assignments |> filter(CAST_up_B6_down) |> pull(gene_id)
+genes_CAST_dynamic_B6_flat <- gene_assignments |> filter(CAST_dynamic_B6_flat) |> pull(gene_id)
+genes_B6_dynamic_CAST_flat <- gene_assignments |> filter(B6_dynamic_CAST_flat) |> pull(gene_id)
+
+genes_PM_biggest_slope_diff <- gene_assignments |> filter(ThreeWay_PM_biggest) |> pull(gene_id)
+genes_MAX_biggest_slope_diff <- gene_assignments |> filter(ThreeWay_MAX_biggest) |> pull(gene_id)
+genes_POST_biggest_slope_diff <- gene_assignments |> filter(ThreeWay_POST_biggest) |> pull(gene_id)
+genes_consistent_slope_diffs <- gene_assignments |> filter(ThreeWay_consistent) |> pull(gene_id)
+
+if(!is.null(domain_specificity)) {
+  genes_strain_PM_only <- domain_specificity |> filter(specificity_pattern == "PM only") |> pull(gene_id)
+  genes_strain_MAX_only <- domain_specificity |> filter(specificity_pattern == "MAX only") |> pull(gene_id)
+  genes_strain_POST_only <- domain_specificity |> filter(specificity_pattern == "POST only") |> pull(gene_id)
+  genes_strain_all_domains <- domain_specificity |> filter(specificity_pattern == "All domains") |> pull(gene_id)
+}
 ```
 
-There are `r formatC(length(unique(strain_eff_genes$gene_id)), big.mark = ",")` genes that show a strain effect (i.e differentially expressed between CAST and B6). Note that we are not including any interaction terms and some of these genes are likely to show variability in their difference between the strains over time or across domains.
+## Overview
 
-```{r}
-#| label: b6_cast_strain_eff_genes_ex_plot
-#| warning: false
-#| message: false
-#| fig-width: 20
-#| fig-height: 4
-strain_eff_genes  |> 
-  inner_join(genes) |> 
-  select(gene_id,symbol,Comparison,type_long) |> 
-  distinct() |> 
-  left_join(strain_gene_counts) |> 
-  ggplot()+
-  aes(x = strain, 
-      y = count, 
-      col = strain,
-      group=interaction(gene_id,strain)
-      )+
-  #geom_boxplot( width = 0.2)+
-  geom_point()+
-  geom_boxplot(outlier.size = 0)+
-  geom_jitter( aes(col = strain, shape =strain))+
-  #geom_smooth(method = "lm")+
-  scale_color_manual(values = strain_colors)+
-  theme_pubclean()+
-  theme(legend.position = "none")+
-  scale_y_log10()+
-  ylab("Normalized gene expression counts (au)")+
-  #ggtitle("Domain effect (no interaction)")+
-  facet_wrap(~symbol, scales = "free", nrow = 1)
 
-```
+The analysis identified **`r sum(strain_effects_annotated$any_strain)`** genes with significant strain effects (padj < 0.05).
 
 
 ```{r}
-#| label: b6_cast_strain_eff_genes_table
-#| warning: false
+#| label: overview-summary
 #| message: false
+#| warning: false
 
-strain_eff_genes  %>%
-  select(Comparison, gene_id, symbol, chromosome , padj, log2FoldChange) %>%
-  mutate( padj = formatC(padj, digits = 2,format = "e"),
-          log2FoldChange = formatC(log2FoldChange, digits = 2, format = "g")) %>%
+strain_effects_annotated |>
+  filter(any_strain) |>
+  count(pattern) |>
+  arrange(desc(n)) |>
+  rename(`Pattern Type` = pattern, `Number of Genes` = n) |>
   create_dt()
-
 ```
 
 
-```{r}
-#| label: b6_cast_strain_eff_genes_ora_table
-#| warning: false
-#| message: false
+## Main Strain Effects
 
-g.strain_eff_cast_up$result %>%
-  mutate( Category = "Higher expression in CAST") %>%
-  rbind(
-    g.strain_eff_cast_down$result %>%
-      mutate(Category = "Lower expression in CAST")
-  )  %>%
-  select( Category, term_name, source, p_value, term_size, intersection_size,intersection) %>%  # intersecion: adding the list of genes identified as overlapping with each category
-  mutate_if( is.numeric, formatC, digits =2) %>%
-  create_dt()
+These genes show consistent expression differences between CAST and B6 across all domains and developmental stages.
 
-```
+::::::::::: {#main-strain-tabs .panel-tabset .nav-pills}
 
+### CAST >> B6 (Strong)
 
-### Genes with different expression and trends over time in each domain between B6 and CAST
+Genes with strong upregulation in CAST (log2FC > 1).
 
-Since the full model is too complex leading to many pairwise comparisons, I instead decided to run the comparison between the simple model without interactions and the complex one with interactions for each AP domain. Mainly addressing two questions:
+:::::::: {#main-CAST-strong-subtabs .panel-tabset}
 
-Which genes are differentially expressed between B6 and CAST in PM/MAX/POST domains that is consistent over developmental time (no interaction between strain and LB stage)?
-
-Which genes are differentially expressed in PM/MAX/POST domains between B6 and CAST AND show different trends over developmental time (with interaction between strain and LB stage)?
+#### Plots
 
 ```{r}
-#| label: b6_cast_comparison_over_domains
+#| label: main-CAST-strong-plot
 #| message: false
 #| warning: false
+#| fig.height: 16
 
-# pm domain
-# subset samples to pm domain
-b6_cast_samples_pm <- sample_annot %>%
-  filter(strain %in% c("B6","CAST")) %>%
-  filter( AP_domain == "PM") %>%
-  separate(sample, sep = "_", into = c("s","e","d","ind","rep"), remove = F) %>%
-  select(-e,-d) %>%
-  mutate( rep = ifelse( is.na(rep),1,rep)) %>%
-  unite( "unique_sampleid" , c(s,ind,AP_domain,Gest_stage),sep ="_", remove = F)
-coldata_pm <- b6_cast_samples_pm %>%
-  select(sample,unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, strain, LB_stage) %>%
-  #filter( rep ==1) %>%
-  filter(!is.na(sex) ) %>%
-  #mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
-  column_to_rownames("sample")
-cts_pm <- round(raw_expr_mat[all_genes_palate$gene_id,rownames(coldata_pm), drop = F])
-# let's make the dds object then collapse the technical replicates
-strain_dds_pm <- DESeqDataSetFromMatrix( countData = cts_pm,
-                                         colData = coldata_pm,
-                                         design = ~1)
-strain_dds_coll_pm <- collapseReplicates(strain_dds_pm, strain_dds_pm$unique_sampleid)
-
-# prep model wo interaction
-strain_simple_model_pm <- model.matrix(~ strain + LB_stage + strain:ind,
-                                       data = colData(strain_dds_coll_pm))
-all.zero <- apply(strain_simple_model_pm, 2, function(x) all(x==0))
-idx <- which(all.zero)
-strain_simple_model_pm <- strain_simple_model_pm[,-idx]
-strain_dds_simple_pm <- DESeq(strain_dds_coll_pm, betaPrior = FALSE, full=strain_simple_model_pm)
-
-# prep model with interaction
-strain_int_model_pm <- model.matrix(~ strain + LB_stage + strain:ind + strain:LB_stage,
-                                    data = colData(strain_dds_coll_pm))
-all.zero <- apply(strain_int_model_pm, 2, function(x) all(x==0))
-idx <- which(all.zero)
-strain_int_model_pm <- strain_int_model_pm[,-idx]
-strain_dds_int_pm <- DESeq(strain_dds_coll_pm, betaPrior = FALSE, full=strain_int_model_pm) # will get the logfold change + p values from this model
-
-# run lrt
-# comparing the full model with the interaction term between stage + domain to the reduced model without the interaction.
-strain_dds_pm_lrt <- DESeq(strain_dds_coll_pm, test="LRT",
-                                full= strain_int_model_pm,
-                                reduced = strain_simple_model_pm)
-
-# resultsNames(strain_dds_pm_lrt)
-# Let's get the gene list that has a significant difference with/without the interaction term hence is likely to show an interaction effect!
-strain_dds_pm_lrt_genes <- results( strain_dds_pm_lrt) %>%
-  as_tibble( rownames = "gene_id") %>%
-  filter( padj < 0.05) %>%
-  left_join( all_genes_palate)
-
-# resultsNames(strain_dds_simple_pm)
-# get genes
-# see this link here: https://master.bioconductor.org/packages/release/workflows/vignettes/rnaseqGene/inst/doc/rnaseqGene.html#time-course-experiments
-# from what I can decipher: 
-# using strainCAST+strainCAST.LB_stage will give me genes where the difference between CAST and B6 are changing over time. 
-# I am only interested in the interaction term answering the last question above! Note, that is the same term we are getting the results for from the LRT too! 
-strain_by_time_pm_genes <- results(strain_dds_int_pm, contrast = list(c("strainCAST.LB_stage")) ) %>%
-  as_tibble( rownames = "gene_id") %>%
-  filter( gene_id %in% strain_dds_pm_lrt_genes$gene_id,
-          padj < 0.05,
-          abs(log2FoldChange) > 0.5
-          ) |> 
-  left_join(all_genes_palate)
-# Genes with strain effects without an interaction with LB stage:
-strain_pm_genes <- results( strain_dds_simple_pm, contrast = list(c("strainCAST"))) |> 
-  as_tibble(rownames = "gene_id") |> 
-  filter(
-    ! gene_id %in% strain_dds_pm_lrt_genes$gene_id,
-    padj < 0.05,
-    abs(log2FoldChange) > 0.5
-  ) |> 
-  left_join(all_genes_palate) |> 
-  mutate( Comparison = case_when( log2FoldChange > 0 ~ "Higher expression in CAST",
-                                  log2FoldChange < 0 ~ "Lower expression in CAST")
-          )
-# get gene counts
-strain_dds_pm_gene_counts <- counts(strain_dds_int_pm, normalized=TRUE)[unique(strain_dds_pm_lrt_genes$gene_id),] %>%
-  as_tibble( rownames = "gene_id") %>%
-  pivot_longer(2:ncol(.), names_to = "sample", values_to = "count") %>%
-  left_join(
-    colData(strain_dds_int_pm) %>%
-      as_tibble(rownames = "sample") %>%
-      select(sample,strain, LB_stage, AP_domain)
-  )
-
-# max domain
-# subset samples to max domain
-b6_cast_samples_max <- sample_annot %>%
-  filter(strain %in% c("B6","CAST")) %>%
-  filter( AP_domain == "MAX") %>%
-  separate(sample, sep = "_", into = c("s","e","d","ind","rep"), remove = F) %>%
-  select(-e,-d) %>%
-  mutate( rep = ifelse( is.na(rep),1,rep)) %>%
-  unite( "unique_sampleid" , c(s,ind,AP_domain,Gest_stage),sep ="_", remove = F)
-coldata_max <- b6_cast_samples_max %>%
-  select(sample,unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, strain, LB_stage) %>%
-  #filter( rep ==1) %>%
-  filter(!is.na(sex) ) %>%
-  #mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
-  column_to_rownames("sample")
-cts_max <- round(raw_expr_mat[all_genes_palate$gene_id,rownames(coldata_max), drop = F])
-# let's make the dds object then collapse the technical replicates
-strain_dds_max <- DESeqDataSetFromMatrix( countData = cts_max,
-                                         colData = coldata_max,
-                                         design = ~1)
-strain_dds_coll_max <- collapseReplicates(strain_dds_max, strain_dds_max$unique_sampleid)
-
-# prep model wo interaction
-strain_simple_model_max <- model.matrix(~ strain + LB_stage + strain:ind,
-                                       data = colData(strain_dds_coll_max))
-all.zero <- apply(strain_simple_model_max, 2, function(x) all(x==0))
-idx <- which(all.zero)
-strain_simple_model_max <- strain_simple_model_max[,-idx]
-strain_dds_simple_max <- DESeq(strain_dds_coll_max, betaPrior = FALSE, full=strain_simple_model_max)
-
-# prep model with interaction
-strain_int_model_max <- model.matrix(~ strain + LB_stage + strain:ind + strain:LB_stage,
-                                    data = colData(strain_dds_coll_max))
-all.zero <- apply(strain_int_model_max, 2, function(x) all(x==0))
-idx <- which(all.zero)
-strain_int_model_max <- strain_int_model_max[,-idx]
-strain_dds_int_max <- DESeq(strain_dds_coll_max, betaPrior = FALSE, full=strain_int_model_max) # will get the logfold change + p values from this model
-
-# run lrt
-# comparing the full model with the interaction term between stage + domain to the reduced model without the interaction.
-strain_dds_max_lrt <- DESeq(strain_dds_coll_max, test="LRT",
-                           full= strain_int_model_max,
-                           reduced = strain_simple_model_max)
-
-# resultsNames(strain_dds_max_lrt)
-# Let's get the gene list that has a significant difference with/without the interaction term hence is likely to show an interaction effect!
-strain_dds_max_lrt_genes <- results( strain_dds_max_lrt) %>%
-  as_tibble( rownames = "gene_id") %>%
-  filter( padj < 0.05) %>%
-  left_join( all_genes_palate)
-
-# resultsNames(strain_dds_simple_max)
-# get genes
-strain_by_time_max_genes <- results(strain_dds_int_max, contrast = list(c("strainCAST.LB_stage")) ) %>%
-  as_tibble( rownames = "gene_id") %>%
-  filter( gene_id %in% strain_dds_max_lrt_genes$gene_id,
-          padj < 0.05,
-          abs(log2FoldChange) > 0.5
-  ) %>%
-  # mutate(
-  #   Comparison = ifelse( log2FoldChange >0, "Higher expression in CAST", "Lower expression in CAST")
-  # ) %>%
-  left_join(all_genes_palate)
-# Genes with strain effects without an interaction with LB stage:
-strain_max_genes <- results( strain_dds_simple_max, contrast = list(c("strainCAST"))) |> 
-  as_tibble(rownames = "gene_id") |> 
-  filter(
-    ! gene_id %in% strain_dds_max_lrt_genes$gene_id,
-    padj < 0.05,
-    abs(log2FoldChange) > 0.5
-  ) |> 
-  left_join(all_genes_palate) |> 
-  mutate( Comparison = case_when( log2FoldChange > 0 ~ "Higher expression in CAST",
-                                  log2FoldChange < 0 ~ "Lower expression in CAST")
-          )
-# get gene counts
-strain_dds_max_gene_counts <- counts(strain_dds_int_max, normalized=TRUE)[unique(strain_dds_max_lrt_genes$gene_id),] %>%
-  as_tibble( rownames = "gene_id") %>%
-  pivot_longer(2:ncol(.), names_to = "sample", values_to = "count") %>%
-  left_join(
-    colData(strain_dds_int_max) %>%
-      as_tibble(rownames = "sample") %>%
-      select(sample,strain, LB_stage, AP_domain)
-  )
-
-# post domain
-# subset samples to post domain
-b6_cast_samples_post <- sample_annot %>%
-  filter(strain %in% c("B6","CAST")) %>%
-  filter( AP_domain == "POST") %>%
-  separate(sample, sep = "_", into = c("s","e","d","ind","rep"), remove = F) %>%
-  select(-e,-d) %>%
-  mutate( rep = ifelse( is.na(rep),1,rep)) %>%
-  unite( "unique_sampleid" , c(s,ind,AP_domain,Gest_stage),sep ="_", remove = F)
-coldata_post <- b6_cast_samples_post %>%
-  select(sample,unique_sampleid, sex,ind, rep, AP_domain, Gest_stage, strain, LB_stage) %>%
-  #filter( rep ==1) %>%
-  filter(!is.na(sex) ) %>%
-  #mutate( AP_domain = factor(AP_domain, levels = c("PM","MAX","POST")) ) %>%
-  column_to_rownames("sample")
-cts_post <- round(raw_expr_mat[all_genes_palate$gene_id,rownames(coldata_post), drop = F])
-# let's make the dds object then collapse the technical replicates
-strain_dds_post <- DESeqDataSetFromMatrix( countData = cts_post,
-                                         colData = coldata_post,
-                                         design = ~1)
-strain_dds_coll_post <- collapseReplicates(strain_dds_post, strain_dds_post$unique_sampleid)
-
-# prep model wo interaction
-strain_simple_model_post <- model.matrix(~ strain + LB_stage + strain:ind,
-                                       data = colData(strain_dds_coll_post))
-all.zero <- apply(strain_simple_model_post, 2, function(x) all(x==0))
-idx <- which(all.zero)
-strain_simple_model_post <- strain_simple_model_post[,-idx]
-strain_dds_simple_post <- DESeq(strain_dds_coll_post, betaPrior = FALSE, full=strain_simple_model_post)
-
-# prep model with interaction
-strain_int_model_post <- model.matrix(~ strain + LB_stage + strain:ind + strain:LB_stage,
-                                    data = colData(strain_dds_coll_post))
-all.zero <- apply(strain_int_model_post, 2, function(x) all(x==0))
-idx <- which(all.zero)
-strain_int_model_post <- strain_int_model_post[,-idx]
-strain_dds_int_post <- DESeq(strain_dds_coll_post, betaPrior = FALSE, full=strain_int_model_post) # will get the logfold change + p values from this model
-
-# run lrt
-# comparing the full model with the interaction term between stage + domain to the reduced model without the interaction.
-strain_dds_post_lrt <- DESeq(strain_dds_coll_post, test="LRT",
-                           full= strain_int_model_post,
-                           reduced = strain_simple_model_post)
-
-# resultsNames(strain_dds_post_lrt)
-# Let's get the gene list that has a significant difference with/without the interaction term hence is likely to show an interaction effect!
-strain_dds_post_lrt_genes <- results( strain_dds_post_lrt) %>%
-  as_tibble( rownames = "gene_id") %>%
-  filter( padj < 0.05) %>%
-  left_join( all_genes_palate)
-
-# resultsNames(strain_dds_simple_post)
-# get genes
-strain_by_time_post_genes <- results(strain_dds_int_post, contrast = list(c("strainCAST.LB_stage")) ) %>%
-  as_tibble( rownames = "gene_id") %>%
-  filter( gene_id %in% strain_dds_post_lrt_genes$gene_id,
-          padj < 0.05,
-          abs(log2FoldChange) > 0.5
-  ) %>%
-  left_join(all_genes_palate)
-# Genes with strain effects without an interaction with LB stage:
-strain_post_genes <- results( strain_dds_simple_post, contrast = list(c("strainCAST"))) |> 
-  as_tibble(rownames = "gene_id") |> 
-  filter(
-    ! gene_id %in% strain_dds_post_lrt_genes$gene_id,
-    padj < 0.05,
-    abs(log2FoldChange) > 0.5
-  ) |> 
-  left_join(all_genes_palate) |> 
-  mutate( Comparison = case_when( log2FoldChange > 0 ~ "Higher expression in CAST",
-                                  log2FoldChange < 0 ~ "Lower expression in CAST")
-          )
-# get gene counts
-strain_dds_post_gene_counts <- counts(strain_dds_int_post, normalized=TRUE)[unique(strain_dds_post_lrt_genes$gene_id),] %>%
-  as_tibble( rownames = "gene_id") %>%
-  pivot_longer(2:ncol(.), names_to = "sample", values_to = "count") %>%
-  left_join(
-    colData(strain_dds_int_post) %>%
-      as_tibble(rownames = "sample") %>%
-      select(sample,strain, LB_stage, AP_domain)
-  )
-
+if(length(genes_CAST_high_strong) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_CAST_high_strong)
+  plot_main_strain_effect(genes_CAST_high_strong, "CAST >> B6 (strong)", count_data, n = 5)
+}
 ```
 
-::: {#B6_CAST_DESeq2_results2 .panel-tabset .nav-pills}
-
-#### PM domain
-
-There are `r formatC(length(unique(strain_pm_genes$gene_id)), big.mark = ",")`genes that are differentially expressed between B6 and CAST in the PM domain that do not have an interaction with developmental time (i.e. the difference between the strains are consistent over time). On the other hand, there are `r length(unique(strain_by_time_pm_genes$gene_id))` genes differentially expressed in the PM domain between B6 and CAST that also show difference in the trends over developmental time.
-
-##### Genes differentially expressed between B6 and CAST (no interaction with LB stage)
+#### Gene List
 
 ```{r}
-#| warning: false
+#| label: main-CAST-strong-table
 #| message: false
-#| fig-width: 20
-#| fig-height: 4
-
-strain_pm_genes |> 
-  inner_join(genes) |> 
-  select(gene_id,symbol,Comparison,type_long) |> 
-  distinct() |> 
-  left_join(strain_gene_counts) |> 
-  filter(AP_domain =="PM") |> 
-  ggplot()+
-  aes(x = LB_stage, 
-      y = count, 
-      col = strain,
-      group=interaction(gene_id,strain)
-      )+
-  #geom_boxplot( width = 0.2)+
-  geom_point()+
-  geom_smooth(method = "lm")+
-  scale_color_manual(values = strain_colors)+
-  theme_pubclean()+
-  scale_y_log10()+
-  ylab("Normalized gene expression counts (au)")+
-  #ggtitle("Domain effect (no interaction)")+
-  facet_wrap(~AP_domain+symbol, scales = "free", nrow = 1)
-```
-
-As you can see in the examples above, the trend over time for each gene is highly similar over developmental time.
-
-```{r}
-#| label: strain_pm_ora
 #| warning: false
-#| message: false
-#| cache: true
 
-# ora
-g.strain_pm_up_genes <- gost( query = unique( (strain_pm_genes %>%
-                                                filter(log2FoldChange > 0))$symbol),
-                           organism = "mmusculus",
-                           domain_scope = "custom",
-                           custom_bg = all_genes_palate$symbol,
-                           evcodes = TRUE
-                           )
-g.strain_pm_up_genes$result <- g.strain_pm_up_genes$result %>% filter(term_size < 660)
-
-
-g.strain_pm_down_genes <- gost( query = unique( (strain_pm_genes %>%
-                                                filter(log2FoldChange < 0))$symbol),
-                           organism = "mmusculus",
-                           domain_scope = "custom",
-                           custom_bg = all_genes_palate$symbol,
-                           evcodes = TRUE
-                           )
-g.strain_pm_down_genes$result <- g.strain_pm_down_genes$result %>% filter(term_size < 660)
-
+if(!is.null(main_patterns) && length(genes_CAST_high_strong) > 0) {
+  main_patterns |> filter(gene_id %in% genes_CAST_high_strong) |>
+    select(symbol, main_effect_lfc, strain_pattern) |> create_dt()
+}
 ```
 
+#### Enrichment
+
 ```{r}
+#| label: main-CAST-strong-enrich
+#| message: false
 #| warning: false
-#| message: false
 
-strain_pm_genes  %>%
-  left_join( all_genes_palate) |> 
-  select(gene_id, symbol, chromosome , padj, log2FoldChange) %>%
-  mutate( Comparison = ifelse( log2FoldChange >0, "Higher expression in CAST in PM","Lower expression in CAST in PM")) |> 
-  mutate( padj = formatC(padj, digits = 2,format = "e"),
-          log2FoldChange = formatC(log2FoldChange, digits = 2, format = "g")) %>%
-  create_dt()
-
+if(length(genes_CAST_high_strong) > 0) {
+  enrich <- run_enrichment_hybrid(genes_CAST_high_strong)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
 ```
 
+::::::::
+
+### CAST > B6 (Moderate)
+
+Genes with moderate upregulation in CAST (0.5 < log2FC ≤ 1).
+
+:::::::: {#main-CAST-mod-subtabs .panel-tabset}
+
+#### Plots
+
 ```{r}
+#| label: main-CAST-mod-plot
+#| message: false
 #| warning: false
-#| message: false
+#| fig.height: 16
 
-g.strain_pm_up_genes$result %>%
-  mutate( Category = "Log2FoldChange >0") %>%
-  rbind(
-    g.strain_pm_down_genes$result %>%
-      mutate(Category = "Log2FoldChange <0")
-  )  %>%
-  select( Category, term_name, source, p_value, term_size, intersection_size,intersection) %>%  # intersecion: adding the list of genes identified as overlapping with each category
-  mutate_if( is.numeric, formatC, digits =2) %>%
-  create_dt()
-
+if(length(genes_CAST_high_mod) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_CAST_high_mod)
+  plot_main_strain_effect(genes_CAST_high_mod, "CAST > B6 (moderate)", count_data, n = 5)
+}
 ```
 
-
-##### Genes differentially expressed with different trends over time (with strain by LB stage interaction)
+#### Gene List
 
 ```{r}
+#| label: main-CAST-mod-table
+#| message: false
 #| warning: false
-#| message: false
-#| fig-width: 8
-#| fig-height: 4
 
-strain_by_time_pm_genes |> 
-  inner_join(genes) |> 
-  select(gene_id,symbol,type_long,log2FoldChange) |> 
-  distinct() |> 
-  left_join(strain_gene_counts) |> 
-  filter(AP_domain =="PM") |> 
-  mutate( log2foldchange = round(log2FoldChange,2)) |> 
-  ggplot()+
-  aes(x = LB_stage, 
-      y = count, 
-      col = strain,
-      group=interaction(gene_id,strain)
-      )+
-  #geom_boxplot( width = 0.2)+
-  geom_point()+
-  geom_smooth(method = "lm")+
-  scale_color_manual(values = strain_colors)+
-  theme_pubclean()+
-  scale_y_log10()+
-  ylab("Normalized gene expression counts (au)")+
-  #ggtitle("Domain effect (no interaction)")+
-  facet_wrap(~AP_domain+symbol+log2foldchange, scales = "free", nrow = 2, ncol = 3)
-
+if(!is.null(main_patterns) && length(genes_CAST_high_mod) > 0) {
+  main_patterns |> filter(gene_id %in% genes_CAST_high_mod) |>
+    select(symbol, main_effect_lfc, strain_pattern) |> create_dt()
+}
 ```
 
-The example genes here show different trends over time, the slopes of the CAST line is higher than the B6 line on the left for *Itgb3* leading to a positive fold change whereas the opposite is observed for *Mmp9* leading to a negative fold change. Currently I am grouping genes based on the sign of the fold changes although I am not sure if that biologically makes sense. Let me know which genes you would like to investigate further and we can look at them closer instead.
+#### Enrichment
 
 ```{r}
-#| label: strain_by_time_pm_ora
+#| label: main-CAST-mod-enrich
+#| message: false
 #| warning: false
+
+if(length(genes_CAST_high_mod) > 0) {
+  enrich <- run_enrichment_hybrid(genes_CAST_high_mod)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+### B6 >> CAST (Strong)
+
+Genes with strong upregulation in B6 (log2FC < -1).
+
+:::::::: {#main-B6-strong-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: main-B6-strong-plot
 #| message: false
-#| cache: true
-
-
-# ora
-g.strain_by_time_pm_up_genes <- gost( query = unique( (strain_by_time_pm_genes %>%
-                                                filter(log2FoldChange > 0))$symbol),
-                           organism = "mmusculus",
-                           domain_scope = "custom",
-                           custom_bg = all_genes_palate$symbol,
-                           evcodes = TRUE
-                           )
-g.strain_by_time_pm_up_genes$result <- g.strain_by_time_pm_up_genes$result %>% filter(term_size < 660)
-
-
-g.strain_by_time_pm_down_genes <- gost( query = unique( (strain_by_time_pm_genes %>%
-                                                filter(log2FoldChange < 0))$symbol),
-                           organism = "mmusculus",
-                           domain_scope = "custom",
-                           custom_bg = all_genes_palate$symbol,
-                           evcodes = TRUE
-                           )
-g.strain_by_time_pm_down_genes$result <- g.strain_by_time_pm_down_genes$result %>% filter(term_size < 660)
-```
-
-```{r}
-
-strain_by_time_pm_genes  %>%
-  left_join( all_genes_palate) |> 
-  select(gene_id, symbol, chromosome , padj, log2FoldChange) %>%
-  mutate( padj = formatC(padj, digits = 2,format = "e"),
-          log2FoldChange = formatC(log2FoldChange, digits = 2, format = "g")) %>%
-  create_dt()
-
-```
-
-```{r}
-g.strain_by_time_pm_up_genes$result %>%
-  mutate( Category = "Log2FoldChange >0") %>%
-  rbind(
-    g.strain_by_time_pm_down_genes$result %>%
-      mutate(Category = "Log2FoldChange <0")
-  )  %>%
-  select( Category, term_name, source, p_value, term_size, intersection_size,intersection) %>%  # intersecion: adding the list of genes identified as overlapping with each category
-  mutate_if( is.numeric, formatC, digits =2) %>%
-  create_dt()
-
-```
-
-#### MAX domain
-
-There are `r formatC(length(unique(strain_max_genes$gene_id)),big.mark = ",")` genes that are differentially expressed between B6 and CAST in the MAX domain that do not have an interaction with developmental time (i.e. the difference between the strains are consistent over time). On the other hand, there are `r length(unique(strain_by_time_max_genes$gene_id))` genes differentially expressed in the MAX domain between B6 and CAST that also show difference in the trends over developmental time.
-
-##### Genes differentially expressed between B6 and CAST (no interaction with LB stage)
-
-```{r}
 #| warning: false
-#| message: false
-#| fig-width: 8
-#| fig-height: 4
-strain_max_genes |> 
-  inner_join(genes) |> 
-  select(gene_id,symbol,Comparison,type_long) |> 
-  distinct() |> 
-  left_join(strain_gene_counts) |> 
-  filter(AP_domain =="MAX") |> 
-  ggplot()+
-  aes(x = LB_stage, 
-      y = count, 
-      col = strain,
-      group=interaction(gene_id,strain)
-      )+
-  #geom_boxplot( width = 0.2)+
-  geom_point()+
-  geom_smooth(method = "lm")+
-  scale_color_manual(values = strain_colors)+
-  theme_pubclean()+
-  scale_y_log10()+
-  ylab("Normalized gene expression counts (au)")+
-  #ggtitle("Domain effect (no interaction)")+
-  facet_wrap(~AP_domain+symbol, scales = "free", nrow =1)
+#| fig.height: 16
+
+if(length(genes_B6_high_strong) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_B6_high_strong)
+  plot_main_strain_effect(genes_B6_high_strong, "B6 >> CAST (strong)", count_data, n = 5)
+}
 ```
 
-As you can see in the examples above, the trend over time for each gene is highly similar over developmental time.
+#### Gene List
 
 ```{r}
-#| label: strain_max_ora
-#| warning: false
+#| label: main-B6-strong-table
 #| message: false
-#| cache: true
+#| warning: false
 
-# ora
-g.strain_max_up_genes <- gost( query = unique( (strain_max_genes %>%
-                                                filter(log2FoldChange > 0))$symbol),
-                           organism = "mmusculus",
-                           domain_scope = "custom",
-                           custom_bg = all_genes_palate$symbol,
-                           evcodes = TRUE
-                           )
-g.strain_max_up_genes$result <- g.strain_max_up_genes$result %>% filter(term_size < 660)
-
-
-g.strain_max_down_genes <- gost( query = unique( (strain_max_genes %>%
-                                                filter(log2FoldChange < 0))$symbol),
-                           organism = "mmusculus",
-                           domain_scope = "custom",
-                           custom_bg = all_genes_palate$symbol,
-                           evcodes = TRUE
-                           )
-g.strain_max_down_genes$result <- g.strain_max_down_genes$result %>% filter(term_size < 660)
-
+if(!is.null(main_patterns) && length(genes_B6_high_strong) > 0) {
+  main_patterns |> filter(gene_id %in% genes_B6_high_strong) |>
+    select(symbol, main_effect_lfc, strain_pattern) |> create_dt()
+}
 ```
+
+#### Enrichment
 
 ```{r}
-#| warning: false
+#| label: main-B6-strong-enrich
 #| message: false
+#| warning: false
 
-strain_max_genes  %>%
-  left_join( all_genes_palate) |> 
-  select(gene_id, symbol, chromosome , padj, log2FoldChange) %>%
-  mutate( Comparison = ifelse( log2FoldChange >0, "Higher expression in CAST in MAX","Lower expression in CAST in MAX")) |> 
-  mutate( padj = formatC(padj, digits = 2,format = "e"),
-          log2FoldChange = formatC(log2FoldChange, digits = 2, format = "g")) %>%
-  create_dt()
-
+if(length(genes_B6_high_strong) > 0) {
+  enrich <- run_enrichment_hybrid(genes_B6_high_strong)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
 ```
+
+::::::::
+
+### B6 > CAST (Moderate)
+
+Genes with moderate upregulation in B6 (-1 ≤ log2FC < -0.5).
+
+:::::::: {#main-B6-mod-subtabs .panel-tabset}
+
+#### Plots
 
 ```{r}
-#| warning: false
+#| label: main-B6-mod-plot
 #| message: false
+#| warning: false
+#| fig.height: 16
 
-g.strain_max_up_genes$result %>%
-  mutate( Category = "Log2FoldChange >0") %>%
-  rbind(
-    g.strain_max_down_genes$result %>%
-      mutate(Category = "Log2FoldChange <0")
-  )  %>%
-  select( Category, term_name, source, p_value, term_size, intersection_size,intersection) %>%  # intersecion: adding the list of genes identified as overlapping with each category
-  mutate_if( is.numeric, formatC, digits =2) %>%
-  create_dt()
-
+if(length(genes_B6_high_mod) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_B6_high_mod)
+  plot_main_strain_effect(genes_B6_high_mod, "B6 > CAST (moderate)", count_data, n = 5)
+}
 ```
 
-##### Genes differentially expressed with different trends over time (with strain by LB stage interaction)
+#### Gene List
 
 ```{r}
-#| warning: false
+#| label: main-B6-mod-table
 #| message: false
-#| fig-width: 16
-#| fig-height: 4
-strain_by_time_max_genes |> 
-  inner_join(genes) |> 
-  select(gene_id,symbol,type_long,log2FoldChange) |> 
-  distinct() |> 
-  left_join(strain_gene_counts) |> 
-  filter(AP_domain =="MAX") |> 
-  mutate( log2foldchange = round(log2FoldChange,2)) |> 
-  ggplot()+
-  aes(x = LB_stage, 
-      y = count, 
-      col = strain,
-      group=interaction(gene_id,strain)
-      )+
-  #geom_boxplot( width = 0.2)+
-  geom_point()+
-  geom_smooth(method = "lm")+
-  scale_color_manual(values = strain_colors)+
-  theme_pubclean()+
-  scale_y_log10()+
-  ylab("Normalized gene expression counts (au)")+
-  #ggtitle("Domain effect (no interaction)")+
-  facet_wrap(~AP_domain+symbol+log2foldchange, scales = "free", nrow = 1)
+#| warning: false
+
+if(!is.null(main_patterns) && length(genes_B6_high_mod) > 0) {
+  main_patterns |> filter(gene_id %in% genes_B6_high_mod) |>
+    select(symbol, main_effect_lfc, strain_pattern) |> create_dt()
+}
 ```
 
-The example genes here show different trends over time, where the slopes of the CAST line is higher than the B6 line it leads to a positive fold change (ex: Itgb3) and where the opposite is observed leads to a negative fold change (ex: Acp5, Dcn, Mmp9). Currently I am grouping genes based on the sign of the fold changes although I am not sure if that biologically makes sense. Let me know which genes you would like to investigate further and we can look at them closer instead.
+#### Enrichment
 
 ```{r}
-#| label: strain_by_time_max_ora
-#| warning: false
+#| label: main-B6-mod-enrich
 #| message: false
-#| cache: true
+#| warning: false
 
-# ora
-g.strain_by_time_max_up_genes <- gost( query = unique( (strain_by_time_max_genes %>%
-                                                         filter(log2FoldChange > 0))$symbol),
-                                      organism = "mmusculus",
-                                      domain_scope = "custom",
-                                      custom_bg = all_genes_palate$symbol,
-                                      evcodes = TRUE
-)
-if( length(g.strain_by_time_max_up_genes$result) != 0) g.strain_by_time_max_up_genes$result <- g.strain_by_time_max_up_genes$result %>% filter(term_size < 660)
-
-
-g.strain_by_time_max_down_genes <- gost( query = unique( (strain_by_time_max_genes %>%
-                                                           filter(log2FoldChange < 0))$symbol),
-                                        organism = "mmusculus",
-                                        domain_scope = "custom",
-                                        custom_bg = all_genes_palate$symbol,
-                                        evcodes = TRUE
-)
-g.strain_by_time_max_down_genes$result <- g.strain_by_time_max_down_genes$result %>% filter(term_size < 660)
+if(length(genes_B6_high_mod) > 0) {
+  enrich <- run_enrichment_hybrid(genes_B6_high_mod)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
 ```
 
+::::::::
+
+:::::::::::
+
+## Domain × Strain Interactions
+
+These genes show strain differences that vary across palate domains.
+
+::::::::::: {#domain-strain-tabs .panel-tabset .nav-pills}
+
+### Overview
 
 ```{r}
-#| warning: false
+#| label: domain-strain-overview
 #| message: false
+#| warning: false
 
-strain_by_time_max_genes  %>%
-  select(gene_id, symbol, chromosome , padj, log2FoldChange) %>%
-  mutate( padj = formatC(padj, digits = 2,format = "e"),
-          log2FoldChange = formatC(log2FoldChange, digits = 2, format = "g")) %>%
-  create_dt()
-
+if(!is.null(domain_patterns)) {
+  domain_patterns |> count(detailed_pattern) |> arrange(desc(n)) |>
+    rename(Pattern = detailed_pattern, `N Genes` = n) |> create_dt()
+}
 ```
+
+### PM: Biggest Difference
+
+Genes where the largest strain difference occurs in the premaxilla (PM) domain.
+
+:::::::: {#domain-PM-subtabs .panel-tabset}
+
+#### Plots
 
 ```{r}
-#| warning: false
+#| label: domain-PM-biggest-plot
 #| message: false
+#| warning: false
+#| fig.height: 16
 
-g.strain_by_time_max_up_genes$result %>%
-  mutate( Category = "Log2FoldChange >0") %>%
-  rbind(
-    g.strain_by_time_max_down_genes$result %>%
-      mutate(Category = "Log2FoldChange <0")
-  )  %>%
-  select( Category, term_name, source, p_value, term_size, intersection_size,intersection) %>%  # intersecion: adding the list of genes identified as overlapping with each category
-  mutate_if( is.numeric, formatC, digits =2) %>%
-  create_dt()
-
+if(length(genes_PM_biggest_diff) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_PM_biggest_diff)
+  plot_domain_strain_interaction(genes_PM_biggest_diff, "Biggest strain diff in PM", count_data, n = 5)
+}
 ```
 
-
-#### POST domain
-
-There are `r formatC(length(unique(strain_post_genes$gene_id)),big.mark = ",")` genes that are differentially expressed between B6 and CAST in the POST domain that do not have an interaction with developmental time (i.e. the difference between the strains are consistent over time). On the other hand, there are `r length(unique(strain_by_time_post_genes$gene_id))` genes differentially expressed in the POST domain between B6 and CAST that also show difference in the trends over developmental time.
-
-##### Genes differentially expressed between B6 and CAST (no interaction with LB stage)
+#### Gene List
 
 ```{r}
-#| warning: false
+#| label: domain-PM-biggest-table
 #| message: false
-#| fig-width: 20
-#| fig-height: 4
-strain_post_genes |> 
-  inner_join(genes) |> 
-  select(gene_id,symbol,Comparison,type_long) |> 
-  distinct() |> 
-  left_join(strain_gene_counts) |> 
-  filter(AP_domain =="POST") |> 
-  ggplot()+
-  aes(x = LB_stage, 
-      y = count, 
-      col = strain,
-      group=interaction(gene_id,strain)
-      )+
-  #geom_boxplot( width = 0.2)+
-  geom_point()+
-  geom_smooth(method = "lm")+
-  scale_color_manual(values = strain_colors)+
-  theme_pubclean()+
-  scale_y_log10()+
-  ylab("Normalized gene expression counts (au)")+
-  #ggtitle("Domain effect (no interaction)")+
-  facet_wrap(~AP_domain+symbol, scales = "free", nrow = 1)
+#| warning: false
 
+if(!is.null(domain_patterns) && length(genes_PM_biggest_diff) > 0) {
+  domain_patterns |> filter(gene_id %in% genes_PM_biggest_diff) |>
+    select(symbol, diff_PM, diff_MAX, diff_POST, max_diff_direction) |> create_dt()
+}
 ```
 
-As you can see in the examples above, the trend over time for each gene is highly similar over developmental time. What is going on with Bglap2? I think it is expressed at a very low level and it is being picked up here because CAST samples don’t really have much expression.
+#### Enrichment
 
 ```{r}
-#| label: strain_post_ora
-#| warning: false
+#| label: domain-PM-biggest-enrich
 #| message: false
-#| cache: true
+#| warning: false
 
-# ora
-g.strain_post_up_genes <- gost( query = unique( (strain_post_genes %>%
-                                                filter(log2FoldChange > 0))$symbol),
-                           organism = "mmusculus",
-                           domain_scope = "custom",
-                           custom_bg = all_genes_palate$symbol,
-                           evcodes = TRUE
-                           )
-g.strain_post_up_genes$result <- g.strain_post_up_genes$result %>% filter(term_size < 660)
-
-
-g.strain_post_down_genes <- gost( query = unique( (strain_post_genes %>%
-                                                filter(log2FoldChange < 0))$symbol),
-                           organism = "mmusculus",
-                           domain_scope = "custom",
-                           custom_bg = all_genes_palate$symbol,
-                           evcodes = TRUE
-                           )
-g.strain_post_down_genes$result <- g.strain_post_down_genes$result %>% filter(term_size < 660)
-
+if(length(genes_PM_biggest_diff) > 0) {
+  enrich <- run_enrichment_hybrid(genes_PM_biggest_diff)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
 ```
+
+::::::::
+
+### MAX: Biggest Difference
+
+Genes where the largest strain difference occurs in the maxillary (MAX) domain.
+
+:::::::: {#domain-MAX-subtabs .panel-tabset}
+
+#### Plots
 
 ```{r}
-#| warning: false
+#| label: domain-MAX-biggest-plot
 #| message: false
+#| warning: false
+#| fig.height: 16
 
-strain_post_genes  %>%
-  left_join( all_genes_palate) |> 
-  select(gene_id, symbol, chromosome , padj, log2FoldChange) %>%
-  mutate( Comparison = ifelse( log2FoldChange >0, "Higher expression in CAST in POST","Lower expression in CAST in POST")) |> 
-  mutate( padj = formatC(padj, digits = 2,format = "e"),
-          log2FoldChange = formatC(log2FoldChange, digits = 2, format = "g")) %>%
-  create_dt()
-
+if(length(genes_MAX_biggest_diff) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_MAX_biggest_diff)
+  plot_domain_strain_interaction(genes_MAX_biggest_diff, "Biggest strain diff in MAX", count_data, n = 5)
+}
 ```
+
+#### Gene List
 
 ```{r}
-#| warning: false
+#| label: domain-MAX-biggest-table
 #| message: false
+#| warning: false
 
-g.strain_post_up_genes$result %>%
-  mutate( Category = "Log2FoldChange >0") %>%
-  rbind(
-    g.strain_post_down_genes$result %>%
-      mutate(Category = "Log2FoldChange <0")
-  )  %>%
-  select( Category, term_name, source, p_value, term_size, intersection_size,intersection) %>%  # intersecion: adding the list of genes identified as overlapping with each category
-  mutate_if( is.numeric, formatC, digits =2) %>%
-  create_dt()
-
+if(!is.null(domain_patterns) && length(genes_MAX_biggest_diff) > 0) {
+  domain_patterns |> filter(gene_id %in% genes_MAX_biggest_diff) |>
+    select(symbol, diff_PM, diff_MAX, diff_POST, max_diff_direction) |> create_dt()
+}
 ```
 
-
-##### Genes differentially expressed with different trends over time (with strain by LB stage interaction)
+#### Enrichment
 
 ```{r}
-#| warning: false
+#| label: domain-MAX-biggest-enrich
 #| message: false
-#| fig-width: 16
-#| fig-height: 4
-strain_by_time_post_genes |> 
-  #inner_join(genes) |> 
-  slice_sample(n = 4) |> 
-  select(gene_id,symbol,log2FoldChange) |> 
-  distinct() |> 
-  left_join(strain_gene_counts) |> 
-  filter(AP_domain =="POST") |> 
-  mutate( log2foldchange = round(log2FoldChange,2)) |> 
-  ggplot()+
-  aes(x = LB_stage, 
-      y = count, 
-      col = strain,
-      group=interaction(gene_id,strain)
-      )+
-  #geom_boxplot( width = 0.2)+
-  geom_point()+
-  geom_smooth(method = "lm")+
-  scale_color_manual(values = strain_colors)+
-  theme_pubclean()+
-  scale_y_log10()+
-  ylab("Normalized gene expression counts (au)")+
-  #ggtitle("Domain effect (no interaction)")+
-  facet_wrap(~AP_domain+symbol+log2foldchange, scales = "free", nrow = 1)
+#| warning: false
 
+if(length(genes_MAX_biggest_diff) > 0) {
+  enrich <- run_enrichment_hybrid(genes_MAX_biggest_diff)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
 ```
 
+::::::::
 
-The example genes here show different trends over time, where the slopes of the CAST line is higher than the B6 line it leads to a positive fold change and where the opposite is observed leads to a negative fold change. Currently I am grouping genes based on the sign of the fold changes although I am not sure if that biologically makes sense. Let me know which genes you would like to investigate further and we can look at them closer instead.
+### POST: Biggest Difference
+
+Genes where the largest strain difference occurs in the posterior (POST) domain.
+
+:::::::: {#domain-POST-subtabs .panel-tabset}
+
+#### Plots
 
 ```{r}
-#| label: strain_by_time_post_ora
-#| warning: false
+#| label: domain-POST-biggest-plot
 #| message: false
-#| cache: true
+#| warning: false
+#| fig.height: 16
 
-
-# ora
-g.strain_by_time_post_up_genes <- gost( query = unique( (strain_by_time_post_genes %>%
-                                                         filter(log2FoldChange > 0))$symbol),
-                                      organism = "mmusculus",
-                                      domain_scope = "custom",
-                                      custom_bg = all_genes_palate$symbol,
-                                      evcodes = TRUE
-)
-g.strain_by_time_post_up_genes$result <- g.strain_by_time_post_up_genes$result %>% filter(term_size < 660)
-
-
-g.strain_by_time_post_down_genes <- gost( query = unique( (strain_by_time_post_genes %>%
-                                                           filter(log2FoldChange < 0))$symbol),
-                                        organism = "mmusculus",
-                                        domain_scope = "custom",
-                                        custom_bg = all_genes_palate$symbol,
-                                        evcodes = TRUE
-)
-g.strain_by_time_post_down_genes$result <- g.strain_by_time_post_down_genes$result %>% filter(term_size < 660)
+if(length(genes_POST_biggest_diff) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_POST_biggest_diff)
+  plot_domain_strain_interaction(genes_POST_biggest_diff, "Biggest strain diff in POST", count_data, n = 5)
+}
 ```
+
+#### Gene List
 
 ```{r}
-#| warning: false
+#| label: domain-POST-biggest-table
 #| message: false
+#| warning: false
 
-strain_by_time_post_genes  %>%
-  select(gene_id, symbol, chromosome , padj, log2FoldChange) %>%
-  mutate( padj = formatC(padj, digits = 2,format = "e"),
-          log2FoldChange = formatC(log2FoldChange, digits = 2, format = "g")) %>%
-  create_dt()
-
+if(!is.null(domain_patterns) && length(genes_POST_biggest_diff) > 0) {
+  domain_patterns |> filter(gene_id %in% genes_POST_biggest_diff) |>
+    select(symbol, diff_PM, diff_MAX, diff_POST, max_diff_direction) |> create_dt()
+}
 ```
 
+#### Enrichment
 
 ```{r}
-#| warning: false
+#| label: domain-POST-biggest-enrich
 #| message: false
+#| warning: false
 
-g.strain_by_time_post_up_genes$result %>%
-  mutate( Category = "Log2FoldChange >0") %>%
-  rbind(
-    g.strain_by_time_post_down_genes$result %>%
-      mutate(Category = "Log2FoldChange <0")
-  )  %>%
-  select( Category, term_name, source, p_value, term_size, intersection_size,intersection) %>%  # intersecion: adding the list of genes identified as overlapping with each category
-  mutate_if( is.numeric, formatC, digits =2) %>%
-  create_dt()
-
+if(length(genes_POST_biggest_diff) > 0) {
+  enrich <- run_enrichment_hybrid(genes_POST_biggest_diff)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
 ```
 
-:::
+::::::::
 
+### Opposite Directions
 
-:::
+Genes where strain effects go in opposite directions across domains.
 
+:::::::: {#domain-opposite-subtabs .panel-tabset}
 
+#### Plots
 
+```{r}
+#| label: domain-opposite-plot
+#| message: false
+#| warning: false
+#| fig.height: 16
 
+if(length(genes_opposite_directions) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_opposite_directions)
+  plot_domain_strain_interaction(genes_opposite_directions, "Opposite strain effects across domains", count_data, n = 5)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: domain-opposite-table
+#| message: false
+#| warning: false
+
+if(!is.null(domain_patterns) && length(genes_opposite_directions) > 0) {
+  domain_patterns |> filter(gene_id %in% genes_opposite_directions) |>
+    select(symbol, diff_PM, diff_MAX, diff_POST, consistency) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: domain-opposite-enrich
+#| message: false
+#| warning: false
+
+if(length(genes_opposite_directions) > 0) {
+  enrich <- run_enrichment_hybrid(genes_opposite_directions)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+:::::::::::
+
+## Time × Strain Interactions
+
+These genes show strain differences that change over developmental time.
+
+::::::::::: {#time-strain-tabs .panel-tabset .nav-pills}
+
+### Overview
+
+```{r}
+#| label: time-strain-overview
+#| message: false
+#| warning: false
+
+if(!is.null(time_patterns)) {
+  time_patterns |> count(trajectory_pattern) |> arrange(desc(n)) |>
+    rename(Pattern = trajectory_pattern, `N Genes` = n) |> create_dt()
+}
+```
+
+### Both Increase, CAST Faster
+
+Both strains increase over time, but CAST increases faster.
+
+:::::::: {#time-both-inc-CAST-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: time-both-inc-CAST-plot
+#| message: false
+#| warning: false
+#| fig.height: 18
+
+if(length(genes_both_increase_CAST_faster) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_both_increase_CAST_faster)
+  plot_time_strain_interaction(genes_both_increase_CAST_faster, "Both ↑, CAST faster", count_data, n = 4)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: time-both-inc-CAST-table
+#| message: false
+#| warning: false
+
+if(!is.null(time_patterns) && length(genes_both_increase_CAST_faster) > 0) {
+  time_patterns |> filter(gene_id %in% genes_both_increase_CAST_faster) |>
+    select(symbol, slope_CAST, slope_B6, slope_diff, trajectory_pattern) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: time-both-inc-CAST-enrich
+#| message: false
+#| warning: false
+
+if(length(genes_both_increase_CAST_faster) > 0) {
+  enrich <- run_enrichment_hybrid(genes_both_increase_CAST_faster)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+### Both Decrease, CAST Faster
+
+Both strains decrease over time, but CAST decreases faster.
+
+:::::::: {#time-both-dec-CAST-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: time-both-dec-CAST-plot
+#| message: false
+#| warning: false
+#| fig.height: 18
+
+if(length(genes_both_decrease_CAST_faster) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_both_decrease_CAST_faster)
+  plot_time_strain_interaction(genes_both_decrease_CAST_faster, "Both ↓, CAST faster", count_data, n = 4)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: time-both-dec-CAST-table
+#| message: false
+#| warning: false
+
+if(!is.null(time_patterns) && length(genes_both_decrease_CAST_faster) > 0) {
+  time_patterns |> filter(gene_id %in% genes_both_decrease_CAST_faster) |>
+    select(symbol, slope_CAST, slope_B6, slope_diff, trajectory_pattern) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: time-both-dec-CAST-enrich
+#| message: false
+#| warning: false
+
+if(length(genes_both_decrease_CAST_faster) > 0) {
+  enrich <- run_enrichment_hybrid(genes_both_decrease_CAST_faster)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+### CAST Increases, B6 Decreases
+
+Strains diverge: CAST expression increases while B6 decreases.
+
+:::::::: {#time-CAST-up-B6-down-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: time-CAST-up-B6-down-plot
+#| message: false
+#| warning: false
+#| fig.height: 18
+
+if(length(genes_CAST_up_B6_down) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_CAST_up_B6_down)
+  plot_time_strain_interaction(genes_CAST_up_B6_down, "CAST ↑, B6 ↓", count_data, n = 4)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: time-CAST-up-B6-down-table
+#| message: false
+#| warning: false
+
+if(!is.null(time_patterns) && length(genes_CAST_up_B6_down) > 0) {
+  time_patterns |> filter(gene_id %in% genes_CAST_up_B6_down) |>
+    select(symbol, slope_CAST, slope_B6, slope_diff, trajectory_pattern) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: time-CAST-up-B6-down-enrich
+#| message: false
+#| warning: false
+
+if(length(genes_CAST_up_B6_down) > 0) {
+  enrich <- run_enrichment_hybrid(genes_CAST_up_B6_down)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+### B6 Increases, CAST Decreases
+
+Strains diverge: B6 expression increases while CAST decreases.
+
+:::::::: {#time-B6-up-CAST-down-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: time-B6-up-CAST-down-plot
+#| message: false
+#| warning: false
+#| fig.height: 18
+
+if(length(genes_B6_up_CAST_down) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_B6_up_CAST_down)
+  plot_time_strain_interaction(genes_B6_up_CAST_down, "B6 ↑, CAST ↓", count_data, n = 4)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: time-B6-up-CAST-down-table
+#| message: false
+#| warning: false
+
+if(!is.null(time_patterns) && length(genes_B6_up_CAST_down) > 0) {
+  time_patterns |> filter(gene_id %in% genes_B6_up_CAST_down) |>
+    select(symbol, slope_CAST, slope_B6, slope_diff, trajectory_pattern) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: time-B6-up-CAST-down-enrich
+#| message: false
+#| warning: false
+
+if(length(genes_B6_up_CAST_down) > 0) {
+  enrich <- run_enrichment_hybrid(genes_B6_up_CAST_down)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+### CAST Dynamic, B6 Flat
+
+CAST shows dynamic expression changes while B6 remains relatively flat.
+
+:::::::: {#time-CAST-dynamic-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: time-CAST-dynamic-plot
+#| message: false
+#| warning: false
+#| fig.height: 18
+
+if(length(genes_CAST_dynamic_B6_flat) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_CAST_dynamic_B6_flat)
+  plot_time_strain_interaction(genes_CAST_dynamic_B6_flat, "CAST dynamic, B6 flat", count_data, n = 4)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: time-CAST-dynamic-table
+#| message: false
+#| warning: false
+
+if(!is.null(time_patterns) && length(genes_CAST_dynamic_B6_flat) > 0) {
+  time_patterns |> filter(gene_id %in% genes_CAST_dynamic_B6_flat) |>
+    select(symbol, slope_CAST, slope_B6, trajectory_pattern) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: time-CAST-dynamic-enrich
+#| message: false
+#| warning: false
+
+if(length(genes_CAST_dynamic_B6_flat) > 0) {
+  enrich <- run_enrichment_hybrid(genes_CAST_dynamic_B6_flat)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+### B6 Dynamic, CAST Flat
+
+B6 shows dynamic expression changes while CAST remains relatively flat.
+
+:::::::: {#time-B6-dynamic-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: time-B6-dynamic-plot
+#| message: false
+#| warning: false
+#| fig.height: 18
+
+if(length(genes_B6_dynamic_CAST_flat) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_B6_dynamic_CAST_flat)
+  plot_time_strain_interaction(genes_B6_dynamic_CAST_flat, "B6 dynamic, CAST flat", count_data, n = 4)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: time-B6-dynamic-table
+#| message: false
+#| warning: false
+
+if(!is.null(time_patterns) && length(genes_B6_dynamic_CAST_flat) > 0) {
+  time_patterns |> filter(gene_id %in% genes_B6_dynamic_CAST_flat) |>
+    select(symbol, slope_CAST, slope_B6, trajectory_pattern) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: time-B6-dynamic-enrich
+#| message: false
+#| warning: false
+
+if(length(genes_B6_dynamic_CAST_flat) > 0) {
+  enrich <- run_enrichment_hybrid(genes_B6_dynamic_CAST_flat)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+:::::::::::
+
+## Three-Way Interactions
+
+These genes show domain-specific strain differences that also change over developmental time.
+
+::::::::::: {#threeway-tabs .panel-tabset .nav-pills}
+
+### Overview
+
+```{r}
+#| label: threeway-overview
+#| message: false
+#| warning: false
+
+if(!is.null(threeway_patterns)) {
+  threeway_patterns |> count(pattern) |> arrange(desc(n)) |>
+    rename(Pattern = pattern, `N Genes` = n) |> create_dt()
+}
+```
+
+### PM: Biggest Slope Difference
+
+Genes where the strain difference in developmental trajectory is largest in PM.
+
+:::::::: {#threeway-PM-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: threeway-PM-plot
+#| message: false
+#| warning: false
+#| fig.height: 14
+
+if(length(genes_PM_biggest_slope_diff) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_PM_biggest_slope_diff)
+  plot_threeway_interaction(genes_PM_biggest_slope_diff, "PM: largest slope diff", count_data, n = 4)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: threeway-PM-table
+#| message: false
+#| warning: false
+
+if(!is.null(threeway_patterns) && length(genes_PM_biggest_slope_diff) > 0) {
+  threeway_patterns |> filter(gene_id %in% genes_PM_biggest_slope_diff) |>
+    select(symbol, slope_diff_PM, slope_diff_MAX, slope_diff_POST, pattern) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: threeway-PM-enrich
+#| message: false
+#| warning: false
+
+if(length(genes_PM_biggest_slope_diff) > 0) {
+  enrich <- run_enrichment_hybrid(genes_PM_biggest_slope_diff)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+### MAX: Biggest Slope Difference
+
+Genes where the strain difference in developmental trajectory is largest in MAX.
+
+:::::::: {#threeway-MAX-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: threeway-MAX-plot
+#| message: false
+#| warning: false
+#| fig.height: 14
+
+if(length(genes_MAX_biggest_slope_diff) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_MAX_biggest_slope_diff)
+  plot_threeway_interaction(genes_MAX_biggest_slope_diff, "MAX: largest slope diff", count_data, n = 4)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: threeway-MAX-table
+#| message: false
+#| warning: false
+
+if(!is.null(threeway_patterns) && length(genes_MAX_biggest_slope_diff) > 0) {
+  threeway_patterns |> filter(gene_id %in% genes_MAX_biggest_slope_diff) |>
+    select(symbol, slope_diff_PM, slope_diff_MAX, slope_diff_POST, pattern) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: threeway-MAX-enrich
+#| message: false
+#| warning: false
+
+if(length(genes_MAX_biggest_slope_diff) > 0) {
+  enrich <- run_enrichment_hybrid(genes_MAX_biggest_slope_diff)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+### POST: Biggest Slope Difference
+
+Genes where the strain difference in developmental trajectory is largest in POST.
+
+:::::::: {#threeway-POST-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: threeway-POST-plot
+#| message: false
+#| warning: false
+#| fig.height: 14
+
+if(length(genes_POST_biggest_slope_diff) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_POST_biggest_slope_diff)
+  plot_threeway_interaction(genes_POST_biggest_slope_diff, "POST: largest slope diff", count_data, n = 4)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: threeway-POST-table
+#| message: false
+#| warning: false
+
+if(!is.null(threeway_patterns) && length(genes_POST_biggest_slope_diff) > 0) {
+  threeway_patterns |> filter(gene_id %in% genes_POST_biggest_slope_diff) |>
+    select(symbol, slope_diff_PM, slope_diff_MAX, slope_diff_POST, pattern) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: threeway-POST-enrich
+#| message: false
+#| warning: false
+
+if(length(genes_POST_biggest_slope_diff) > 0) {
+  enrich <- run_enrichment_hybrid(genes_POST_biggest_slope_diff)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+### Consistent Across Domains
+
+Genes where strain slope differences are consistent across all domains.
+
+:::::::: {#threeway-consistent-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: threeway-consistent-plot
+#| message: false
+#| warning: false
+#| fig.height: 14
+
+if(length(genes_consistent_slope_diffs) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_consistent_slope_diffs)
+  plot_threeway_interaction(genes_consistent_slope_diffs, "Consistent slope diffs", count_data, n = 4)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: threeway-consistent-table
+#| message: false
+#| warning: false
+
+if(!is.null(threeway_patterns) && length(genes_consistent_slope_diffs) > 0) {
+  threeway_patterns |> filter(gene_id %in% genes_consistent_slope_diffs) |>
+    select(symbol, slope_diff_PM, slope_diff_MAX, slope_diff_POST, consistency) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: threeway-consistent-enrich
+#| message: false
+#| warning: false
+
+if(length(genes_consistent_slope_diffs) > 0) {
+  enrich <- run_enrichment_hybrid(genes_consistent_slope_diffs)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+:::::::::::
+
+## Domain-Specific Strain Effects
+
+For genes with domain × strain interactions, we identify which specific domains show strain effects.
+
+::::::::::: {#domain-specific-tabs .panel-tabset .nav-pills}
+
+### Overview
+
+```{r}
+#| label: domain-specific-overview
+#| message: false
+#| warning: false
+
+if(!is.null(domain_specificity)) {
+  domain_specificity |> count(specificity_pattern) |> arrange(desc(n)) |>
+    rename(`Specificity Pattern` = specificity_pattern, `Number of Genes` = n) |> create_dt()
+}
+```
+
+### PM Only
+
+Strain differences are present only in the premaxilla domain.
+
+:::::::: {#domain-specific-PM-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: domain-specific-PM-only-plot
+#| message: false
+#| warning: false
+#| fig.height: 16
+
+if(exists("genes_strain_PM_only") && length(genes_strain_PM_only) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_strain_PM_only)
+  plot_domain_specificity(genes_strain_PM_only, "PM only", count_data, n = 5)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: domain-specific-PM-only-table
+#| message: false
+#| warning: false
+
+if(!is.null(domain_specificity) && exists("genes_strain_PM_only") && length(genes_strain_PM_only) > 0) {
+  domain_specificity |> filter(gene_id %in% genes_strain_PM_only) |>
+    select(symbol, specificity_pattern, effect_PM, effect_MAX, effect_POST) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: domain-specific-PM-only-enrich
+#| message: false
+#| warning: false
+
+if(exists("genes_strain_PM_only") && length(genes_strain_PM_only) > 0) {
+  enrich <- run_enrichment_hybrid(genes_strain_PM_only)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+### MAX Only
+
+Strain differences are present only in the maxillary domain.
+
+:::::::: {#domain-specific-MAX-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: domain-specific-MAX-only-plot
+#| message: false
+#| warning: false
+#| fig.height: 16
+
+if(exists("genes_strain_MAX_only") && length(genes_strain_MAX_only) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_strain_MAX_only)
+  plot_domain_specificity(genes_strain_MAX_only, "MAX only", count_data, n = 5)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: domain-specific-MAX-only-table
+#| message: false
+#| warning: false
+
+if(!is.null(domain_specificity) && exists("genes_strain_MAX_only") && length(genes_strain_MAX_only) > 0) {
+  domain_specificity |> filter(gene_id %in% genes_strain_MAX_only) |>
+    select(symbol, specificity_pattern, effect_PM, effect_MAX, effect_POST) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: domain-specific-MAX-only-enrich
+#| message: false
+#| warning: false
+
+if(exists("genes_strain_MAX_only") && length(genes_strain_MAX_only) > 0) {
+  enrich <- run_enrichment_hybrid(genes_strain_MAX_only)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+### POST Only
+
+Strain differences are present only in the posterior palate domain.
+
+:::::::: {#domain-specific-POST-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: domain-specific-POST-only-plot
+#| message: false
+#| warning: false
+#| fig.height: 16
+
+if(exists("genes_strain_POST_only") && length(genes_strain_POST_only) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_strain_POST_only)
+  plot_domain_specificity(genes_strain_POST_only, "POST only", count_data, n = 5)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: domain-specific-POST-only-table
+#| message: false
+#| warning: false
+
+if(!is.null(domain_specificity) && exists("genes_strain_POST_only") && length(genes_strain_POST_only) > 0) {
+  domain_specificity |> filter(gene_id %in% genes_strain_POST_only) |>
+    select(symbol, specificity_pattern, effect_PM, effect_MAX, effect_POST) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: domain-specific-POST-only-enrich
+#| message: false
+#| warning: false
+
+if(exists("genes_strain_POST_only") && length(genes_strain_POST_only) > 0) {
+  enrich <- run_enrichment_hybrid(genes_strain_POST_only)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+### All Domains
+
+Strain differences are present in all three AP domains.
+
+:::::::: {#domain-specific-all-subtabs .panel-tabset}
+
+#### Plots
+
+```{r}
+#| label: domain-specific-all-plot
+#| message: false
+#| warning: false
+#| fig.height: 16
+
+if(exists("genes_strain_all_domains") && length(genes_strain_all_domains) > 0) {
+  count_data <- get_normalized_counts(strain_dds_lrt, genes_strain_all_domains)
+  plot_domain_specificity(genes_strain_all_domains, "All domains", count_data, n = 5)
+}
+```
+
+#### Gene List
+
+```{r}
+#| label: domain-specific-all-table
+#| message: false
+#| warning: false
+
+if(!is.null(domain_specificity) && exists("genes_strain_all_domains") && length(genes_strain_all_domains) > 0) {
+  domain_specificity |> filter(gene_id %in% genes_strain_all_domains) |>
+    select(symbol, specificity_pattern, effect_PM, effect_MAX, effect_POST) |> create_dt()
+}
+```
+
+#### Enrichment
+
+```{r}
+#| label: domain-specific-all-enrich
+#| message: false
+#| warning: false
+
+if(exists("genes_strain_all_domains") && length(genes_strain_all_domains) > 0) {
+  enrich <- run_enrichment_hybrid(genes_strain_all_domains)
+  if(!is.null(enrich)) format_enrichment_result(enrich) |> create_dt()
+}
+```
+
+::::::::
+
+:::::::::::
+
+## Session Info
+
+```{r}
+#| label: session-info
+#| message: false
+#| warning: false
+
+sessionInfo()
+```
