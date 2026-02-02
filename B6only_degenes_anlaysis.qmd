@@ -46,6 +46,8 @@ library(ggpubr)
 library(patchwork)
 library(DESeq2)
 library(DT)
+library(gprofiler2)
+library(enrichR) # for mammalian phenotypes
 library(here)
 
 # Explicitly define common functions to avoid conflicts
@@ -55,19 +57,6 @@ filter <- dplyr::filter
 summarize <- dplyr::summarize
 
 set.seed(123) # for reproducibility
-
-# DT table function
-create_dt <- function(x){
-  DT::datatable(x,
-                extensions = 'Buttons',
-                rownames = FALSE, 
-                filter = "top",
-                options = list(dom = 'Blfrtip',
-                               buttons = c('copy', 'csv', 'excel'),
-                               pageLength = 10, 
-                               scrollX = TRUE
-                ))
-}
 
 # Read sample details
 sample_details <- read_csv("/projects/munger-lab/projects/palate-project-murray-munger/samplesheet.csv") 
@@ -81,12 +70,177 @@ domain_colors <- c(PM = rgb(252, 206, 93, maxColorValue = 255),
 strain_colors <- c(B6 = "#555555", 
                    CAST = "#009E73",
                    DO = rgb(163, 82, 157, maxColorValue = 255))
-```
 
-```{r}
-#| label: plotting-functions
-#| warning: false
-#| message: false
+# helper functions
+create_dt <- function(x){
+  
+  # Custom formatting function
+  format_num <- function(val) {
+    case_when(
+      is.na(val) ~ NA_real_,
+      abs(val) < 0.01 ~ signif(val, 2),
+      TRUE ~ round(val, 2)
+    )
+  }
+  
+  x <- x |> 
+    mutate(across(where(is.numeric), format_num))
+  
+  DT::datatable(x,
+                extensions = 'Buttons',
+                rownames = FALSE, 
+                filter = "top",
+                options = list(dom = 'Blfrtip',
+                               buttons = c('copy', 'csv', 'excel'),
+                               pageLength = 10, 
+                               scrollX = TRUE
+                ))
+}
+
+# Function to run enrichment with both gprofiler2 AND Enrichr
+run_enrichment_hybrid <- function(gene_ids, 
+                                 gene_reference = all_genes_palate,
+                                 description = "Gene Set",
+                                 max_term_size = 660,
+                                 min_term_size = 4) {
+  
+  # Convert gene IDs to symbols
+  query_symbols <- gene_reference |>
+    filter(gene_id %in% unique(gene_ids)) |>
+    pull(symbol) |>
+    unique()
+  
+  # Get background symbols
+  background_symbols <- gene_reference$symbol
+  
+  # Skip if too few genes
+  if(length(query_symbols) < 5) {
+    message(paste0("Skipping ", description, ": fewer than 5 genes"))
+    return(NULL)
+  }
+  
+  # Query 1: gprofiler2 for GO, KEGG, Reactome, WikiPathways
+  result_gprofiler <- gost(
+    query = query_symbols,
+    organism = "mmusculus",
+    domain_scope = "custom",
+    custom_bg = background_symbols,
+    #sources = c("GO:BP", "GO:MF", "GO:CC", "KEGG", "REAC", "WP"),
+    evcodes = TRUE
+  )
+  
+  # Query 2: Enrichr for Mammalian Phenotype (full database)
+  result_enrichr <- enrichr(
+    genes = query_symbols,
+    databases = c("MGI_Mammalian_Phenotype_Level_4_2021"),
+                  #"MGI_Mammalian_Phenotype_Level_4_2019"),
+    background =  background_symbols,
+    include_overlap = TRUE
+  )
+  
+  # Format gprofiler results
+  gprofiler_df <- NULL
+  if(!is.null(result_gprofiler$result)) {
+    gprofiler_df <- result_gprofiler$result |>
+      filter(term_size < max_term_size) |>
+      filter(term_size > min_term_size) |>
+      mutate(gene_set = description) |>
+      select(gene_set, source, term_id, term_name, p_value, 
+             query_size, term_size, intersection_size, intersection)
+  }
+  
+  # Format Enrichr results to match gprofiler format
+  enrichr_df <- NULL
+  if(!is.null(result_enrichr) && length(result_enrichr) > 0) {
+    # Process each database separately
+    enrichr_dfs <- lapply(names(result_enrichr), function(db_name) {
+      db_result <- result_enrichr[[db_name]]
+      
+      # Check if result has data (not empty or all NA)
+      if(is.null(db_result) || nrow(db_result) == 0 || all(is.na(db_result$Term))) {
+        return(NULL)
+      }
+      
+      db_result |>
+        filter(Adjusted.P.value < 0.05) |>
+        mutate(
+          gene_set = description,
+          source = "Mammalian Phenotype",
+          term_id = Term,
+          term_name = Term,
+          p_value = Adjusted.P.value,
+          query_size = length(query_symbols),
+          term_size = as.numeric(gsub("/.*", "", Overlap)),  # Extract from "10/500" format
+          intersection_size = as.numeric(gsub("/.*", "", Overlap)),
+          intersection = Genes
+        ) |>
+        filter(term_size < max_term_size) |>
+        filter(term_size > min_term_size) |>
+        select(gene_set, source, term_id, term_name, p_value, 
+               query_size, term_size, intersection_size, intersection)
+    })
+    
+    # Remove NULL entries and combine
+    enrichr_dfs <- enrichr_dfs[!sapply(enrichr_dfs, is.null)]
+    if(length(enrichr_dfs) > 0) {
+      enrichr_df <- bind_rows(enrichr_dfs)
+    }
+  }
+  
+  # Combine results
+  combined_result <- bind_rows(gprofiler_df, enrichr_df)
+  
+  if(nrow(combined_result) > 0) {
+    return(list(result = combined_result))
+  } else {
+    return(NULL)
+  }
+}
+
+# Updated format function
+format_enrichment_result <- function(enrichment_table) {
+  
+  all_results <- enrichment_table$result
+  
+  if(nrow(all_results) == 0) {
+    message("No significant enrichment results found")
+    return(NULL)
+  }
+  
+  # Format for display
+  all_results |>
+    mutate(
+      # Make source more readable
+      source_type = case_when(
+        source == "GO:BP" ~ "GO: Biological Process",
+        source == "GO:MF" ~ "GO: Molecular Function",
+        source == "GO:CC" ~ "GO: Cellular Component",
+        source == "KEGG" ~ "KEGG Pathways",
+        source == "REAC" ~ "Reactome Pathways",
+        source == "WP" ~ "WikiPathways",
+        source == "Mammalian Phenotype" ~ "Mammalian Phenotype (MGI)",
+        TRUE ~ source
+      )
+    ) |>
+    select(gene_set, source = source_type, term_id, term_name, p_value, 
+           query_size, term_size, intersection_size, intersection) |>
+    mutate(
+      p_value_fmt = formatC(as.numeric(p_value), digits = 2, format = "e"),
+      genes = sapply(strsplit(as.character(intersection), "[,;]"), function(x) {
+        x <- trimws(x)
+        if(length(x) > 5) {
+          paste0(paste(x[1:5], collapse = ", "), ", ...")
+        } else {
+          paste(x, collapse = ", ")
+        }
+      })
+    ) |>
+    select(gene_set, source, term_name, p_value = p_value_fmt, 
+           query_size, term_size, intersection_size, genes) |>
+    arrange(gene_set, source, p_value)
+}
+
+# plotting-functions
 
 # ===== FUNCTION 1: COMPARE UP VS DOWN IN SAME DOMAIN =====
 plot_domain_direction_comparison <- function(genes_up, genes_down, 
@@ -343,7 +497,7 @@ plot_domain_specific_dynamics <- function(gene_ids, domain_name, direction,
                       width = 0.3) +
         geom_hline(yintercept = 0, linetype = "dashed") +
         geom_text(aes(label = ifelse(padj < 0.001, "***",
-                                     ifelse(padj < 0.01, "**",
+                                     ifelse(p_value < 0.01, "**",
                                             ifelse(padj < 0.05, "*", "ns")))),
                   vjust = -0.5, size = 4) +
         scale_fill_manual(values = domain_colors) +
@@ -570,24 +724,14 @@ sample_annot_all <- sample_details |>
     between(LB_stage, 14.25, 14.75) ~ "3",
     between(LB_stage, 15.1, 15.6) ~ "4"
   ))
+
+
 ```
 
 # Differential gene expression analysis overview
 
-Briefly, I analyzed the B6 data on its own to identify genes differentially expressed across AP domains, over developmental time and change differently over time across domains.
-
-For the individual strain analysis with B6:
-
-I am focusing on the data from only the B6 animals that includes males and females, and contain the three AP domains (PM, MAX and POST) obtained at various developmental stages (LB_stage). I merge the technical replicates due to resequencing of several samples using `collapseReplicates()` function from DESeq2. We expect to have genes that show significant differences between AP domains, over developmental time and genes with different trends over time across the three tissues.
-
-In order to identify differentially expressed genes between AP domains and over time I obtain the main effects for AP_domain and LB_stage while using a nesting for the AP domain since they are obtained from the same animal (~ AP_domain + LB_stage + AP_domain:ind).
-
-For identifying genes with different trends over time across the three AP domains and genes differentially expressed between domains variably over time I use the likelihood ratio test (LRT) to compare the initial simple model to the one that includes an interaction term between AP domain and limb bud stage (~ AP_domain + LB_stage + AP_domain:ind + AP_domain:LB_stage). Once I have this DE gene list, I then use the full model to get the effects of developmental time in all three domains.
-
-Note that we need to be very careful when interpreting the main effects with a linear model that contains an interaction term, they do not represent the overall effect of the predictor (e.g. LB_stage) since the predictors involved in an interaction do not have a single overall effect anymore! For example the main effect for LB_stage will represent the effect when AP_domain is at the reference level which is the PM domain in our data set.
-
 ```{r}
-#| label: prep-b6-for-deseq2
+#| label: prep-run-b6-for-deseq2
 #| warning: false
 #| message: false
 
@@ -622,12 +766,6 @@ b6_dds_coll <- collapseReplicates(b6_dds, b6_dds$unique_sampleid)
 # Update LB-stage to have 0 as the starting point
 min_LB_stage <- min(colData(b6_dds_coll)$LB_stage)
 colData(b6_dds_coll)$LB_stage_from_start <- colData(b6_dds_coll)$LB_stage - min_LB_stage
-```
-
-```{r}
-#| label: run-deseq2-b6
-#| warning: false
-#| message: false
 
 # Define design matrices
 b6_simple_model <- model.matrix(~ sex + ind:AP_domain + LB_stage_from_start + AP_domain, 
@@ -649,12 +787,7 @@ genes_with_interaction <- results(b6_dds_lrt) |>
   as_tibble(rownames = "gene_id") |> 
   filter(padj < 0.05) |> 
   pull(gene_id)
-```
 
-```{r}
-#| label: get-degenes-b6
-#| warning: false
-#| message: false
 
 # Helper function for consistent filtering
 filter_genes <- function(results_df, min_basemean = 50, max_lfcse = 1.5, 
@@ -669,6 +802,7 @@ filter_genes <- function(results_df, min_basemean = 50, max_lfcse = 1.5,
     )
 }
 
+# Get genes with effects
 # ===== MAIN EFFECTS (genes WITHOUT interaction) =====
 
 # Domain effects from SIMPLE model
@@ -717,6 +851,7 @@ b6_stage_main_effects_clean <- filter_genes(
   min_basemean = quantile(b6_stage_main_effects$baseMean, 0.1, na.rm = TRUE)
 )
 
+# Note that we need to be very careful when interpreting the main effects with a linear model that contains an interaction term, they do not represent the overall effect of the predictor (e.g. LB_stage) since the predictors involved in an interaction do not have a single overall effect anymore! For example the main effect for LB_stage will represent the effect when AP_domain is at the reference level which is the PM domain in our data set.
 # ===== INTERACTION EFFECTS (genes WITH interaction) =====
 
 # 1. INITIAL DOMAIN DIFFERENCES (at earliest stage)
@@ -819,12 +954,10 @@ b6_gene_counts <- counts(b6_dds_simple, normalized = TRUE) |>
     by = "sample"
   ) |>
   left_join(all_genes_palate, by = "gene_id")
-```
 
-```{r}
-#| label: load-pattern-results
-#| warning: false
-#| message: false
+
+# Run pattern identification script that generates the pattern_summary, gene_assignments and domain_dynamics files to read in.
+# source(here("DEgene_pattern_identification_B6.R"))
 
 # Load pattern assignments and summaries
 pattern_summary <- read_csv(here("pattern_summary_detailed.csv"))
@@ -832,7 +965,17 @@ gene_assignments <- read_csv(here("gene_pattern_assignments_detailed.csv"))
 domain_dynamics <- read_csv(here("domain_specific_dynamics_detailed.csv"))
 ```
 
-This report presents a comprehensive analysis of gene expression patterns during palate development across three anatomical domains (PM, MAX, POST) and developmental time. We identified **`r nrow(gene_assignments)` genes** with significant spatiotemporal expression patterns, classified into six major categories:
+Here, I analyze the B6 data on its own to identify genes differentially expressed across AP domains, over developmental time and change differently over time across domains. The data from B6 animals includes males and females, and contain the three AP domains (PM, MAX and POST) obtained at various developmental stages (LB_stage).
+I merge the technical replicates due to re-sequencing of several samples using `collapseReplicates()` function from DESeq2. 
+
+In order to identify differentially expressed genes between domains and developmental time, I obtain the main effects for domain (AP_domain) and centered developmental time (LB_stage_from_the_start, minimum LB_stage value is subtracted to start the continous variable from 0) while using a nesting for the domain since they are obtained from the same animal (\~ sex + AP_domain + LB_stage + AP_domain:ind).
+
+
+For identifying genes with significant interactions between domain and time meaning they have different spatiotemporal gene expression patterns I use the likelihood ratio test (LRT) to compare the initial simple model to the more complex linear model that includes the interaction term (\~ sex + AP_domain + LB_stage + AP_domain:ind + AP_domain:LB_stage).
+Once I have this DE gene list, I then use the complex model to get the effects of developmental time in all three domains.
+
+From this analysis, I have identified **`r nrow(gene_assignments)` genes** with significant spatiotemporal expression patterns across the three anatomical domains (PM, MAX, POST) and developmental time.
+I used `DEgene_pattern_identification_B6.R` script to classify these differentially expressed genes into six major categories based on expression patterns:
 
 ```{r}
 #| label: summary-table
@@ -849,11 +992,57 @@ pattern_summary |>
   create_dt()
 ```
 
-:::: {#B6_DESeq2_effects .panel-tabset .nav-pills}
+Briefly, I explain how each gene list is generated below:
 
-## Domain Main Effects 
+First, DESeq2 results were filtered to retain high-confidence calls: baseMean \> 10th percentile, log2FoldChange standard error \< 1.5 (or \< 2 for slope analyses), \|log2FoldChange\| between 0.5 and 10, and padj \< 0.05.
 
-Here I am highlighting genes that show differences in expression between A-P domains in B6. In total there are `r length(unique(b6_domain_main_effects_clean$gene_id))` unique genes with a domain effect (i.e. differentially expressed between any two domains) that doesn't change over developmental time (i.e. maintain parallel developmental trajectories). This means that while one domain might express a gene at higher or lower levels than another, all domains follow the same developmental pattern over time (all increasing, all decreasing, or all stable).
+**1. Domain Main Effects (Parallel Trajectories)**\
+For genes *without* significant interactions, domain differences were extracted from the simple model using coefficients for MAX vs PM (`AP_domainMAX`), POST vs PM (`AP_domainPOST`), and POST vs MAX (contrast: `list("AP_domainPOST", "AP_domainMAX")`).
+Complex patterns (e.g., "highest in MAX") were identified by intersecting multiple pairwise comparisons.
+
+**2. Stage Main Effects (Common Trajectories)**\
+For genes *without* interactions, developmental changes common across domains were extracted from the simple model coefficient `LB_stage_from_start`.
+Genes were classified as increasing or decreasing based on log2FoldChange sign, with strong changers defined as \|log2FC\| \> 1.
+
+**3. Diverging Trajectories**\
+For genes *with* significant interactions, domain-specific developmental slopes were extracted from the complex model: PM slope (`LB_stage_from_start`), MAX slope (contrast: `list(c("LB_stage_from_start", "AP_domainMAX.LB_stage_from_start"))`), and POST slope (contrast: `list(c("LB_stage_from_start", "AP_domainPOST.LB_stage_from_start"))`).
+Slope differences (interaction terms) were extracted as: MAX vs PM (`AP_domainMAX.LB_stage_from_start`), POST vs PM (`AP_domainPOST.LB_stage_from_start`), and POST vs MAX (contrast: `list(c("AP_domainPOST.LB_stage_from_start", "AP_domainMAX.LB_stage_from_start"))`).
+Diverging genes required padj \< 0.05 and log2FoldChange \> 0.5 for the slope difference.
+Individual domain slopes (including non-significant ones) were examined to classify divergence patterns (e.g., "MAX increases faster" vs "MAX increases, PM decreases").
+
+**4. Converging Trajectories**\
+Converging genes were identified using the same slope difference tests as diverging genes but requiring negative slope differences (log2FoldChange \< -0.5).
+
+**5. Domain-Specific Dynamics**\
+Genes showing developmental changes in specific domains were identified from filtered domain slopes (padj \< 0.05, \|log2FC\| \> 0.5) and classified by the combination of dynamic domains.
+
+**6. Complex Patterns**\
+Genes with opposite slopes across domains or three-way divergent patterns were identified by analyzing the signs and significance of all three domain slopes simultaneously.
+
+:::::::::: {#B6_DESeq2_effects .panel-tabset .nav-pills}
+## Domain Main Effects
+
+Here I am highlighting genes that show differences in expression between A-P domains in B6.
+In total there are `r length(unique(b6_domain_main_effects_clean$gene_id))` unique genes with a domain effect (i.e. differentially expressed between any two domains) that doesn't change over developmental time (i.e. maintain parallel developmental trajectories).
+This means that while one domain might express a gene at higher or lower levels than another, all domains follow the same developmental pattern over time (all increasing, all decreasing, or all stable).
+
+Below is a summary of the over-representation results from the individual comparisons. Full ORA results are displayed in tables in each subsection tab.
+
+| Category | PM (Anterior) | MAX (Middle) | POST (Posterior) | Interpretation |
+|----------|---------------|--------------|------------------|----------------|
+| **Wnt Signaling** | ↑↑↑ | ↑ | ↓↓ | A→P gradient, FNP identity |
+| **TGF-β/BMP Signaling** | ↑↑↑ | ↓↓ | ↓ | PM bone formation |
+| **Skeletal/Bone Development** | ↑↑↑ | ↓↓ | ↓ | Premaxillary ossification |
+| **Embryonic/Developmental** | ↑↑↑ | ↓ | ↓↓ | PM progenitor state |
+| **Synaptic Structure** | ↓↓↓ | ↑↑↑ | ↑↑↑ | Secondary palate neural differentiation |
+| **Ion Channels** | ↓↓ | ↑↑↑ | ↑↑ | Neural function in MAX/POST |
+| **Cognition/Behavior** | ↓↓ | ↑↑↑ | ↑↑ | Neural maturation markers |
+| **Muscle/Sarcomere** | — | — | ↑↑↑ | Soft palate musculature |
+| **Epithelial/Skin** | ↑↑ | ↑ | ↓↓ | Epithelial differentiation in PM/MAX |
+| **EMT/Migration** | ↑↑↑ | ↓↓ | ↓ | Active in FNP-derived PM |
+
+*Legend: ↑↑↑ strongly enriched, ↑↑ moderately enriched, ↑ slightly enriched, — neutral, ↓ slightly depleted, ↓↓ moderately depleted, ↓↓↓ strongly depleted*
+
 
 ::: {#B6_DESeq2_domain_effects .panel-tabset .nav-pills}
 
@@ -898,10 +1087,27 @@ if(length(genes_MAX_higher_than_PM) > 0 & length(genes_MAX_lower_than_PM) > 0) {
 
 **Pattern:** Genes showing consistent differences between MAX and PM domains across development.
 
-**Biological Interpretation:** These genes define constitutive differences between maxillary and palatine midline regions, potentially representing:
+**MAX higher than PM** contains `r length(genes_MAX_higher_than_PM)` genes and are over-representation analysis shows that it exhibits a mature neuronal phenotype with emphasis on synaptic connectivity, neurotransmission, and neural circuit function.
 
-- **MAX higher than PM** (`r length(genes_MAX_higher_than_PM)` genes): MAX-specific identity or function
-- **MAX lower than PM** (`r length(genes_MAX_lower_than_PM)` genes): PM-enriched programs
+| Category | Key Themes | Top Terms (by p-value) | Representative Genes |
+|----------|-----------|----------------------|---------------------|
+| **Synaptic Structure** | Postsynaptic specialization, synaptic membranes | Synaptic membrane (p=1.3e-9), Postsynaptic specialization (p=1.6e-6) | Snap25, Dlgap3, Bsn, Syn2, Nrxn2 |
+| **Neuron Development** | Axonogenesis, growth cones, neurite morphology | Regulation of neuron projection development (p=3.7e-8), Growth cone (p=1.4e-6) | Map1b, Nefl, Kif21a, Plxna4 |
+| **Ion Channels** | Potassium channels, cation transport | Neuronal System (p=1.1e-8), Potassium channels (p=0.0094) | Kcna4, Kcna5, Kcnd2, Kcnj12, Scn2a |
+| **Cognition/Behavior** | Learning, memory, locomotion | Cognition (p=7.7e-6), Learning or memory (p=1.3e-5) | Chrnb2, Atp1a3, Plcb1, Gpr88 |
+| **Mammalian Phenotypes** | Motor deficits, seizures, hyperactivity | Impaired coordination (p=3e-6), Ataxia (p=7.7e-6), Hyperactivity (p=3.7e-5) | Snap25, Atp1a3, Map1b, Plp1 |
+
+
+**MAX lower than PM** contains `r length(genes_MAX_lower_than_PM)` genes and over-representation analysis shows that it contains a **developmental/embryonic phenotype** dominated by morphogenetic processes, particularly skeletal patterning, organogenesis (kidney, heart, limb), and TGF-β superfamily signaling.
+
+| Category | Key Themes | Top Terms (by p-value) | Representative Genes |
+|----------|-----------|----------------------|---------------------|
+| **Skeletal Development** | Bone, cartilage, limb morphogenesis | Skeletal system development (p=2.4e-5), Cartilage development (p=7.9e-5) | Msx2, Tgfb1, Tgfb2, Bmp7, Runx3 |
+| **Heart Development** | Cardiac morphogenesis, cardiovascular physiology | Heart morphogenesis (p=5.6e-4), Heart development (p=0.0097) | Gja1, Gata3, Smad6, Hopx, Rbm20 |
+| **TGF-β Signaling** | BMP pathway, receptor serine/threonine kinase signaling | TGF-β receptor superfamily signaling (p=0.0039), TGF-β pathway (p=0.0092) | Tgfb1, Tgfb2, Smad6, Bmp7, Nbl1 |
+| **EMT & Migration** | Epithelial-mesenchymal transition, endothelial migration | Positive regulation of EMT (p=0.0075), Endothelial cell migration (p=0.0015) | Loxl2, Emp2, Gata3 |
+| **Extracellular Matrix** | Basement membrane, elastic fibers | Extracellular matrix (p=6.7e-5), Elastic fibre formation (p=1.3e-4) | Bgn, Loxl2, Serpinf1, Lamc3 |
+| **Kidney Development** | Renal system morphogenesis | Renal system development (p=0.001) | Sall1, Wnt9b, Emx2 |
 
 ```{r}
 #| label: max-vs-pm-table
@@ -913,6 +1119,40 @@ b6_domain_main_effects_clean |>
   select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
   arrange(padj) |>
   create_dt()
+```
+
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: mx-vs-pm-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# Run enrichment on both sets
+genes_MAX_higher_than_PM_ora <- run_enrichment_hybrid(gene_ids = genes_MAX_higher_than_PM,
+                                     description = "MAX higher than PM"
+                                     )
+
+genes_MAX_lower_than_PM_ora <- run_enrichment_hybrid(gene_ids = genes_MAX_lower_than_PM,
+                                     description = "MAX lower than PM"
+                                     )
+```
+
+```{r}
+#| label: mx-vs-pm-ora-table
+#| warning: false
+#| message: false
+
+genes_MAX_higher_than_PM_ora$result |> 
+  rbind(
+    genes_MAX_lower_than_PM_ora$result
+  ) |> 
+  filter( p_value < 0.01) |> 
+  create_dt()
+
+
 ```
 
 ### POST vs PM
@@ -943,10 +1183,32 @@ if(length(genes_POST_higher_than_PM) > 0 & length(genes_POST_lower_than_PM) > 0)
 
 **Pattern:** Consistent expression differences between posterior and palatine midline domains.
 
-**Biological Interpretation:**
+**POST higher than PM** contains `r length(genes_POST_higher_than_PM)` genes and over-representation analysis show that it exhibits a mature functional phenotype (synaptic transmission, ion channels, behavior) combined with a notable muscle/cardiac signature (sarcomere, myofibrils, cardiac conduction).
 
-- **POST higher than PM** (`r length(genes_POST_higher_than_PM)` genes): Posterior-specific programs
-- **POST lower than PM** (`r length(genes_POST_lower_than_PM)` genes): Anterior/midline enriched
+| Category | Key Themes | Top Terms (by p-value) | Representative Genes |
+|----------|-----------|----------------------|---------------------|
+| **Synaptic Structure** | Synaptic membranes, postsynaptic specialization, neuron-to-neuron synapses | Synaptic membrane (p=4.5e-13), Postsynaptic specialization (p=3.2e-9) | Nlgn1, Dlgap3, Shisa7, Nrxn2, Lrrtm1, Gria2 |
+| **Synaptic Signaling** | Synapse organization, trans-synaptic signaling, chemical transmission | Synapse organization (p=1.8e-8), Modulation of chemical synaptic transmission (p=2.7e-7) | Camk2b, Dgkb, Nrn1, Apba1, Plcb1 |
+| **Ion Channels** | Cation channels, membrane potential regulation, gated channels | Ion channel complex (p=2e-5), Cation channel activity (p=0.00099) | Kcnd2, Kcna4, Kcna5, Cacnb1, Trpc4, Trpc5 |
+| **Muscle/Cardiac** | Muscle contraction, myofibril assembly, sarcomere, cardiac conduction | Muscle contraction (p=5.9e-6), Cardiac conduction (p=0.00031) | Ryr1, Tmod1, Lmod2, Myh7b, Tnnt3, Myoz1 |
+| **Behavior/Cognition** | Locomotion, adult behavior, anxiety, learning | Locomotory behavior (p=0.00059), Decreased anxiety (p=0.00082) | Atp1a3, Gpr88, Ppp1r1b, Camk2b |
+| **Mammalian Phenotypes** | Hyperactivity, seizures, impaired learning | Hyperactivity (p=3e-5), Seizures (p=0.0015) | Camk2b, Gria2, Kcnt1, Atp1a3, Cers1 |
+
+
+**POST lower than PM** contains `r length(genes_POST_lower_than_PM)` genes and over-representation analysis shows that they are enriched for early developmental processes including embryonic patterning (Wnt, Hedgehog/Gli signaling), organogenesis (tooth, kidney, skeleton), and epithelial differentiation (skin, desmosomes). 
+
+| Category | Key Themes | Top Terms (by p-value) | Representative Genes |
+|----------|-----------|----------------------|---------------------|
+| **Tooth Development** | Odontogenesis, dentin formation, enamel | Odontogenesis of dentin-containing tooth (p=1.4e-6) | Enam, Odam, Runx2, Msx1, Trp63 |
+| **Embryonic Development** | Embryonic morphogenesis, organ development, pattern specification | Embryonic morphogenesis (p=4.1e-5), Embryonic organ development (p=4.6e-5) | Gli3, Gli1, Wnt3a, Wnt7a, Pax6, Gata3 |
+| **Skeletal Development** | Bone, cartilage, ossification, osteoblast differentiation | Skeletal system development (p=0.00017), Osteoblast differentiation (p=0.00037) | Runx2, Satb2, Gja1, Tgfb1, Fam20c |
+| **Wnt Signaling** | WNT ligand biogenesis, basal cell carcinoma pathway | WNT ligand biogenesis (p=0.0036), Basal cell carcinoma (p=0.0002) | Wnt3a, Wnt7a, Wnt9a, Wnt2b, Wnt9b |
+| **Epithelial/Skin** | Epidermis development, cornified envelope, keratoderma | Cornified envelope formation (p=3.8e-5), Epidermis development (p=0.0012) | Trp63, Spink5, Ovol1, Krt79, Dsg1a, Dsc2 |
+| **Kidney Development** | Ureteric bud, mesonephros development | Ureteric bud development (p=0.0029), Single kidney phenotype (p=0.00064) | Gdnf, Wnt9b, Gata3, Gli3, Npnt, Itga8 |
+| **ECM/Cell Adhesion** | Desmosome, ECM-receptor interaction, integrins | Desmosome (p=0.00058), ECM-receptor interaction (p=3.3e-5) | Itgb3, Itgav, Sdc4, Cd44, Dsc2, Dsg2 |
+| **Mammalian Phenotypes** | Neonatal lethality, skin barrier defects, fertility | Neonatal lethality (p=5.4e-6), Impaired skin barrier (p=0.0011) | Gli3, Msx1, Runx2, Spink5, Gja1 |
+
+
 
 ```{r}
 #| label: post-vs-pm-table
@@ -957,6 +1219,37 @@ b6_domain_main_effects_clean |>
   filter(Comparison == "POST vs PM") |>
   select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
   arrange(padj) |>
+  create_dt()
+```
+
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: post-vs-pm-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# Run enrichment on both sets
+genes_POST_higher_than_PM_ora <- run_enrichment_hybrid(gene_ids = genes_POST_higher_than_PM,
+                                     description = "POST higher than PM"
+                                     )
+
+genes_POST_lower_than_PM_ora <- run_enrichment_hybrid(gene_ids = genes_POST_lower_than_PM,
+                                     description = "POST lower than PM"
+                                     )
+```
+
+```{r}
+#| label: post-vs-pm-ora-table
+#| warning: false
+#| message: false
+genes_POST_higher_than_PM_ora$result |> 
+  rbind(
+    genes_POST_lower_than_PM_ora$result
+  ) |> 
+  filter( p_value < 0.01) |> 
   create_dt()
 ```
 
@@ -988,6 +1281,36 @@ if(length(genes_POST_higher_than_MAX) > 0 & length(genes_POST_lower_than_MAX) > 
 
 **Pattern:** Expression differences between posterior and maxillary domains.
 
+**POST higher than MAX** contain `r length(genes_POST_higher_than_MAX)` genes and over-representation analysis shows an enrichment for **muscle/contractile apparatus** genes—sarcomere components, myofibrils, and muscle contraction machinery. The strong human phenotype associations with myopathies (Gowers sign, muscle weakness, abnormal muscle fibers) underscore this muscle identity. There's also a cell adhesion signature involving protocadherins.
+
+| Category | Key Themes | Top Terms (by p-value) | Representative Genes |
+|----------|-----------|----------------------|---------------------|
+| **Cell Adhesion** | Plasma membrane adhesion, protocadherins | Cell-cell adhesion via plasma-membrane adhesion molecules (p=4.8e-7) | Pcdh11x, Pcdh18, Pcdh15, Cdh18, Dchs2, Tenm4 |
+| **Muscle Contraction** | Muscle system process, sarcomere function | Muscle contraction (p=2.2e-6), Muscle system process (p=0.0002) | Ryr1, Tmod1, Lmod2, Myh7b, Tnnt3, Tpm2 |
+| **Sarcomere/Myofibril** | Thin filaments, contractile fibers | Myofibril (p=1.5e-5), Sarcomere (p=4.7e-5) | Tcap, Ldb3, Nexn, Ank1, Unc45b |
+| **Synapse Organization** | Presynapse assembly, protein-protein interactions | Synapse organization (p=3.3e-5), Receptor-type tyrosine-protein phosphatases (p=2.3e-5) | Il1rap, Il1rapl1, Il1rapl2, Lrrc4b, Slitrk3 |
+| **Extracellular Matrix** | Collagen, ECM components | Extracellular matrix (p=0.001), Collagen trimer (p=0.0049) | Col3a1, Col8a1, Col16a1, Lum, Thbs2 |
+| **Human Phenotypes** | Myopathy, muscle weakness, respiratory distress | Gowers sign (p=5.2e-5), Proximal muscle weakness (p=0.00012), Myopathy (p=0.0002) | Sgcg, Ryr1, Scn4a, Dok7, Tpm2, Unc45b |
+| **Mammalian Phenotypes** | Sarcomere defects, respiratory distress | Respiratory distress (p=0.00016), Abnormal sarcomere morphology (p=0.00023) | Ryr1, Lmod2, Stac3, Ldb3, Scn4a |
+
+
+**POST lower than MAX** contain `r length(genes_POST_lower_than_MAX)` genes and over-representation analysis show that it displays a mixed **neural + epithelial** signature. The neural component includes synapse organization and axon guidance, while the epithelial component features epidermis development, desmosomes, and cornified envelope. Wnt signaling is prominent, along with developmental processes (cell fate commitment, kidney/nephron development).
+
+
+| Category | Key Themes | Top Terms (by p-value) | Representative Genes |
+|----------|-----------|----------------------|---------------------|
+| **Synapse Organization** | Synapse assembly, synaptic regulation | Synapse organization (p=1.4e-5), Synapse assembly (p=0.00017) | Snap25, Snca, Cyfip2, Dock4, Celsr2, Oxtr |
+| **Epidermis/Skin** | Epidermal differentiation, cornified envelope | Epidermis development (p=0.00011), Cornified envelope formation (p=0.00026) | Trp63, Spink5, Krt79, Gata6, Pax6, Tfap2c |
+| **Wnt Signaling** | WNT ligand biogenesis, stem cell pluripotency | Basal cell carcinoma/Wnt (p=0.00018), WNT ligand biogenesis (p=0.00061) | Wnt3a, Wnt7a, Wnt9a, Wnt2b, Wnt9b |
+| **Cell Adhesion** | Desmosomes, homophilic adhesion | Desmosome (p=0.0024), Homophilic cell adhesion (p=0.00088) | Dsc3, Dsg1a, Dsg1b, Dsg2, Pkp3, Nectin4 |
+| **Cell Fate/Development** | Cell fate commitment, embryonic morphogenesis | Cell fate commitment (p=0.0013), Embryonic morphogenesis (p=0.0061) | Foxg1, Gata3, Gata6, Pax6, Gli1, Msx1 |
+| **Kidney Development** | Nephron/tubule formation, ureteric bud | Mesonephric tubule formation (p=0.0027), Nephron development (p=0.0081) | Gdnf, Six1, Wnt9b, Gata3, Npnt |
+| **Neuron Development** | Axon guidance, neuron projection | Cell morphogenesis in neuron differentiation (p=0.0011), Axon guidance (p=0.0039) | Cntn1, Sema4d, Cyfip2, Lama5, Pax6 |
+
+
+
+
+
 ```{r}
 #| label: post-vs-max-table
 #| warning: false
@@ -1000,7 +1323,104 @@ b6_domain_main_effects_clean |>
   create_dt()
 ```
 
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: post-vs-max-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# Run enrichment on both sets
+genes_POST_higher_than_MAX_ora <- run_enrichment_hybrid(gene_ids = genes_POST_higher_than_MAX,
+                                     description = "POST higher than MAX"
+                                     )
+
+genes_POST_lower_than_MAX_ora <- run_enrichment_hybrid(gene_ids = genes_POST_lower_than_MAX,
+                                     description = "POST lower than MAX"
+                                     )
+```
+
+```{r}
+#| label: post-vs-max-ora-table
+#| warning: false
+#| message: false
+
+genes_POST_higher_than_MAX_ora$result |> 
+  rbind(
+    genes_POST_lower_than_MAX_ora$result
+  ) |> 
+  filter( p_value < 0.01) |> 
+  create_dt()
+
+
+
+
+
+```
+
 ### Highest in Each Domain
+
+#### PM Highest
+
+```{r}
+#| label: pm-highest-plot
+#| warning: false
+#| message: false
+
+genes_PM_highest <- gene_assignments |>
+  filter(Highest_PM) |>
+  pull(gene_id)
+
+if(length(genes_PM_highest) > 0) {
+  n_show <- ifelse(length(genes_PM_highest) < 15, length(genes_PM_highest), 3)
+  plot_domain_hierarchy(
+    genes_highest = genes_PM_highest,
+    domain_name = "PM",
+    count_data = b6_gene_counts,
+    n = n_show
+  )
+}
+```
+
+`r length(genes_PM_highest)` genes with highest expression at the PM compared to both MAX and POST domains.
+
+```{r}
+#| label: pm-highest-table
+#| warning: false
+#| message: false
+
+b6_domain_main_effects_clean |>
+  filter(gene_id %in% genes_PM_highest) |>
+  select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
+  distinct(gene_id, .keep_all = TRUE) |>
+  arrange(desc(log2FoldChange)) |>
+  create_dt()
+```
+
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: pm-highest-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+genes_PM_highest_ora <- run_enrichment_hybrid(gene_ids = genes_PM_highest,
+                                     description = "PM highest"
+                                     )
+```
+
+```{r}
+#| label: pm-highest-ora-table
+#| warning: false
+#| message: false
+
+genes_PM_highest_ora$result |> 
+  create_dt()
+```
 
 #### MAX Highest
 
@@ -1024,9 +1444,8 @@ if(length(genes_MAX_highest) > 0) {
 }
 ```
 
-**Pattern:** `r length(genes_MAX_highest)` genes showing highest expression in MAX compared to both PM and POST.
+`r length(genes_MAX_highest)` genes showing highest expression in MAX compared to both PM and POST domains.
 
-**Biological Interpretation:** Core maxillary identity genes that distinguish lateral palate from both midline and posterior regions.
 
 ```{r}
 #| label: max-highest-table
@@ -1038,6 +1457,29 @@ b6_domain_main_effects_clean |>
   select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
   distinct(gene_id, .keep_all = TRUE) |>
   arrange(desc(log2FoldChange)) |>
+  create_dt()
+```
+
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: max-highest-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+genes_MAX_highest_ora <- run_enrichment_hybrid(gene_ids = genes_MAX_highest,
+                                     description = "MAX highest"
+                                     )
+```
+
+```{r}
+#| label: max-highest-ora-table
+#| warning: false
+#| message: false
+genes_MAX_highest_ora$result |> 
+  filter(p_value < 0.01) |> 
   create_dt()
 ```
 
@@ -1063,9 +1505,8 @@ if(length(genes_POST_highest) > 0) {
 }
 ```
 
-**Pattern:** `r length(genes_POST_highest)` genes with peak expression in posterior domain.
+`r length(genes_POST_highest)` genes with peak expression in POST in comparison to MAX and PM domains.
 
-**Biological Interpretation:** Posterior identity genes, potentially involved in soft palate specification.
 
 ```{r}
 #| label: post-highest-table
@@ -1080,44 +1521,30 @@ b6_domain_main_effects_clean |>
   create_dt()
 ```
 
-#### PM Highest
+Over-represented pathways and biological processes:
 
 ```{r}
-#| label: pm-highest-plot
+#| label: post-highest-ora
 #| warning: false
 #| message: false
+#| results: hide
+#| cache: true
 
-genes_PM_highest <- gene_assignments |>
-  filter(Highest_PM) |>
-  pull(gene_id)
-
-if(length(genes_PM_highest) > 0) {
-  n_show <- ifelse(length(genes_PM_highest) < 15, length(genes_PM_highest), 3)
-  plot_domain_hierarchy(
-    genes_highest = genes_PM_highest,
-    domain_name = "PM",
-    count_data = b6_gene_counts,
-    n = n_show
-  )
-}
+genes_POST_highest_ora <- run_enrichment_hybrid(gene_ids = genes_POST_highest,
+                                     description = "POST highest"
+                                     )
 ```
 
-**Pattern:** `r length(genes_PM_highest)` genes with highest expression at the palatine midline.
-
-**Biological Interpretation:** Midline-specific genes, potentially involved in fusion processes.
-
 ```{r}
-#| label: pm-highest-table
+#| label: post-highest-ora-table
 #| warning: false
 #| message: false
-
-b6_domain_main_effects_clean |>
-  filter(gene_id %in% genes_PM_highest) |>
-  select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
-  distinct(gene_id, .keep_all = TRUE) |>
-  arrange(desc(log2FoldChange)) |>
+genes_POST_highest_ora$result |> 
+  filter( p_value < 0.01) |> 
   create_dt()
 ```
+
+
 
 ### A-P Gradients
 
@@ -1150,10 +1577,8 @@ if(length(genes_AP_decreasing) > 0 | length(genes_AP_increasing) > 0) {
 
 **Pattern:** Monotonic gradients along the anterior-posterior axis.
 
-**Biological Interpretation:**
-
-- **A→P decreasing** (PM > MAX > POST): `r length(genes_AP_decreasing)` genes. Classic anterior specification or posterior repression.
-- **A→P increasing** (POST > MAX > PM): `r length(genes_AP_increasing)` genes. Posterior specification or anterior repression.
+-   **A→P decreasing** (PM \> MAX \> POST): `r length(genes_AP_decreasing)` genes. 
+-   **A→P increasing** (POST \> MAX \> PM): `r length(genes_AP_increasing)` genes. 
 
 ```{r}
 #| label: ap-gradients-table
@@ -1168,14 +1593,43 @@ b6_domain_main_effects_clean |>
   create_dt()
 ```
 
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: ap-gradients-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# Run enrichment on both sets
+genes_AP_decreasing_ora <- run_enrichment_hybrid(gene_ids = genes_AP_decreasing,
+                                     description = "A→P decreasing"
+                                     )
+
+genes_AP_increasing_ora <- run_enrichment_hybrid(gene_ids = genes_AP_increasing,
+                                     description = "A→P increasing"
+                                     )
+
+```
+
+```{r}
+#| label: ap-gradients-ora-table
+#| warning: false
+#| message: false
+genes_AP_decreasing_ora$result |> 
+  rbind(
+    genes_AP_increasing_ora$result
+  ) |> 
+  create_dt()
+```
 :::
 
-## Stage Main Effects 
+## Stage Main Effects
 
-**These genes show developmental changes that are consistent across all three domains.** All domains increase or decrease together, representing shared developmental programs.
+These genes show developmental changes that are consistent across all three domains. All domains increase or decrease together, representing shared developmental programs.
 
 ::: {#B6_DESeq2_stage_effects .panel-tabset .nav-pills}
-
 ### Overview
 
 ```{r}
@@ -1211,9 +1665,15 @@ if(length(genes_increasing) > 0) {
 }
 ```
 
-**Pattern:** `r length(genes_increasing)` genes increasing across all domains as development progresses.
+`r length(genes_increasing)` genes increasing across all domains as development progresses showing an over-representation of genes involved in ciliary assembly, extracellular matrix, immune response, epithelial differentiation and ion transport. 
 
-**Biological Interpretation:** Core developmental programs intensifying during palatogenesis, such as cell proliferation, differentiation markers, or ECM production.
+| Category | Key Terms | Top Genes | Best p-value |
+|----------|-----------|-----------|--------------|
+| Ciliary assembly/motility | Cilium movement, axoneme assembly, microtubule bundle formation | *Cfap91*, *Spag6l*, *Nme5*, *Spef2*, *Dnah11*, *Rsph4a* | 4.17×10⁻¹⁷ |
+| Extracellular matrix | ECM organization, collagen formation, integrin interactions | *Col1a2*, *Col5a2*, *Col8a1*, *Bgn*, *Lum*, *Postn* | 4.36×10⁻¹¹ |
+| Immune/inflammatory | Leukocyte migration, cytokine production, antigen presentation | *Cd74*, *Lgals3*, *Tlr9*, *Tgfb1*, *Il18*, *Tnf* | 1.29×10⁻⁹ |
+| Epithelial differentiation | Cornified envelope, keratinization, intermediate filaments | *Krt6a*, *Krt16*, *Krt17*, *Dsc2*, *Dsg1a*, *Cdsn* | 1.23×10⁻¹¹ |
+| Ion transport | Sodium/potassium channels, transmembrane transport | *Cftr*, *Slc6a19*, *Kcnj15*, *Scnn1b* | 1.62×10⁻⁴ |
 
 ```{r}
 #| label: dev-increasing-table
@@ -1225,6 +1685,36 @@ b6_stage_main_effects_clean |>
   select(gene_id, symbol, chromosome, Direction, log2FoldChange, padj) |>
   arrange(desc(log2FoldChange)) |>
   create_dt()
+```
+
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: dev-increasing-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# Run enrichment on all sets
+dev_increasing_enrichment_results <- run_enrichment_hybrid(gene_ids = b6_stage_main_effects_clean |>
+                                       filter(Direction == "Increase") |> 
+                                         pull(gene_id),
+                                     description = "Increase"
+                                     )
+
+# Format and combine results
+dev_increasing_enrichment_table <- format_enrichment_result(dev_increasing_enrichment_results)
+```
+
+```{r}
+#| label: dev-increasing-ora-table
+#| warning: false
+#| message: false
+
+dev_increasing_enrichment_table |> 
+  create_dt()
+
 ```
 
 ### Decreasing with Development
@@ -1249,9 +1739,13 @@ if(length(genes_decreasing) > 0) {
 }
 ```
 
-**Pattern:** `r length(genes_decreasing)` genes decreasing across all domains.
+`r length(genes_decreasing)` genes decreasing across all domains that are over-represented for genes involved in  erythropoiesis and early hematopoietic processes.
 
-**Biological Interpretation:** Early patterning factors, progenitor markers, or genes involved in completed morphogenetic events.
+| Category | Key Terms | Top Genes | Best p-value |
+|----------|-----------|-----------|--------------|
+| Erythropoiesis/gas transport | Hemoglobin complex, oxygen transport, erythrocyte development | *Hbb-bh1*, *Hbb-y*, *Hba-x*, *Hbq1b*, *Gata1*, *Rhag* | 5.17×10⁻⁵ |
+| Platelet function | Platelet aggregation, megakaryocyte development | *Gp9*, *Gfi1b*, *Gp6*, *Tubb1*, *Mpl* | 1.73×10⁻³ |
+
 
 ```{r}
 #| label: dev-decreasing-table
@@ -1265,14 +1759,41 @@ b6_stage_main_effects_clean |>
   create_dt()
 ```
 
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: dev-decreasing-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# Run enrichment on all sets
+dev_decreasing_enrichment_results <- run_enrichment_hybrid(gene_ids = b6_stage_main_effects_clean |>
+                                       filter(Direction == "Decrease") |> 
+                                         pull(gene_id),
+                                     description = "Decrease"
+                                     )
+
+# Format and combine results
+dev_decreasing_enrichment_table <- format_enrichment_result(dev_decreasing_enrichment_results)
+```
+
+```{r}
+#| label: dev-decreasing-ora-table
+#| warning: false
+#| message: false
+dev_decreasing_enrichment_table |> 
+  create_dt()
+
+```
 :::
 
-## Diverging Trajectories 
+## Diverging Trajectories
 
 **These genes show different developmental trajectories between domains** - true domain × stage interactions where domains respond differently to developmental cues.
 
 ::: {#B6_DESeq2_diverging_traj .panel-tabset .nav-pills}
-
 ### Overview
 
 ```{r}
@@ -1328,8 +1849,8 @@ if(length(genes_MAX_faster) > 0 | length(genes_MAX_opposite) > 0) {
 
 **Biological Interpretation:**
 
-- **MAX increases faster**: `r length(genes_MAX_faster)` genes becoming progressively enriched in MAX
-- **MAX up, PM down**: `r length(genes_MAX_opposite)` genes with opposite responses
+-   **MAX increases faster**: `r length(genes_MAX_faster)` genes becoming progressively enriched in MAX
+-   **MAX up, PM down**: `r length(genes_MAX_opposite)` genes with opposite responses
 
 ```{r}
 #| label: max-div-pm-table
@@ -1338,9 +1859,31 @@ if(length(genes_MAX_faster) > 0 | length(genes_MAX_opposite) > 0) {
 
 b6_slope_differences |>
   filter(Comparison == "MAX vs PM slope difference", padj < 0.05) |>
-  left_join(all_genes_palate |> select(gene_id, chromosome), by = "gene_id") |>
   select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
   arrange(desc(abs(log2FoldChange))) |>
+  create_dt()
+```
+
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: max-div-pm-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# Run enrichment on all MAX diverging genes
+genes_MAX_div_ora <- run_enrichment_hybrid(gene_ids = genes_MAX_div,
+                                     description = "MAX diverging from PM"
+                                     )
+```
+
+```{r}
+#| label: max-div-pm-ora-table
+#| warning: false
+#| message: false
+genes_MAX_div_ora$result |> 
   create_dt()
 ```
 
@@ -1390,9 +1933,31 @@ if(length(genes_POST_faster) > 0 | length(genes_POST_opposite) > 0) {
 
 b6_slope_differences |>
   filter(Comparison == "POST vs PM slope difference", padj < 0.05) |>
-  left_join(all_genes_palate |> select(gene_id, chromosome), by = "gene_id") |>
   select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
   arrange(desc(abs(log2FoldChange))) |>
+  create_dt()
+```
+
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: post-div-pm-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# Run enrichment on all POST diverging genes
+genes_POST_div_ora <- run_enrichment_hybrid(gene_ids = genes_POST_div,
+                                     description = "POST diverging from PM"
+                                     )
+```
+
+```{r}
+#| label: post-div-pm-ora-table
+#| warning: false
+#| message: false
+genes_POST_div_ora$result |> 
   create_dt()
 ```
 
@@ -1442,20 +2007,40 @@ if(length(genes_POST_faster_MAX) > 0 | length(genes_POST_opposite_MAX) > 0) {
 
 b6_slope_differences |>
   filter(Comparison == "POST vs MAX slope difference", padj < 0.05) |>
-  left_join(all_genes_palate |> select(gene_id, chromosome), by = "gene_id") |>
   select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
   arrange(desc(abs(log2FoldChange))) |>
   create_dt()
 ```
 
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: post-div-max-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# Run enrichment on all POST diverging genes
+genes_POST_div_MAX_ora <- run_enrichment_hybrid(gene_ids = genes_POST_div_MAX,
+                                     description = "POST diverging from MAX"
+                                     )
+```
+
+```{r}
+#| label: post-div-max-ora-table
+#| warning: false
+#| message: false
+genes_POST_div_MAX_ora$result |> 
+  create_dt()
+```
 :::
 
-## Converging Trajectories 
+## Converging Trajectories
 
 **These genes show domains becoming more similar over time**, with initially different expression levels that converge as development progresses.
 
 ::: {#B6_DESeq2_conv_traj .panel-tabset .nav-pills}
-
 ### Overview
 
 ```{r}
@@ -1502,9 +2087,30 @@ if(length(genes_MAX_conv) > 0) {
 
 b6_slope_differences |>
   filter(Comparison == "MAX vs PM slope difference", padj < 0.05, log2FoldChange < -0.5) |>
-  left_join(all_genes_palate |> select(gene_id, chromosome), by = "gene_id") |>
   select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
   arrange(log2FoldChange) |>
+  create_dt()
+```
+
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: max-conv-pm-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+genes_MAX_conv_ora <- run_enrichment_hybrid(gene_ids = genes_MAX_conv,
+                                     description = "MAX converging to PM"
+                                     )
+```
+
+```{r}
+#| label: max-conv-pm-ora-table
+#| warning: false
+#| message: false
+genes_MAX_conv_ora$result |> 
   create_dt()
 ```
 
@@ -1539,9 +2145,30 @@ if(length(genes_POST_conv) > 0) {
 
 b6_slope_differences |>
   filter(Comparison == "POST vs PM slope difference", padj < 0.05, log2FoldChange < -0.5) |>
-  left_join(all_genes_palate |> select(gene_id, chromosome), by = "gene_id") |>
   select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
   arrange(log2FoldChange) |>
+  create_dt()
+```
+
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: post-conv-pm-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+genes_POST_conv_ora <- run_enrichment_hybrid(gene_ids = genes_POST_conv,
+                                     description = "POST converging to PM"
+                                     )
+```
+
+```{r}
+#| label: post-conv-pm-ora-table
+#| warning: false
+#| message: false
+genes_POST_conv_ora$result |> 
   create_dt()
 ```
 
@@ -1576,20 +2203,39 @@ if(length(genes_POST_conv_MAX) > 0) {
 
 b6_slope_differences |>
   filter(Comparison == "POST vs MAX slope difference", padj < 0.05, log2FoldChange < -0.5) |>
-  left_join(all_genes_palate |> select(gene_id, chromosome), by = "gene_id") |>
   select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
   arrange(log2FoldChange) |>
   create_dt()
 ```
 
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: post-conv-max-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+genes_POST_conv_MAX_ora <- run_enrichment_hybrid(gene_ids = genes_POST_conv_MAX,
+                                     description = "POST converging to MAX"
+                                     )
+```
+
+```{r}
+#| label: post-conv-max-ora-table
+#| warning: false
+#| message: false
+genes_POST_conv_MAX_ora$result |> 
+  create_dt()
+```
 :::
 
-## Domain-Specific Dynamics 
+## Domain-Specific Dynamics
 
 **These genes show significant developmental changes in only one or two domains** while remaining stable in others.
 
 ::: {#B6_DESeq2_domain_dyn .panel-tabset .nav-pills}
-
 ### Overview
 
 ```{r}
@@ -1633,7 +2279,8 @@ if(length(genes_PM_only_up) > 0) {
 
 **Pattern:** Developmental changes only in PM domain.
 
-**Biological Interpretation:** PM-specific processes like midline fusion. Found `r length(genes_PM_only_up)` increasing and `r length(genes_PM_only_down)` decreasing.
+**Biological Interpretation:** PM-specific processes like midline fusion.
+Found `r length(genes_PM_only_up)` increasing and `r length(genes_PM_only_down)` decreasing.
 
 ```{r}
 #| label: pm-only-table
@@ -1644,6 +2291,37 @@ b6_domain_slopes_clean |>
   filter(gene_id %in% c(genes_PM_only_up, genes_PM_only_down), Domain == "PM") |>
   select(gene_id, symbol, chromosome, Domain, log2FoldChange, padj) |>
   arrange(desc(abs(log2FoldChange))) |>
+  create_dt()
+```
+
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: pm-only-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# Run enrichment on both sets
+genes_PM_only_up_ora <- run_enrichment_hybrid(gene_ids = genes_PM_only_up,
+                                     description = "PM only increasing"
+                                     )
+
+genes_PM_only_down_ora <- run_enrichment_hybrid(gene_ids = genes_PM_only_down,
+                                     description = "PM only decreasing"
+                                     )
+
+```
+
+```{r}
+#| label: pm-only-ora-table
+#| warning: false
+#| message: false
+genes_PM_only_up_ora$result |> 
+  rbind(
+    genes_PM_only_down_ora$result
+  ) |> 
   create_dt()
 ```
 
@@ -1677,7 +2355,8 @@ if(length(genes_MAX_only_up) > 0) {
 
 **Pattern:** Developmental changes only in MAX domain.
 
-**Biological Interpretation:** MAX-specific processes like lateral shelf morphogenesis. Found `r length(genes_MAX_only_up)` increasing and `r length(genes_MAX_only_down)` decreasing.
+**Biological Interpretation:** MAX-specific processes like lateral shelf morphogenesis.
+Found `r length(genes_MAX_only_up)` increasing and `r length(genes_MAX_only_down)` decreasing.
 
 ```{r}
 #| label: max-only-table
@@ -1688,6 +2367,37 @@ b6_domain_slopes_clean |>
   filter(gene_id %in% c(genes_MAX_only_up, genes_MAX_only_down), Domain == "MAX") |>
   select(gene_id, symbol, chromosome, Domain, log2FoldChange, padj) |>
   arrange(desc(abs(log2FoldChange))) |>
+  create_dt()
+```
+
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: max-only-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# Run enrichment on both sets
+genes_MAX_only_up_ora <- run_enrichment_hybrid(gene_ids = genes_MAX_only_up,
+                                     description = "MAX only increasing"
+                                     )
+
+genes_MAX_only_down_ora <- run_enrichment_hybrid(gene_ids = genes_MAX_only_down,
+                                     description = "MAX only decreasing"
+                                     )
+```
+
+
+```{r}
+#| label: max-only-ora-table
+#| warning: false
+#| message: false
+genes_MAX_only_up_ora$result |> 
+  rbind(
+    genes_MAX_only_down_ora$result
+  ) |> 
   create_dt()
 ```
 
@@ -1721,7 +2431,8 @@ if(length(genes_POST_only_up) > 0) {
 
 **Pattern:** Developmental changes only in POST domain.
 
-**Biological Interpretation:** Posterior-specific programs like soft palate differentiation. Found `r length(genes_POST_only_up)` increasing and `r length(genes_POST_only_down)` decreasing.
+**Biological Interpretation:** Posterior-specific programs like soft palate differentiation.
+Found `r length(genes_POST_only_up)` increasing and `r length(genes_POST_only_down)` decreasing.
 
 ```{r}
 #| label: post-only-table
@@ -1735,14 +2446,43 @@ b6_domain_slopes_clean |>
   create_dt()
 ```
 
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: post-only-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+# Run enrichment on both sets
+genes_POST_only_up_ora <- run_enrichment_hybrid(gene_ids = genes_POST_only_up,
+                                     description = "POST only increasing"
+                                     )
+
+genes_POST_only_down_ora <- run_enrichment_hybrid(gene_ids = genes_POST_only_down,
+                                     description = "POST only decreasing"
+                                     )
+
+```
+
+```{r}
+#| label: post-only-ora-table
+#| warning: false
+#| message: false
+genes_POST_only_up_ora$result |> 
+  rbind(
+    genes_POST_only_down_ora$result
+  ) |> 
+  create_dt()
+```
 :::
 
-## Complex Patterns 
+## Complex Patterns
 
 **Genes showing particularly complex spatiotemporal dynamics** including opposite trajectories or three-way divergence.
 
 ::: {#B6_DESeq2_comp_pat .panel-tabset .nav-pills}
-
 ### Overview
 
 ```{r}
@@ -1794,6 +2534,28 @@ b6_domain_slopes_clean |>
   create_dt()
 ```
 
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: opposite-slopes-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+genes_opposite_ora <- run_enrichment_hybrid(gene_ids = genes_opposite,
+                                     description = "Opposite slopes"
+                                     )
+```
+
+```{r}
+#| label: opposite-slopes-ora-table
+#| warning: false
+#| message: false
+genes_opposite_ora$result |> 
+  create_dt()
+```
+
 ### Three-Way Divergent
 
 ```{r}
@@ -1832,12 +2594,32 @@ b6_domain_slopes_clean |>
   create_dt()
 ```
 
+Over-represented pathways and biological processes:
+
+```{r}
+#| label: three-way-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+genes_three_way_ora <- run_enrichment_hybrid(gene_ids = genes_three_way,
+                                     description = "Three-way divergent"
+                                     )
+```
+
+```{r}
+#| label: three-way-ora-table
+#| warning: false
+#| message: false
+genes_three_way_ora$result |> 
+  create_dt()
+```
 :::
 
 ## Pattern Overlap Analysis
 
 ::: {#B6_DESeq2_pattern_overlap .panel-tabset .nav-pills}
-
 ### Multi-Pattern Genes
 
 ```{r}
@@ -1870,13 +2652,69 @@ multi_pattern_genes |>
   create_dt()
 ```
 
-:::
+### Pattern Overlap UpSet Plot
 
-## Comprehensive Tables
+```{r}
+#| label: pattern-upset-plot
+#| warning: false
+#| message: false
+#| fig.width: 14
+#| fig.height: 10
+
+# Prepare data for upset plot - select key pattern categories
+upset_data <- gene_assignments |>
+  select(
+    gene_id,
+    # Domain main effects
+    MAX_higher_PM, MAX_lower_PM,
+    POST_higher_PM, POST_lower_PM,
+    POST_higher_MAX, POST_lower_MAX,
+    Highest_MAX, Highest_POST, Highest_PM,
+    AP_decreasing, AP_increasing,
+    # Stage main effects
+    Dev_increasing, Dev_decreasing,
+    # Diverging
+    MAX_div_PM, POST_div_PM, POST_div_MAX,
+    # Converging
+    MAX_conv_PM, POST_conv_PM, POST_conv_MAX,
+    # Domain-specific
+    PM_only_up, MAX_only_up, POST_only_up,
+    # Complex
+    Opposite_slopes, Three_way
+  ) |>
+  # Convert to data frame and set gene_id as rownames
+  as.data.frame() |>
+  column_to_rownames("gene_id") |>
+  # Convert logical to numeric
+  mutate(across(everything(), as.numeric))
+
+# Create upset plot
+UpSetR::upset(
+  upset_data,
+  sets = colnames(upset_data),
+  order.by = "freq",
+  decreasing = TRUE,
+  mb.ratio = c(0.6, 0.4),
+  number.angles = 0,
+  point.size = 3,
+  line.size = 1,
+  mainbar.y.label = "Pattern Intersections",
+  sets.x.label = "Genes per Pattern",
+  text.scale = c(1.5, 1.2, 1.2, 1.2, 1.5, 1.2),
+  set_size.show = TRUE,
+  keep.order = TRUE,
+  sets.bar.color = "#56B4E9"
+)
+```
+
+This UpSet plot visualizes: - The size of each pattern category (left bar chart) - Which pattern combinations occur most frequently (top bar chart) - The degree of overlap between different patterns (connection lines) - Genes with multiple pattern assignments
+:::
+::::::::::
+
+# Comprehensive Tables
 
 ::: {#B6_DESeq2_tables .panel-tabset .nav-pills}
-
-### All Patterns Summary
+## All Patterns Summary
 
 ```{r}
 #| label: all-patterns-table
@@ -1887,7 +2725,7 @@ pattern_summary |>
   create_dt()
 ```
 
-### Gene-Level Pattern Assignments
+## Gene-Level Pattern Assignments
 
 ```{r}
 #| label: gene-assignments-table
@@ -1900,30 +2738,106 @@ gene_assignments |>
   create_dt()
 ```
 
+## Over-representation analysis summary
+
+```{r}
+#| label: combined-ora-results
+#| warning: false
+#| message: false
+
+# Collect all ORA results and combine them
+all_ora_results <- bind_rows(
+  # Domain Main Effects
+  genes_MAX_higher_than_PM_ora$result,
+  genes_MAX_lower_than_PM_ora$result,
+  genes_POST_higher_than_PM_ora$result,
+  genes_POST_lower_than_PM_ora$result,
+  genes_POST_higher_than_MAX_ora$result,
+  genes_POST_lower_than_MAX_ora$result,
+  genes_MAX_highest_ora$result,
+  genes_POST_highest_ora$result,
+  genes_PM_highest_ora$result,
+  genes_AP_decreasing_ora$result,
+  genes_AP_increasing_ora$result,
+  
+  # Stage Main Effects
+  dev_increasing_enrichment_results$result,
+  dev_decreasing_enrichment_results$result,
+  
+  # Diverging Trajectories
+  genes_MAX_div_ora$result,
+  genes_POST_div_ora$result,
+  genes_POST_div_MAX_ora$result,
+  
+  # Converging Trajectories
+  genes_MAX_conv_ora$result,
+  genes_POST_conv_ora$result,
+  genes_POST_conv_MAX_ora$result,
+  
+  # Domain-Specific Dynamics
+  genes_PM_only_up_ora$result,
+  genes_PM_only_down_ora$result,
+  genes_MAX_only_up_ora$result,
+  genes_MAX_only_down_ora$result,
+  genes_POST_only_up_ora$result,
+  genes_POST_only_down_ora$result,
+  
+  # Complex Patterns
+  genes_opposite_ora$result,
+  genes_three_way_ora$result
+) |>
+  # Add category grouping for easier filtering
+  mutate(
+    Category = case_when(
+      gene_set %in% c("MAX higher than PM", "MAX lower than PM", 
+                      "POST higher than PM", "POST lower than PM",
+                      "POST higher than MAX", "POST lower than MAX",
+                      "MAX highest", "POST highest", "PM highest",
+                      "A→P decreasing", "A→P increasing") ~ "Domain Main Effects",
+      gene_set %in% c("Increase", "Decrease") ~ "Stage Main Effects",
+      gene_set %in% c("MAX diverging from PM", "POST diverging from PM", 
+                      "POST diverging from MAX") ~ "Diverging Trajectories",
+      gene_set %in% c("MAX converging to PM", "POST converging to PM", 
+                      "POST converging to MAX") ~ "Converging Trajectories",
+      gene_set %in% c("PM only increasing", "PM only decreasing",
+                      "MAX only increasing", "MAX only decreasing",
+                      "POST only increasing", "POST only decreasing") ~ "Domain-Specific Dynamics",
+      gene_set %in% c("Opposite slopes", "Three-way divergent") ~ "Complex Patterns",
+      TRUE ~ "Other"
+    )
+  ) |>
+  # Reorder columns
+  select(Category, gene_set, source, term_id, term_name, p_value, 
+         query_size, term_size, intersection_size, intersection) |>
+  filter( p_value < 0.01) |> 
+  arrange(Category, gene_set, p_value)
+```
+
+```{r}
+#| label: combined-ora-results-table
+#| warning: false
+#| message: false
+# Display the combined results
+all_ora_results |>
+  create_dt()
+
+# # Summary by category
+# all_ora_results |>
+#   group_by(Category, gene_set) |>
+#   summarize(
+#     n_enriched_terms = n(),
+#     .groups = "drop"
+#   ) |>
+#   arrange(Category, desc(n_enriched_terms)) |>
+#   create_dt()
+
+```
+
 :::
 
-## Conclusions
 
-### Key Findings
+# Session Info
 
-1. **Domain Main Effects**: Identified spatial differences with parallel developmental trajectories across `r sum(pattern_summary$Category == "Domain Main Effects")` pattern types
-
-2. **Developmental Dynamics**: Found `r sum(gene_assignments$Dev_increasing)` genes increasing and `r sum(gene_assignments$Dev_decreasing)` genes decreasing uniformly across all domains
-
-3. **Diverging Trajectories**: Detected domain-specific developmental divergence in `r sum(pattern_summary$Category == "Diverging" & pattern_summary$N_Genes > 0)` pattern types
-
-4. **Domain-Specific Programs**: 
-   - PM only: `r sum(gene_assignments$PM_only)` genes
-   - MAX only: `r sum(gene_assignments$MAX_only)` genes  
-   - POST only: `r sum(gene_assignments$POST_only)` genes
-
-5. **Complex Patterns**: Found `r sum(gene_assignments$Opposite_slopes)` genes with opposite slopes and `r sum(gene_assignments$Three_way)` with three-way divergent trajectories
-
-### Biological Implications
-
-- **Spatial Organization**: Strong A-P and M-L organization of gene expression programs
-- **Temporal Dynamics**: Both shared and domain-specific developmental trajectories
-- **Regulatory Complexity**: Extensive domain-specific and interactive regulation
-- **Convergent Evolution**: Multiple genes showing convergent trajectories suggesting coordinated maturation
-
-::::
+```{r}
+sessionInfo()
+```
