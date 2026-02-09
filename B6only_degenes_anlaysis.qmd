@@ -102,8 +102,8 @@ create_dt <- function(x) {
   )
 }
 
-# Function to run enrichment with both gprofiler2 AND Enrichr
-run_enrichment_hybrid <- function(gene_ids,
+# Function to run ora with both gprofiler2 AND Enrichr
+run_ora_hybrid <- function(gene_ids,
                                   description = "Gene Set",
                                   gene_reference = all_genes_palate,
                                   max_term_size = 660,
@@ -206,11 +206,11 @@ run_enrichment_hybrid <- function(gene_ids,
 }
 
 # Updated format function
-format_enrichment_result <- function(enrichment_table) {
-  all_results <- enrichment_table$result
+format_ora_result <- function(ora_table) {
+  all_results <- ora_table$result
 
   if (nrow(all_results) == 0) {
-    message("No significant enrichment results found")
+    message("No significant ora results found")
     return(NULL)
   }
 
@@ -336,9 +336,9 @@ plot_domain_direction_comparison <- function(genes_up, genes_down,
   }
 
   if (length(all_plots) == 2) {
-    combined <- all_plots[[1]] / all_plots[[2]]
+    combined <- all_plots[[1]] / all_plots[[2]] + plot_layout( guides = "collect") & theme(legend.position = "bottom")
   } else if (length(all_plots) == 4) {
-    combined <- (all_plots[[1]] | all_plots[[2]]) / (all_plots[[3]] | all_plots[[4]])
+    combined <- (all_plots[[1]] | all_plots[[2]]) / (all_plots[[3]] | all_plots[[4]]) + plot_layout( guides = "collect") & theme(legend.position = "bottom")
   } else {
     combined <- wrap_plots(all_plots, ncol = 2, guides = "collect") & theme(legend.position = "bottom")
   }
@@ -347,7 +347,8 @@ plot_domain_direction_comparison <- function(genes_up, genes_down,
     plot_annotation(
       title = paste0(domain_name, ": Higher (↑) vs Lower (↓)"),
       theme = theme(plot.title = element_text(size = 14, face = "bold"))
-    )
+    ) +
+    plot_layout( guides = "collect") & theme(legend.position = "bottom")
 
   return(combined)
 }
@@ -717,13 +718,20 @@ plot_simple_trajectories <- function(gene_ids, count_data, title_text, n = 5) {
   if (length(plots) == 0) {
     return(NULL)
   }
+  if( length(plots) == 1){
+      combined <- wrap_plots(plots, ncol = 1)
+  }
+  if( length(plots) > 1){
+      combined <- wrap_plots(plots, ncol = 3)
+  }
 
-  combined <- wrap_plots(plots, ncol = 3)
+  
   combined <- combined +
     plot_annotation(
       title = title_text,
       theme = theme(plot.title = element_text(size = 14, face = "bold"))
-    )
+    ) +
+    plot_layout( guides = "collect") & theme(legend.position = "bottom")
 
   return(combined)
 }
@@ -791,13 +799,19 @@ plot_trajectory_with_slopes <- function(gene_ids, count_data, slope_data,
   if (length(plots) == 0) {
     return(NULL)
   }
-
-  combined <- wrap_plots(plots, ncol = 2)
+  if( length(plots) == 1){
+      combined <- wrap_plots(plots, ncol = 1)
+  }
+  if( length(plots) > 1){
+      combined <- wrap_plots(plots, ncol = 2)
+  }
+  
   combined <- combined +
     plot_annotation(
       title = title_text,
       theme = theme(plot.title = element_text(size = 14, face = "bold"))
-    )
+    )+
+    plot_layout( guides = "collect") & theme(legend.position = "bottom")
 
   return(combined)
 }
@@ -1481,9 +1495,9 @@ Here, I analyze the B6 data on its own to identify genes differentially expresse
 The data from B6 animals includes males and females, and contain the three AP domains (PM, MAX and POST) obtained at various developmental stages (LB_stage).
 I merge the technical replicates due to re-sequencing of several samples using `collapseReplicates()` function from DESeq2. Next, I calculate the relative or centered limb bud (LB) stage (LB_stage_from_start), where I subtract the minimum observed stage so that 0 represents the earliest developmental time point in the data set.
 
-In order to identify differentially expressed genes between domains and developmental time, I obtain the main effects for domain (`AP_domain`) and centered developmental time (`LB_stage_from_the_start`) while using a nesting for the domain since they are obtained from the same animal (`\~ sex + AP_domain + LB_stage_from_the_start + AP_domain:ind`).
+In order to identify differentially expressed genes between domains and developmental time, I obtain the main effects for domain (`AP_domain`) and centered developmental time (`LB_stage_from_the_start`) while using a nesting for the domain since they are obtained from the same animal (`~ sex + AP_domain + LB_stage_from_the_start + AP_domain:ind`).
 
-For identifying genes with significant interactions between domain and time, meaning they have different spatiotemporal gene expression patterns, I use the likelihood ratio test (LRT) to compare the initial simple model to the more complex linear model that includes the interaction term (`\~ sex + AP_domain + LB_stage_from_the_start + AP_domain:ind + AP_domain:LB_stage_from_the_start`).
+For identifying genes with significant interactions between domain and time, meaning they have different spatiotemporal gene expression patterns, I use the likelihood ratio test (LRT) to compare the initial simple model to the more complex linear model that includes the interaction term (`~ sex + AP_domain + LB_stage_from_the_start + AP_domain:ind + AP_domain:LB_stage_from_the_start`).
 Once I have this differentially expressed gene list, I then use the complex model to get the effects of developmental time in all three domains.
 
 From this analysis, I have identified **`r length(unique(b6_domain_main_effects_clean$gene_id))`** genes with domain main effects, **`r length(unique(b6_stage_main_effects_clean$gene_id))`** genes with stage main effects, and  **`r length(genes_with_interaction)`** genes with significant domain × stage interactions. I used `DEgene_pattern_identification_B6.R` script to classify these differentially expressed genes into sub-categories based on expression patterns.
@@ -1534,8 +1548,8 @@ pattern_summary |>
 #| label: max-vs-pm-plot
 #| warning: false
 #| message: false
-#| fig-width: 12
-#| fig-height: 11
+#| fig-width: 10
+#| fig-height: 10
 
 genes_MAX_higher_than_PM <- gene_assignments |>
   filter(MAX_higher_PM) |>
@@ -1584,13 +1598,13 @@ Full list of over-represented pathways and biological processes:
 #| results: hide
 #| cache: true
 
-# Run enrichment on both sets
-genes_MAX_higher_than_PM_ora <- run_enrichment_hybrid(
+# Run ora on both sets
+genes_MAX_higher_than_PM_ora <- run_ora_hybrid(
   gene_ids = genes_MAX_higher_than_PM,
   description = "MAX higher than PM"
 )
 
-genes_MAX_lower_than_PM_ora <- run_enrichment_hybrid(
+genes_MAX_lower_than_PM_ora <- run_ora_hybrid(
   gene_ids = genes_MAX_lower_than_PM,
   description = "MAX lower than PM"
 )
@@ -1615,8 +1629,8 @@ genes_MAX_higher_than_PM_ora$result |>
 #| label: post-vs-pm-plot
 #| warning: false
 #| message: false
-#| fig-width: 12
-#| fig-height: 11
+#| fig-width: 10
+#| fig-height: 10
 
 genes_POST_higher_than_PM <- gene_assignments |>
   filter(POST_higher_PM) |>
@@ -1665,13 +1679,13 @@ Full list of over-represented pathways and biological processes:
 #| results: hide
 #| cache: true
 
-# Run enrichment on both sets
-genes_POST_higher_than_PM_ora <- run_enrichment_hybrid(
+# Run ora on both sets
+genes_POST_higher_than_PM_ora <- run_ora_hybrid(
   gene_ids = genes_POST_higher_than_PM,
   description = "POST higher than PM"
 )
 
-genes_POST_lower_than_PM_ora <- run_enrichment_hybrid(
+genes_POST_lower_than_PM_ora <- run_ora_hybrid(
   gene_ids = genes_POST_lower_than_PM,
   description = "POST lower than PM"
 )
@@ -1695,8 +1709,8 @@ genes_POST_higher_than_PM_ora$result |>
 #| label: post-vs-max-plot
 #| warning: false
 #| message: false
-#| fig-width: 12
-#| fig-height: 11
+#| fig-width: 10
+#| fig-height: 10
 
 genes_POST_higher_than_MAX <- gene_assignments |>
   filter(POST_higher_MAX) |>
@@ -1719,7 +1733,7 @@ if (length(genes_POST_higher_than_MAX) > 0 & length(genes_POST_lower_than_MAX) >
 
 This sub-section contains genes with expression differences between POST and MAX domains.
 
-**POST higher than MAX** contain `r length(genes_POST_higher_than_MAX)` genes and over-representation analysis shows an enrichment for **muscle/contractile apparatus** genes—sarcomere components, myofibrils, and muscle contraction machinery.
+**POST higher than MAX** contain `r length(genes_POST_higher_than_MAX)` genes and over-representation analysis shows an ora for **muscle/contractile apparatus** genes—sarcomere components, myofibrils, and muscle contraction machinery.
 The strong human phenotype associations with myopathies (Gowers sign, muscle weakness, abnormal muscle fibers) underscore this muscle identity.
 There's also a cell adhesion signature involving protocadherins.
 
@@ -1750,13 +1764,13 @@ Full list of over-represented pathways and biological processes:
 #| results: hide
 #| cache: true
 
-# Run enrichment on both sets
-genes_POST_higher_than_MAX_ora <- run_enrichment_hybrid(
+# Run ora on both sets
+genes_POST_higher_than_MAX_ora <- run_ora_hybrid(
   gene_ids = genes_POST_higher_than_MAX,
   description = "POST higher than MAX"
 )
 
-genes_POST_lower_than_MAX_ora <- run_enrichment_hybrid(
+genes_POST_lower_than_MAX_ora <- run_ora_hybrid(
   gene_ids = genes_POST_lower_than_MAX,
   description = "POST lower than MAX"
 )
@@ -1837,7 +1851,7 @@ if (length(genes_POST_highest) > 0) {
 #| warning: false
 #| message: false
 #| fig-width: 10
-#| fig-height: 10
+#| fig-height: 14
 
 wrap_plots(p1, p2, p3, nrow = 3, ncol = 1, guides = "collect") & theme(legend.position = "bottom")
 ```
@@ -1865,17 +1879,17 @@ Over-represented pathways and biological processes:
 #| results: hide
 #| cache: true
 
-genes_PM_highest_ora <- run_enrichment_hybrid(
+genes_PM_highest_ora <- run_ora_hybrid(
   gene_ids = genes_PM_highest,
   description = "PM highest"
 )
 
-genes_MAX_highest_ora <- run_enrichment_hybrid(
+genes_MAX_highest_ora <- run_ora_hybrid(
   gene_ids = genes_MAX_highest,
   description = "MAX highest"
 )
 
-genes_POST_highest_ora <- run_enrichment_hybrid(
+genes_POST_highest_ora <- run_ora_hybrid(
   gene_ids = genes_POST_highest,
   description = "POST highest"
 )
@@ -1952,13 +1966,13 @@ Over-represented pathways and biological processes:
 #| results: hide
 #| cache: true
 
-# Run enrichment on both sets
-genes_AP_decreasing_ora <- run_enrichment_hybrid(
+# Run ora on both sets
+genes_AP_decreasing_ora <- run_ora_hybrid(
   gene_ids = genes_AP_decreasing,
   description = "A→P decreasing"
 )
 
-genes_AP_increasing_ora <- run_enrichment_hybrid(
+genes_AP_increasing_ora <- run_ora_hybrid(
   gene_ids = genes_AP_increasing,
   description = "A→P increasing"
 )
@@ -2018,6 +2032,8 @@ pattern_summary |>
 #| label: dev-increasing-plot
 #| warning: false
 #| message: false
+#| fig-height: 12
+#| fig-width: 12
 
 if (length(genes_increasing_with_development) > 0) {
   n_show <- ifelse(length(genes_increasing_with_development) < 15, length(genes_increasing_with_development), 6)
@@ -2054,8 +2070,8 @@ Over-represented pathways and biological processes:
 #| results: hide
 #| cache: true
 
-# Run enrichment on all sets
-dev_increasing_ora <- run_enrichment_hybrid(
+# Run ora on all sets
+dev_increasing_ora <- run_ora_hybrid(
   gene_ids = b6_stage_main_effects_clean |>
     filter(Direction == "Increase") |>
     pull(gene_id),
@@ -2063,7 +2079,7 @@ dev_increasing_ora <- run_enrichment_hybrid(
 )
 
 # Format and combine results
-dev_increasing_ora_table <- format_enrichment_result(dev_increasing_ora)
+dev_increasing_ora_table <- format_ora_result(dev_increasing_ora)
 ```
 
 ```{r}
@@ -2082,6 +2098,8 @@ dev_increasing_ora_table |>
 #| label: dev-decreasing-plot
 #| warning: false
 #| message: false
+#| fig-height: 12
+#| fig-width: 12
 
 if (length(genes_decreasing_with_development) > 0) {
   n_show <- ifelse(length(genes_decreasing_with_development) < 15, length(genes_decreasing_with_development), 6)
@@ -2118,8 +2136,8 @@ Over-represented pathways and biological processes:
 #| results: hide
 #| cache: true
 
-# Run enrichment on all sets
-dev_decreasing_ora <- run_enrichment_hybrid(
+# Run ora on all sets
+dev_decreasing_ora <- run_ora_hybrid(
   gene_ids = b6_stage_main_effects_clean |>
     filter(Direction == "Decrease") |>
     pull(gene_id),
@@ -2127,7 +2145,7 @@ dev_decreasing_ora <- run_enrichment_hybrid(
 )
 
 # Format and combine results
-dev_decreasing_ora_table <- format_enrichment_result(dev_decreasing_ora)
+dev_decreasing_ora_table <- format_ora_result(dev_decreasing_ora)
 ```
 
 ```{r}
@@ -2149,8 +2167,6 @@ These genes show significant **domain × stage interactions**, meaning their dev
 - **Opposite trajectories**: One domain increases while another decreases - the most biologically distinct patterns
 - **Co-increasing/Co-decreasing**: Both domains change in the same direction but at different rates
 - **Domain-restricted**: Only one or two domains show developmental changes
-
-::: {#B6_trajectory_patterns .panel-tabset .nav-pills}
 
 ## Overview
 
@@ -2190,6 +2206,10 @@ ggplot(trajectory_summary, aes(x = n, y = overall_pattern, fill = overall_patter
   theme(axis.text.y = element_text(size = 9)) +
   xlim(0, max(trajectory_summary$n) * 1.15)
 ```
+
+# Pairwise Comparisons Between Domains
+
+::: {#B6_trajectory_patterns .panel-tabset .nav-pills}
 
 ## MAX vs PM Trajectories
 
@@ -2577,7 +2597,7 @@ trajectory_patterns |>
   create_dt()
 ```
 
-## Trajectory Enrichment
+## Trajectory Over-representation
 
 ```{r}
 #| label: trajectory-ora
@@ -2586,12 +2606,12 @@ trajectory_patterns |>
 #| results: hide
 #| cache: true
 
-ora_MAX_up_PM_down <- run_enrichment_hybrid(gene_ids = genes_MAX_up_PM_down, description = "MAX↑ PM↓")
-ora_MAX_down_PM_up <- run_enrichment_hybrid(gene_ids = genes_MAX_down_PM_up, description = "MAX↓ PM↑")
-ora_POST_up_PM_down <- run_enrichment_hybrid(gene_ids = genes_POST_up_PM_down, description = "POST↑ PM↓")
-ora_POST_down_PM_up <- run_enrichment_hybrid(gene_ids = genes_POST_down_PM_up, description = "POST↓ PM↑")
-ora_coinc_MAX_faster <- run_enrichment_hybrid(gene_ids = genes_coinc_MAX_faster_PM, description = "Co-increasing: MAX faster")
-ora_coinc_POST_faster <- run_enrichment_hybrid(gene_ids = genes_coinc_POST_faster_PM, description = "Co-increasing: POST faster")
+ora_MAX_up_PM_down <- run_ora_hybrid(gene_ids = genes_MAX_up_PM_down, description = "MAX↑ PM↓")
+ora_MAX_down_PM_up <- run_ora_hybrid(gene_ids = genes_MAX_down_PM_up, description = "MAX↓ PM↑")
+ora_POST_up_PM_down <- run_ora_hybrid(gene_ids = genes_POST_up_PM_down, description = "POST↑ PM↓")
+ora_POST_down_PM_up <- run_ora_hybrid(gene_ids = genes_POST_down_PM_up, description = "POST↓ PM↑")
+ora_coinc_MAX_faster <- run_ora_hybrid(gene_ids = genes_coinc_MAX_faster_PM, description = "Co-increasing: MAX faster")
+ora_coinc_POST_faster <- run_ora_hybrid(gene_ids = genes_coinc_POST_faster_PM, description = "Co-increasing: POST faster")
 ```
 
 ```{r}
@@ -2653,51 +2673,29 @@ tibble(
 #| label: pm-only-examples
 #| warning: false
 #| message: false
-#| fig-width: 10
-#| fig-height: 4
+#| fig-width: 9
+#| fig-height: 10
 
 plots <- list()
 
 if (length(genes_PM_only_up) > 0) {
   plots[["PM↑"]] <- plot_domain_specific_dynamics(
     gene_ids = genes_PM_only_up, domain_name = "PM", direction = "↑",
-    count_data = b6_gene_counts, slope_data = b6_domain_slopes_clean, n = 1
+    count_data = b6_gene_counts, slope_data = b6_domain_slopes, n = 1
   )
 }
 
 if (length(genes_PM_only_down) > 0) {
   plots[["PM↓"]] <- plot_domain_specific_dynamics(
     gene_ids = genes_PM_only_down, domain_name = "PM", direction = "↓",
-    count_data = b6_gene_counts, slope_data = b6_domain_slopes_clean, n = 1
+    count_data = b6_gene_counts, slope_data = b6_domain_slopes, n = 1
   )
 }
 
-if (length(plots) > 0) wrap_plots(plots, nrow = 1)
+if (length(plots) > 0) wrap_plots(plots, nrow = 2)
 ```
 
-```{r}
-#| label: pm-only-ora
-#| warning: false
-#| message: false
-#| results: hide
-#| cache: true
 
-ora_PM_only_up <- run_enrichment_hybrid(gene_ids = genes_PM_only_up, description = "PM↑ only")
-ora_PM_only_down <- run_enrichment_hybrid(gene_ids = genes_PM_only_down, description = "PM↓ only")
-```
-
-```{r}
-#| label: pm-only-ora-table
-#| warning: false
-#| message: false
-
-pm_ora <- bind_rows(ora_PM_only_up$result, ora_PM_only_down$result)
-if (!is.null(pm_ora) && nrow(pm_ora) > 0) {
-  pm_ora |>
-    filter(p_value < 0.01) |>
-    create_dt()
-}
-```
 
 ## MAX Only Dynamic
 
@@ -2707,51 +2705,29 @@ if (!is.null(pm_ora) && nrow(pm_ora) > 0) {
 #| label: max-only-examples
 #| warning: false
 #| message: false
-#| fig-width: 10
-#| fig-height: 4
+#| fig-width: 9
+#| fig-height: 10
 
 plots <- list()
 
 if (length(genes_MAX_only_up) > 0) {
   plots[["MAX↑"]] <- plot_domain_specific_dynamics(
     gene_ids = genes_MAX_only_up, domain_name = "MAX", direction = "↑",
-    count_data = b6_gene_counts, slope_data = b6_domain_slopes_clean, n = 1
+    count_data = b6_gene_counts, slope_data = b6_domain_slopes, n = 1
   )
 }
 
 if (length(genes_MAX_only_down) > 0) {
   plots[["MAX↓"]] <- plot_domain_specific_dynamics(
     gene_ids = genes_MAX_only_down, domain_name = "MAX", direction = "↓",
-    count_data = b6_gene_counts, slope_data = b6_domain_slopes_clean, n = 1
+    count_data = b6_gene_counts, slope_data = b6_domain_slopes, n = 1
   )
 }
 
 if (length(plots) > 0) wrap_plots(plots, nrow = 1)
 ```
 
-```{r}
-#| label: max-only-ora
-#| warning: false
-#| message: false
-#| results: hide
-#| cache: true
 
-ora_MAX_only_up <- run_enrichment_hybrid(gene_ids = genes_MAX_only_up, description = "MAX↑ only")
-ora_MAX_only_down <- run_enrichment_hybrid(gene_ids = genes_MAX_only_down, description = "MAX↓ only")
-```
-
-```{r}
-#| label: max-only-ora-table
-#| warning: false
-#| message: false
-
-max_ora <- bind_rows(ora_MAX_only_up$result, ora_MAX_only_down$result)
-if (!is.null(max_ora) && nrow(max_ora) > 0) {
-  max_ora |>
-    filter(p_value < 0.01) |>
-    create_dt()
-}
-```
 
 ## POST Only Dynamic
 
@@ -2761,51 +2737,28 @@ if (!is.null(max_ora) && nrow(max_ora) > 0) {
 #| label: post-only-examples
 #| warning: false
 #| message: false
-#| fig-width: 10
-#| fig-height: 4
+#| fig-width: 9
+#| fig-height: 10
 
 plots <- list()
 
 if (length(genes_POST_only_up) > 0) {
   plots[["POST↑"]] <- plot_domain_specific_dynamics(
     gene_ids = genes_POST_only_up, domain_name = "POST", direction = "↑",
-    count_data = b6_gene_counts, slope_data = b6_domain_slopes_clean, n = 1
+    count_data = b6_gene_counts, slope_data = b6_domain_slopes, n = 1
   )
 }
 
 if (length(genes_POST_only_down) > 0) {
   plots[["POST↓"]] <- plot_domain_specific_dynamics(
     gene_ids = genes_POST_only_down, domain_name = "POST", direction = "↓",
-    count_data = b6_gene_counts, slope_data = b6_domain_slopes_clean, n = 1
+    count_data = b6_gene_counts, slope_data = b6_domain_slopes, n = 1
   )
 }
 
 if (length(plots) > 0) wrap_plots(plots, nrow = 1)
 ```
 
-```{r}
-#| label: post-only-ora
-#| warning: false
-#| message: false
-#| results: hide
-#| cache: true
-
-ora_POST_only_up <- run_enrichment_hybrid(genes_POST_only_up, "POST↑ only")
-ora_POST_only_down <- run_enrichment_hybrid(genes_POST_only_down, "POST↓ only")
-```
-
-```{r}
-#| label: post-only-ora-table
-#| warning: false
-#| message: false
-
-post_ora <- bind_rows(ora_POST_only_up$result, ora_POST_only_down$result)
-if (!is.null(post_ora) && nrow(post_ora) > 0) {
-  post_ora |>
-    filter(p_value < 0.01) |>
-    create_dt()
-}
-```
 
 ## Two Domains Dynamic
 
@@ -2860,32 +2813,11 @@ if (length(genes_PM_POST_down) > 0) {
   )
 }
 
-if (length(plots) > 0) wrap_plots(plots, ncol = 2, guides = "collect")
-```
+if (length(plots) > 0) {
+  wrap_plots(plots, ncol = 3, guides ="collect" ) 
+  }else plots
 
-```{r}
-#| label: two-domain-ora
-#| warning: false
-#| message: false
-#| results: hide
-#| cache: true
 
-ora_PM_MAX_up <- run_enrichment_hybrid(genes_PM_MAX_up, "PM+MAX↑")
-ora_MAX_POST_up <- run_enrichment_hybrid(genes_MAX_POST_up, "MAX+POST↑")
-ora_PM_POST_up <- run_enrichment_hybrid(genes_PM_POST_up, "PM+POST↑")
-```
-
-```{r}
-#| label: two-domain-ora-table
-#| warning: false
-#| message: false
-
-two_domain_ora <- bind_rows(ora_PM_MAX_up$result, ora_MAX_POST_up$result, ora_PM_POST_up$result)
-if (!is.null(two_domain_ora) && nrow(two_domain_ora) > 0) {
-  two_domain_ora |>
-    filter(p_value < 0.01) |>
-    create_dt()
-}
 ```
 
 ## Gene Lists
@@ -2912,12 +2844,55 @@ gene_list_tbl <- bind_rows(
 
 if (nrow(gene_list_tbl) > 0) {
   gene_list_tbl |>
-    left_join(b6_domain_slopes_clean |> distinct(gene_id, gene_name), by = "gene_id") |>
-    select(Pattern, gene_id, gene_name) |>
-    arrange(Pattern, gene_name) |>
+    left_join(b6_domain_slopes_clean |> distinct(gene_id, symbol)) |>
+    select(Pattern, gene_id, symbol) |>
+    arrange(Pattern, symbol) |>
     create_dt()
 }
 ```
+
+## Over-representation results
+
+```{r}
+#| label: combined-domain-specific-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+ora_PM_only_up <- run_ora_hybrid(gene_ids = genes_PM_only_up, description = "PM↑ only")
+ora_PM_only_down <- run_ora_hybrid(gene_ids = genes_PM_only_down, description = "PM↓ only")
+ora_MAX_only_up <- run_ora_hybrid(gene_ids = genes_MAX_only_up, description = "MAX↑ only")
+ora_MAX_only_down <- run_ora_hybrid(gene_ids = genes_MAX_only_down, description = "MAX↓ only")
+ora_POST_only_up <- run_ora_hybrid(genes_POST_only_up, "POST↑ only")
+ora_POST_only_down <- run_ora_hybrid(genes_POST_only_down, "POST↓ only")
+ora_PM_MAX_up <- run_ora_hybrid(genes_PM_MAX_up, "PM+MAX↑")
+ora_MAX_POST_up <- run_ora_hybrid(genes_MAX_POST_up, "MAX+POST↑")
+ora_PM_POST_up <- run_ora_hybrid(genes_PM_POST_up, "PM+POST↑")
+
+```
+
+
+```{r}
+#| label: combined-domain-specific-ora-table
+#| warning: false
+#| message: false
+
+domain_specific_ora_results <- bind_rows(
+  ora_PM_only_up$result, ora_PM_only_down$result,
+  ora_MAX_only_up$result, ora_MAX_only_down$result,
+  ora_POST_only_up$result, ora_POST_only_down$result,
+  ora_PM_MAX_up$result, ora_MAX_POST_up$result, ora_PM_POST_up$result
+)
+
+if (!is.null(domain_specific_ora_results) && nrow(domain_specific_ora_results) > 0) {
+  trajectory_ora_results |>
+    filter(p_value < 0.01) |>
+    create_dt()
+}
+```
+
+
 
 :::
 
@@ -2991,10 +2966,10 @@ if (length(genes_three_way_divergent) > 0) {
   )
 }
 
-if (length(plots) > 0) wrap_plots(plots, ncol = 2, guides = "collect")
+if (length(plots) > 0) wrap_plots(plots, ncol = 2, guides = "collect") & theme(legend.position = "bottom")
 ```
 
-## Complex Enrichment
+## Complex Over-representation
 
 ```{r}
 #| label: complex-ora
@@ -3003,10 +2978,10 @@ if (length(plots) > 0) wrap_plots(plots, ncol = 2, guides = "collect")
 #| results: hide
 #| cache: true
 
-ora_all_increasing <- run_enrichment_hybrid(genes_all_increasing, "All↑")
-ora_all_decreasing <- run_enrichment_hybrid(genes_all_decreasing, "All↓")
-ora_opposite <- run_enrichment_hybrid(genes_opposite_slopes, "Opposite slopes")
-ora_three_way <- run_enrichment_hybrid(genes_three_way_divergent, "Three-way divergent")
+ora_all_increasing <- run_ora_hybrid(genes_all_increasing, "All↑")
+ora_all_decreasing <- run_ora_hybrid(genes_all_decreasing, "All↓")
+ora_opposite <- run_ora_hybrid(genes_opposite_slopes, "Opposite slopes")
+ora_three_way <- run_ora_hybrid(genes_three_way_divergent, "Three-way divergent")
 ```
 
 ```{r}
@@ -3173,6 +3148,7 @@ ggplot(category_summary, aes(x = Total_Genes, y = Category, fill = Category)) +
   xlim(0, max(category_summary$Total_Genes) * 1.3)
 ```
 
+
 ## Trajectory Heatmap
 
 ```{r}
@@ -3272,14 +3248,14 @@ gene_level_summary |>
   create_dt()
 ```
 
-## Enrichment Summary
+## Over-representation Summary
 
 ```{r}
 #| label: all-ora-summary
 #| warning: false
 #| message: false
 
-# Combine all enrichment results
+# Combine all ora results
 all_ora_results <- bind_rows(
   # Domain effects
   genes_MAX_higher_than_PM_ora$result,
