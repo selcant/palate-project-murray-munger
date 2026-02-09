@@ -55,6 +55,7 @@ select <- dplyr::select
 rename <- dplyr::rename
 filter <- dplyr::filter
 summarize <- dplyr::summarize
+count <- dplyr::count
 
 set.seed(123) # for reproducibility
 
@@ -73,13 +74,11 @@ strain_colors <- c(B6 = "#555555",
 
 # helper functions
 create_dt <- function(x){
-  
-  # Custom formatting function
   format_num <- function(val) {
     case_when(
-      is.na(val) ~ NA_real_,
-      abs(val) < 0.01 ~ signif(val, 2),
-      TRUE ~ round(val, 2)
+      is.na(val) ~ NA_character_,  
+      abs(val) < 0.01 ~ formatC(val, format = "e", digits = 2),
+      TRUE ~ as.character(round(val, 2))
     )
   }
   
@@ -92,15 +91,14 @@ create_dt <- function(x){
                 filter = "top",
                 options = list(dom = 'Blfrtip',
                                buttons = c('copy', 'csv', 'excel'),
-                               pageLength = 10, 
-                               scrollX = TRUE
-                ))
+                               pageLength = 5, 
+                               scrollX = TRUE))
 }
 
 # Function to run enrichment with both gprofiler2 AND Enrichr
 run_enrichment_hybrid <- function(gene_ids, 
-                                 gene_reference = all_genes_palate,
                                  description = "Gene Set",
+                                 gene_reference = all_genes_palate,
                                  max_term_size = 660,
                                  min_term_size = 4) {
   
@@ -170,8 +168,8 @@ run_enrichment_hybrid <- function(gene_ids,
           term_name = Term,
           p_value = Adjusted.P.value,
           query_size = length(query_symbols),
-          term_size = as.numeric(gsub("/.*", "", Overlap)),  # Extract from "10/500" format
-          intersection_size = as.numeric(gsub("/.*", "", Overlap)),
+          intersection_size = as.numeric(gsub("/.*", "", Overlap)),  # numerator (X from "X/Y")
+          term_size = as.numeric(gsub(".*/", "", Overlap)),          # denominator (Y from "X/Y")
           intersection = Genes
         ) |>
         filter(term_size < max_term_size) |>
@@ -272,8 +270,8 @@ plot_domain_direction_comparison <- function(genes_up, genes_down,
            subtitle = paste0("↑ in ", domain_name),
            x = "Development stage",
            y = "Counts") +
-      theme_pubclean(base_size = 10) +
-      theme(legend.position = "none",
+      theme_pubclean(base_size = 16) +
+      theme(legend.position = "bottom",
             plot.title = element_text(face = "bold", size = 11),
             plot.subtitle = element_text(color = "darkgreen"))
   })
@@ -297,8 +295,8 @@ plot_domain_direction_comparison <- function(genes_up, genes_down,
            subtitle = paste0("↓ in ", domain_name),
            x = "Development stage",
            y = "Counts") +
-      theme_pubclean(base_size = 10) +
-      theme(legend.position = "none",
+      theme_pubclean(base_size = 16) +
+      theme(legend.position = "bottom",
             plot.title = element_text(face = "bold", size = 11),
             plot.subtitle = element_text(color = "darkred"))
   })
@@ -316,7 +314,7 @@ plot_domain_direction_comparison <- function(genes_up, genes_down,
   } else if(length(all_plots) == 4) {
     combined <- (all_plots[[1]] | all_plots[[2]]) / (all_plots[[3]] | all_plots[[4]])
   } else {
-    combined <- wrap_plots(all_plots, ncol = 2)
+    combined <- wrap_plots(all_plots, ncol = 2, guides = "collect") & theme( legend.position = "bottom") 
   }
   
   combined <- combined +
@@ -354,7 +352,7 @@ plot_domain_hierarchy <- function(genes_highest, domain_name, count_data, n = 3)
            subtitle = paste0("Highest in ", domain_name),
            x = "Development",
            y = "Counts") +
-      theme_pubclean(base_size = 10) +
+      theme_pubclean(base_size = 16) +
       theme(legend.position = "bottom",
             legend.text = element_text(size = 8),
             plot.title = element_text(face = "bold"))
@@ -365,7 +363,7 @@ plot_domain_hierarchy <- function(genes_highest, domain_name, count_data, n = 3)
       scale_y_log10(labels = scales::comma) +
       scale_fill_manual(values = domain_colors) +
       labs(x = "", y = "") +
-      theme_pubclean(base_size = 10) +
+      theme_pubclean(base_size = 16) +
       theme(legend.position = "none")
     
     return(p1 + p2 + plot_layout(widths = c(2, 1)))
@@ -385,13 +383,13 @@ plot_domain_hierarchy <- function(genes_highest, domain_name, count_data, n = 3)
 }
 
 # ===== FUNCTION 3: PLOT A-P GRADIENTS =====
-plot_AP_gradient <- function(genes_decreasing, genes_increasing, count_data, n_each = 3) {
+plot_AP_gradient <- function(genes_decreasing_with_development, genes_increasing_with_development, count_data, n_each = 3) {
   
   gene_col <- "symbol"
   
   # Get examples
-  dec_examples <- genes_decreasing[1:min(n_each, length(genes_decreasing))]
-  inc_examples <- genes_increasing[1:min(n_each, length(genes_increasing))]
+  dec_examples <- genes_decreasing_with_development[1:min(n_each, length(genes_decreasing_with_development))]
+  inc_examples <- genes_increasing_with_development[1:min(n_each, length(genes_increasing_with_development))]
   
   # Function to create gradient plot
   make_gradient_plot <- function(gid, gradient_type) {
@@ -418,7 +416,7 @@ plot_AP_gradient <- function(genes_decreasing, genes_increasing, count_data, n_e
            subtitle = ifelse(gradient_type == "dec", "PM > MAX > POST", "POST > MAX > PM"),
            x = "",
            y = "Expression") +
-      theme_pubclean(base_size = 10) +
+      theme_pubclean(base_size = 16) +
       theme(legend.position = "none",
             plot.title = element_text(face = "bold"),
             plot.subtitle = element_text(color = ifelse(gradient_type == "dec", 
@@ -484,7 +482,7 @@ plot_domain_specific_dynamics <- function(gene_ids, domain_name, direction,
            subtitle = paste0(direction, " in ", domain_name, " only"),
            x = "Development",
            y = "Counts") +
-      theme_pubclean(base_size = 10) +
+      theme_pubclean(base_size = 16) +
       theme(legend.position = "none",
             plot.title = element_text(face = "bold"))
     
@@ -497,12 +495,12 @@ plot_domain_specific_dynamics <- function(gene_ids, domain_name, direction,
                       width = 0.3) +
         geom_hline(yintercept = 0, linetype = "dashed") +
         geom_text(aes(label = ifelse(padj < 0.001, "***",
-                                     ifelse(p_value < 0.01, "**",
+                                     ifelse(padj < 0.01, "**",
                                             ifelse(padj < 0.05, "*", "ns")))),
                   vjust = -0.5, size = 4) +
         scale_fill_manual(values = domain_colors) +
         labs(y = "Slope", x = "") +
-        theme_pubclean(base_size = 10) +
+        theme_pubclean(base_size = 16) +
         theme(legend.position = "none")
       
       return(p1 + p2 + plot_layout(widths = c(2, 1)))
@@ -552,7 +550,7 @@ plot_diverging_detailed <- function(genes_faster, genes_opposite,
            subtitle = paste0(domain_name, " increases faster"),
            x = "Development",
            y = "Counts") +
-      theme_pubclean(base_size = 10) +
+      theme_pubclean(base_size = 16) +
       theme(legend.position = "none",
             plot.title = element_text(face = "bold"),
             plot.subtitle = element_text(color = "darkgreen", size = 9))
@@ -577,7 +575,7 @@ plot_diverging_detailed <- function(genes_faster, genes_opposite,
            subtitle = paste0(domain_name, " ↑, other ↓"),
            x = "Development",
            y = "Counts") +
-      theme_pubclean(base_size = 10) +
+      theme_pubclean(base_size = 16) +
       theme(legend.position = "none",
             plot.title = element_text(face = "bold"),
             plot.subtitle = element_text(color = "purple", size = 9))
@@ -633,7 +631,7 @@ plot_simple_trajectories <- function(gene_ids, count_data, title_text, n = 5) {
       labs(title = gene_name,
            x = "Development",
            y = "Counts") +
-      theme_pubclean(base_size = 10) +
+      theme_pubclean(base_size = 16) +
       theme(legend.position = "bottom",
             legend.text = element_text(size = 8),
             plot.title = element_text(face = "bold", size = 11))
@@ -651,6 +649,269 @@ plot_simple_trajectories <- function(gene_ids, count_data, title_text, n = 5) {
   
   return(combined)
 }
+
+
+# ===== FUNCTION: Plot trajectories with slope annotations =====
+plot_trajectory_with_slopes <- function(gene_ids, count_data, slope_data, 
+                                        title_text, n = 4) {
+  
+  example_genes <- gene_ids[1:min(n, length(gene_ids))]
+  
+  plots <- lapply(example_genes, function(gid) {
+    gene_data <- count_data |> 
+      filter(gene_id == gid) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    
+    if(nrow(gene_data) == 0) return(NULL)
+    
+    gene_name <- unique(gene_data$symbol)[1]
+    
+    # Get slopes for this gene
+    gene_slopes <- slope_data |> 
+      filter(gene_id == gid) |>
+      mutate(
+        direction = case_when(
+          log2FoldChange > 0.5 ~ "↑",
+          log2FoldChange < -0.5 ~ "↓",
+          TRUE ~ "→"
+        ),
+        slope_label = paste0(direction, round(log2FoldChange, 2))
+      )
+    
+    # Create subtitle with slopes
+    if(nrow(gene_slopes) > 0) {
+      slope_text <- gene_slopes |>
+        arrange(factor(Domain, levels = c("PM", "MAX", "POST"))) |>
+        mutate(text = paste0(Domain, ": ", slope_label)) |>
+        pull(text) |>
+        paste(collapse = "  ")
+    } else {
+      slope_text <- ""
+    }
+    
+    ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
+      geom_point(alpha = 0.5, size = 2) +
+      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_color_manual(values = domain_colors) +
+      labs(title = gene_name,
+           subtitle = slope_text,
+           x = "Development",
+           y = "Counts") +
+      theme_pubclean(base_size = 16) +
+      theme(legend.position = "bottom",
+            plot.title = element_text(face = "bold", size = 11),
+            plot.subtitle = element_text(size = 8, color = "gray30", family = "mono"))
+  })
+  
+  plots <- plots[!sapply(plots, is.null)]
+  if(length(plots) == 0) return(NULL)
+  
+  combined <- wrap_plots(plots, ncol = 2)
+  combined <- combined +
+    plot_annotation(
+      title = title_text,
+      theme = theme(plot.title = element_text(size = 14, face = "bold"))
+    )
+  
+  return(combined)
+}
+
+# ===== FUNCTION: Plot pairwise comparison with slope bars =====
+plot_pairwise_trajectory <- function(gene_ids, count_data, slope_data,
+                                     domain1, domain2, pattern_name, n = 4) {
+  
+  example_genes <- gene_ids[1:min(n, length(gene_ids))]
+  
+  plots <- lapply(example_genes, function(gid) {
+    gene_data <- count_data |> 
+      filter(gene_id == gid, AP_domain %in% c(domain1, domain2)) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    
+    if(nrow(gene_data) == 0) return(NULL)
+    
+    gene_name <- unique(gene_data$symbol)[1]
+    
+    # Get slopes for comparison
+    gene_slopes <- slope_data |> 
+      filter(gene_id == gid, Domain %in% c(domain1, domain2))
+    
+    # Trajectory plot
+    p1 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = AP_domain)) +
+      geom_point(alpha = 0.5, size = 2) +
+      geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1) +
+      scale_y_log10(labels = scales::comma) +
+      scale_color_manual(values = domain_colors) +
+      labs(title = gene_name, x = "Development", y = "Counts") +
+      theme_pubclean(base_size = 16) +
+      theme(legend.position = "bottom",
+            plot.title = element_text(face = "bold"))
+    
+    # Slope comparison bar plot
+    if(nrow(gene_slopes) > 0) {
+      p2 <- ggplot(gene_slopes, aes(x = Domain, y = log2FoldChange, fill = Domain)) +
+        geom_col(alpha = 0.8, width = 0.6) +
+        geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+        geom_text(aes(label = round(log2FoldChange, 2)), 
+                  vjust = ifelse(gene_slopes$log2FoldChange > 0, -0.5, 1.5),
+                  size = 3) +
+        scale_fill_manual(values = domain_colors) +
+        labs(y = "Slope (log2FC/stage)", x = "") +
+        theme_pubclean(base_size = 16) +
+        theme(legend.position = "none")
+      
+      return(p1 + p2 + plot_layout(widths = c(2, 1)))
+    } else {
+      return(p1)
+    }
+  })
+  
+  plots <- plots[!sapply(plots, is.null)]
+  if(length(plots) == 0) return(NULL)
+  
+  combined <- wrap_plots(plots, ncol = 1)
+  combined <- combined +
+    plot_annotation(
+      title = pattern_name,
+      subtitle = paste0("n = ", length(gene_ids), " genes"),
+      theme = theme(
+        plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 11)
+      )
+    )
+  
+  return(combined)
+}
+
+# ===== FUNCTION: Summary heatmap of trajectory patterns =====
+plot_trajectory_heatmap <- function(trajectory_patterns, slope_data) {
+  
+  # Prepare data for heatmap
+  heatmap_data <- trajectory_patterns |>
+    select(gene_id, symbol, PM_log2FoldChange, MAX_log2FoldChange, POST_log2FoldChange) |>
+    pivot_longer(
+      cols = ends_with("_log2FoldChange"),
+      names_to = "Domain",
+      values_to = "Slope"
+    ) |>
+    mutate(Domain = gsub("_log2FoldChange", "", Domain)) |>
+    mutate(Domain = factor(Domain, levels = c("PM", "MAX", "POST")))
+  
+  # Create slope matrix for clustering
+  slope_matrix <- trajectory_patterns |>
+    select(gene_id, PM_log2FoldChange, MAX_log2FoldChange, POST_log2FoldChange) |>
+    column_to_rownames("gene_id") |>
+    as.matrix()
+  
+  # Replace NAs with 0 for clustering
+  slope_matrix[is.na(slope_matrix)] <- 0
+  
+  # Cluster genes
+  if(nrow(slope_matrix) > 2) {
+    gene_order <- hclust(dist(slope_matrix))$order
+    gene_levels <- rownames(slope_matrix)[gene_order]
+  } else {
+    gene_levels <- rownames(slope_matrix)
+  }
+  
+  heatmap_data <- heatmap_data |>
+    mutate(gene_id = factor(gene_id, levels = gene_levels))
+  
+  ggplot(heatmap_data, aes(x = Domain, y = gene_id, fill = Slope)) +
+    geom_tile(color = "white", linewidth = 0.1) +
+    scale_fill_gradient2(
+      low = "#2166AC", mid = "white", high = "#B2182B",
+      midpoint = 0,
+      limits = c(-3, 3),
+      oob = scales::squish,
+      name = "Slope\n(log2FC)"
+    ) +
+    labs(
+      title = "Developmental Slopes by Domain",
+      subtitle = paste0("n = ", n_distinct(heatmap_data$gene_id), " genes with interactions"),
+      x = "",
+      y = ""
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      panel.grid = element_blank()
+    )
+}
+
+# ===== FUNCTION: Trajectory pattern distribution plot =====
+plot_pattern_distribution <- function(trajectory_patterns, pattern_col, title) {
+  
+  pattern_counts <- trajectory_patterns |>
+    count(.data[[pattern_col]], name = "n") |>
+    filter(!is.na(.data[[pattern_col]])) |>
+    mutate(
+      # Color by pattern type
+      pattern_type = case_when(
+        grepl("Opposite", .data[[pattern_col]]) ~ "Opposite",
+        grepl("Co-increasing", .data[[pattern_col]]) ~ "Co-increasing",
+        grepl("Co-decreasing", .data[[pattern_col]]) ~ "Co-decreasing",
+        grepl("only", .data[[pattern_col]]) ~ "Single domain",
+        TRUE ~ "Other"
+      )
+    ) |>
+    mutate(!!pattern_col := fct_reorder(.data[[pattern_col]], n))
+  
+  ggplot(pattern_counts, aes(x = n, y = .data[[pattern_col]], fill = pattern_type)) +
+    geom_col(alpha = 0.8) +
+    geom_text(aes(label = n), hjust = -0.2, size = 3) +
+    scale_fill_manual(
+      values = c(
+        "Opposite" = "#E41A1C",
+        "Co-increasing" = "#4DAF4A",
+        "Co-decreasing" = "#377EB8",
+        "Single domain" = "#984EA3",
+        "Other" = "#999999"
+      ),
+      name = "Pattern Type"
+    ) +
+    labs(
+      title = title,
+      x = "Number of genes",
+      y = ""
+    ) +
+    theme_pubclean() +
+    theme(legend.position = "right")
+}
+
+# ===== FUNCTION: Create trajectory summary table =====
+create_trajectory_summary <- function(trajectory_patterns) {
+  
+  # Summarize by overall pattern
+  overall_summary <- trajectory_patterns |>
+    count(overall_pattern, name = "n_genes") |>
+    mutate(
+      category = case_when(
+        grepl("All↑|All↓", overall_pattern) ~ "All same direction",
+        grepl("only", overall_pattern) ~ "Single domain dynamic",
+        grepl("stable", overall_pattern) & grepl("\\+", overall_pattern) ~ "Two domains dynamic",
+        grepl("↑.*↓|↓.*↑", overall_pattern) ~ "Opposite directions",
+        TRUE ~ "Other"
+      )
+    ) |>
+    arrange(category, desc(n_genes))
+  
+  # Summarize by pairwise patterns
+  pairwise_summary <- bind_rows(
+    trajectory_patterns |> count(MAX_PM_pattern) |> mutate(comparison = "MAX vs PM") |> rename(pattern = MAX_PM_pattern),
+    trajectory_patterns |> count(POST_PM_pattern) |> mutate(comparison = "POST vs PM") |> rename(pattern = POST_PM_pattern),
+    trajectory_patterns |> count(POST_MAX_pattern) |> mutate(comparison = "POST vs MAX") |> rename(pattern = POST_MAX_pattern)
+  ) |>
+    filter(!pattern %in% c("Both stable", "Unclassified")) |>
+    arrange(comparison, desc(n))
+  
+  list(
+    overall = overall_summary,
+    pairwise = pairwise_summary
+  )
+}
+
 ```
 
 ```{r}
@@ -956,26 +1217,122 @@ b6_gene_counts <- counts(b6_dds_simple, normalized = TRUE) |>
   left_join(all_genes_palate, by = "gene_id")
 
 
-# Run pattern identification script that generates the pattern_summary, gene_assignments and domain_dynamics files to read in.
+# Run pattern identification script that generates the pattern_summary, gene_assignments and trajectory_patterns files to read in.
 # source(here("DEgene_pattern_identification_B6.R"))
 
 # Load pattern assignments and summaries
 pattern_summary <- read_csv(here("pattern_summary_detailed.csv"))
 gene_assignments <- read_csv(here("gene_pattern_assignments_detailed.csv"))
-domain_dynamics <- read_csv(here("domain_specific_dynamics_detailed.csv"))
+trajectory_patterns <- read_csv(here("trajectory_patterns_detailed.csv"))
+
+
+# Extract gene lists
+
+# ===== EXTRACT GENE LISTS FROM TRAJECTORY PATTERNS =====
+
+# --- MAX vs PM: Opposite trajectories ---
+genes_MAX_up_PM_down <- trajectory_patterns |> 
+  filter(MAX_PM_pattern == "Opposite: MAX↑ PM↓") |> pull(gene_id)
+genes_MAX_down_PM_up <- trajectory_patterns |> 
+
+  filter(MAX_PM_pattern == "Opposite: MAX↓ PM↑") |> pull(gene_id)
+
+# --- MAX vs PM: Co-increasing ---
+genes_coinc_MAX_faster_PM <- trajectory_patterns |> 
+  filter(MAX_PM_pattern == "Co-increasing: MAX faster") |> pull(gene_id)
+genes_coinc_PM_faster_MAX <- trajectory_patterns |> 
+  filter(MAX_PM_pattern == "Co-increasing: PM faster") |> pull(gene_id)
+
+# --- MAX vs PM: Co-decreasing ---
+genes_codec_MAX_faster_PM <- trajectory_patterns |> 
+  filter(MAX_PM_pattern == "Co-decreasing: MAX faster") |> pull(gene_id)
+genes_codec_PM_faster_MAX <- trajectory_patterns |> 
+  filter(MAX_PM_pattern == "Co-decreasing: PM faster") |> pull(gene_id)
+
+# --- POST vs PM: Opposite trajectories ---
+genes_POST_up_PM_down <- trajectory_patterns |> 
+  filter(POST_PM_pattern == "Opposite: POST↑ PM↓") |> pull(gene_id)
+genes_POST_down_PM_up <- trajectory_patterns |> 
+  filter(POST_PM_pattern == "Opposite: POST↓ PM↑") |> pull(gene_id)
+
+# --- POST vs PM: Co-increasing ---
+genes_coinc_POST_faster_PM <- trajectory_patterns |> 
+  filter(POST_PM_pattern == "Co-increasing: POST faster") |> pull(gene_id)
+genes_coinc_PM_faster_POST <- trajectory_patterns |> 
+  filter(POST_PM_pattern == "Co-increasing: PM faster") |> pull(gene_id)
+
+# --- POST vs PM: Co-decreasing ---
+genes_codec_POST_faster_PM <- trajectory_patterns |> 
+  filter(POST_PM_pattern == "Co-decreasing: POST faster") |> pull(gene_id)
+genes_codec_PM_faster_POST <- trajectory_patterns |> 
+  filter(POST_PM_pattern == "Co-decreasing: PM faster") |> pull(gene_id)
+
+# --- POST vs MAX: Opposite trajectories ---
+genes_POST_up_MAX_down <- trajectory_patterns |> 
+  filter(POST_MAX_pattern == "Opposite: POST↑ MAX↓") |> pull(gene_id)
+genes_POST_down_MAX_up <- trajectory_patterns |> 
+  filter(POST_MAX_pattern == "Opposite: POST↓ MAX↑") |> pull(gene_id)
+
+# --- POST vs MAX: Co-increasing ---
+genes_coinc_POST_faster_MAX <- trajectory_patterns |> 
+  filter(POST_MAX_pattern == "Co-increasing: POST faster") |> pull(gene_id)
+genes_coinc_MAX_faster_POST <- trajectory_patterns |> 
+  filter(POST_MAX_pattern == "Co-increasing: MAX faster") |> pull(gene_id)
+
+# --- POST vs MAX: Co-decreasing ---
+genes_codec_POST_faster_MAX <- trajectory_patterns |> 
+  filter(POST_MAX_pattern == "Co-decreasing: POST faster") |> pull(gene_id)
+genes_codec_MAX_faster_POST <- trajectory_patterns |> 
+  filter(POST_MAX_pattern == "Co-decreasing: MAX faster") |> pull(gene_id)
+
+# --- Single domain dynamic (from overall_pattern) ---
+genes_PM_only_up <- trajectory_patterns |> filter(overall_pattern == "PM↑ only") |> pull(gene_id)
+genes_PM_only_down <- trajectory_patterns |> filter(overall_pattern == "PM↓ only") |> pull(gene_id)
+genes_MAX_only_up <- trajectory_patterns |> filter(overall_pattern == "MAX↑ only") |> pull(gene_id)
+genes_MAX_only_down <- trajectory_patterns |> filter(overall_pattern == "MAX↓ only") |> pull(gene_id)
+genes_POST_only_up <- trajectory_patterns |> filter(overall_pattern == "POST↑ only") |> pull(gene_id)
+genes_POST_only_down <- trajectory_patterns |> filter(overall_pattern == "POST↓ only") |> pull(gene_id)
+
+# --- Two domains dynamic, same direction ---
+genes_PM_MAX_up <- trajectory_patterns |> filter(overall_pattern == "PM+MAX↑, POST stable") |> pull(gene_id)
+genes_PM_MAX_down <- trajectory_patterns |> filter(overall_pattern == "PM+MAX↓, POST stable") |> pull(gene_id)
+genes_PM_POST_up <- trajectory_patterns |> filter(overall_pattern == "PM+POST↑, MAX stable") |> pull(gene_id)
+genes_PM_POST_down <- trajectory_patterns |> filter(overall_pattern == "PM+POST↓, MAX stable") |> pull(gene_id)
+genes_MAX_POST_up <- trajectory_patterns |> filter(overall_pattern == "MAX+POST↑, PM stable") |> pull(gene_id)
+genes_MAX_POST_down <- trajectory_patterns |> filter(overall_pattern == "MAX+POST↓, PM stable") |> pull(gene_id)
+
+# --- All three domains dynamic ---
+genes_all_increasing <- trajectory_patterns |> filter(overall_pattern == "All↑") |> pull(gene_id)
+genes_all_decreasing <- trajectory_patterns |> filter(overall_pattern == "All↓") |> pull(gene_id)
+
+# --- Complex patterns ---
+genes_opposite_slopes <- trajectory_patterns |>
+  filter(grepl("Opposite", MAX_PM_pattern) | 
+         grepl("Opposite", POST_PM_pattern) | 
+         grepl("Opposite", POST_MAX_pattern)) |>
+  pull(gene_id) |> unique()
+
+genes_three_way_divergent <- trajectory_patterns |>
+  filter(PM_sig & MAX_sig & POST_sig) |>
+  filter(!(PM_up & MAX_up & POST_up) & !(PM_down & MAX_down & POST_down)) |>
+  pull(gene_id)
+
 ```
 
-Here, I analyze the B6 data on its own to identify genes differentially expressed across AP domains, over developmental time and change differently over time across domains. The data from B6 animals includes males and females, and contain the three AP domains (PM, MAX and POST) obtained at various developmental stages (LB_stage).
-I merge the technical replicates due to re-sequencing of several samples using `collapseReplicates()` function from DESeq2. 
+Here, I analyze the B6 data on its own to identify genes differentially expressed across AP domains, over developmental time and change differently over time across domains.
+The data from B6 animals includes males and females, and contain the three AP domains (PM, MAX and POST) obtained at various developmental stages (LB_stage).
+I merge the technical replicates due to re-sequencing of several samples using `collapseReplicates()` function from DESeq2. Next, I calculate the relative or centered limb bud (LB) stage (LB_stage_from_start), where I subtract the minimum observed stage so that 0 represents the earliest developmental time point in the data set.
 
-In order to identify differentially expressed genes between domains and developmental time, I obtain the main effects for domain (AP_domain) and centered developmental time (LB_stage_from_the_start, minimum LB_stage value is subtracted to start the continous variable from 0) while using a nesting for the domain since they are obtained from the same animal (\~ sex + AP_domain + LB_stage + AP_domain:ind).
+In order to identify differentially expressed genes between domains and developmental time, I obtain the main effects for domain (`AP_domain`) and centered developmental time (`LB_stage_from_the_start`) while using a nesting for the domain since they are obtained from the same animal (`\~ sex + AP_domain + LB_stage_from_the_start + AP_domain:ind`).
 
+For identifying genes with significant interactions between domain and time, meaning they have different spatiotemporal gene expression patterns, I use the likelihood ratio test (LRT) to compare the initial simple model to the more complex linear model that includes the interaction term (`\~ sex + AP_domain + LB_stage_from_the_start + AP_domain:ind + AP_domain:LB_stage_from_the_start`).
+Once I have this differentially expressed gene list, I then use the complex model to get the effects of developmental time in all three domains.
 
-For identifying genes with significant interactions between domain and time meaning they have different spatiotemporal gene expression patterns I use the likelihood ratio test (LRT) to compare the initial simple model to the more complex linear model that includes the interaction term (\~ sex + AP_domain + LB_stage + AP_domain:ind + AP_domain:LB_stage).
-Once I have this DE gene list, I then use the complex model to get the effects of developmental time in all three domains.
+From this analysis, I have identified **`r length(unique(b6_domain_main_effects_clean$gene_id))`** genes with domain main effects, **`r length(unique(b6_stage_main_effects_clean$gene_id))`** genes with stage main effects, and  **`r length(genes_with_interaction)`** genes with significant domain × stage interactions. I used `DEgene_pattern_identification_B6.R` script to classify these differentially expressed genes into sub-categories based on expression patterns.
 
-From this analysis, I have identified **`r nrow(gene_assignments)` genes** with significant spatiotemporal expression patterns across the three anatomical domains (PM, MAX, POST) and developmental time.
-I used `DEgene_pattern_identification_B6.R` script to classify these differentially expressed genes into six major categories based on expression patterns:
+- **Domain main effects**: Genes with different expression levels between domains but parallel developmental trajectories.
+- **Stage main effects**: Genes with common developmental changes across all domains.
+- **Trajectory patterns**: Genes with different developmental slopes between domains (interactions).
 
 ```{r}
 #| label: summary-table
@@ -992,61 +1349,15 @@ pattern_summary |>
   create_dt()
 ```
 
-Briefly, I explain how each gene list is generated below:
 
-First, DESeq2 results were filtered to retain high-confidence calls: baseMean \> 10th percentile, log2FoldChange standard error \< 1.5 (or \< 2 for slope analyses), \|log2FoldChange\| between 0.5 and 10, and padj \< 0.05.
-
-**1. Domain Main Effects (Parallel Trajectories)**\
-For genes *without* significant interactions, domain differences were extracted from the simple model using coefficients for MAX vs PM (`AP_domainMAX`), POST vs PM (`AP_domainPOST`), and POST vs MAX (contrast: `list("AP_domainPOST", "AP_domainMAX")`).
-Complex patterns (e.g., "highest in MAX") were identified by intersecting multiple pairwise comparisons.
-
-**2. Stage Main Effects (Common Trajectories)**\
-For genes *without* interactions, developmental changes common across domains were extracted from the simple model coefficient `LB_stage_from_start`.
-Genes were classified as increasing or decreasing based on log2FoldChange sign, with strong changers defined as \|log2FC\| \> 1.
-
-**3. Diverging Trajectories**\
-For genes *with* significant interactions, domain-specific developmental slopes were extracted from the complex model: PM slope (`LB_stage_from_start`), MAX slope (contrast: `list(c("LB_stage_from_start", "AP_domainMAX.LB_stage_from_start"))`), and POST slope (contrast: `list(c("LB_stage_from_start", "AP_domainPOST.LB_stage_from_start"))`).
-Slope differences (interaction terms) were extracted as: MAX vs PM (`AP_domainMAX.LB_stage_from_start`), POST vs PM (`AP_domainPOST.LB_stage_from_start`), and POST vs MAX (contrast: `list(c("AP_domainPOST.LB_stage_from_start", "AP_domainMAX.LB_stage_from_start"))`).
-Diverging genes required padj \< 0.05 and log2FoldChange \> 0.5 for the slope difference.
-Individual domain slopes (including non-significant ones) were examined to classify divergence patterns (e.g., "MAX increases faster" vs "MAX increases, PM decreases").
-
-**4. Converging Trajectories**\
-Converging genes were identified using the same slope difference tests as diverging genes but requiring negative slope differences (log2FoldChange \< -0.5).
-
-**5. Domain-Specific Dynamics**\
-Genes showing developmental changes in specific domains were identified from filtered domain slopes (padj \< 0.05, \|log2FC\| \> 0.5) and classified by the combination of dynamic domains.
-
-**6. Complex Patterns**\
-Genes with opposite slopes across domains or three-way divergent patterns were identified by analyzing the signs and significance of all three domain slopes simultaneously.
-
-:::::::::: {#B6_DESeq2_effects .panel-tabset .nav-pills}
-## Domain Main Effects
+# Domain Main Effects
 
 Here I am highlighting genes that show differences in expression between A-P domains in B6.
-In total there are `r length(unique(b6_domain_main_effects_clean$gene_id))` unique genes with a domain effect (i.e. differentially expressed between any two domains) that doesn't change over developmental time (i.e. maintain parallel developmental trajectories).
+In total there are **`r length(unique(b6_domain_main_effects_clean$gene_id))`** unique genes with a domain effect (i.e. differentially expressed between any two domains) that doesn't change over developmental time (i.e. maintain parallel developmental trajectories).
 This means that while one domain might express a gene at higher or lower levels than another, all domains follow the same developmental pattern over time (all increasing, all decreasing, or all stable).
 
-Below is a summary of the over-representation results from the individual comparisons. Full ORA results are displayed in tables in each subsection tab.
-
-| Category | PM (Anterior) | MAX (Middle) | POST (Posterior) | Interpretation |
-|----------|---------------|--------------|------------------|----------------|
-| **Wnt Signaling** | ↑↑↑ | ↑ | ↓↓ | A→P gradient, FNP identity |
-| **TGF-β/BMP Signaling** | ↑↑↑ | ↓↓ | ↓ | PM bone formation |
-| **Skeletal/Bone Development** | ↑↑↑ | ↓↓ | ↓ | Premaxillary ossification |
-| **Embryonic/Developmental** | ↑↑↑ | ↓ | ↓↓ | PM progenitor state |
-| **Synaptic Structure** | ↓↓↓ | ↑↑↑ | ↑↑↑ | Secondary palate neural differentiation |
-| **Ion Channels** | ↓↓ | ↑↑↑ | ↑↑ | Neural function in MAX/POST |
-| **Cognition/Behavior** | ↓↓ | ↑↑↑ | ↑↑ | Neural maturation markers |
-| **Muscle/Sarcomere** | — | — | ↑↑↑ | Soft palate musculature |
-| **Epithelial/Skin** | ↑↑ | ↑ | ↓↓ | Epithelial differentiation in PM/MAX |
-| **EMT/Migration** | ↑↑↑ | ↓↓ | ↓ | Active in FNP-derived PM |
-
-*Legend: ↑↑↑ strongly enriched, ↑↑ moderately enriched, ↑ slightly enriched, — neutral, ↓ slightly depleted, ↓↓ moderately depleted, ↓↓↓ strongly depleted*
-
-
 ::: {#B6_DESeq2_domain_effects .panel-tabset .nav-pills}
-
-### Overview
+## Overview
 
 ```{r}
 #| label: domain-main-overview
@@ -1059,12 +1370,14 @@ pattern_summary |>
   create_dt()
 ```
 
-### MAX vs PM
+## MAX vs PM
 
 ```{r}
 #| label: max-vs-pm-plot
 #| warning: false
 #| message: false
+#| fig-width: 12
+#| fig-height: 11
 
 genes_MAX_higher_than_PM <- gene_assignments |>
   filter(MAX_higher_PM) |>
@@ -1085,29 +1398,12 @@ if(length(genes_MAX_higher_than_PM) > 0 & length(genes_MAX_lower_than_PM) > 0) {
 }
 ```
 
-**Pattern:** Genes showing consistent differences between MAX and PM domains across development.
+This sub-section includes genes showing consistent differences between MAX and PM domains across development.
 
 **MAX higher than PM** contains `r length(genes_MAX_higher_than_PM)` genes and are over-representation analysis shows that it exhibits a mature neuronal phenotype with emphasis on synaptic connectivity, neurotransmission, and neural circuit function.
 
-| Category | Key Themes | Top Terms (by p-value) | Representative Genes |
-|----------|-----------|----------------------|---------------------|
-| **Synaptic Structure** | Postsynaptic specialization, synaptic membranes | Synaptic membrane (p=1.3e-9), Postsynaptic specialization (p=1.6e-6) | Snap25, Dlgap3, Bsn, Syn2, Nrxn2 |
-| **Neuron Development** | Axonogenesis, growth cones, neurite morphology | Regulation of neuron projection development (p=3.7e-8), Growth cone (p=1.4e-6) | Map1b, Nefl, Kif21a, Plxna4 |
-| **Ion Channels** | Potassium channels, cation transport | Neuronal System (p=1.1e-8), Potassium channels (p=0.0094) | Kcna4, Kcna5, Kcnd2, Kcnj12, Scn2a |
-| **Cognition/Behavior** | Learning, memory, locomotion | Cognition (p=7.7e-6), Learning or memory (p=1.3e-5) | Chrnb2, Atp1a3, Plcb1, Gpr88 |
-| **Mammalian Phenotypes** | Motor deficits, seizures, hyperactivity | Impaired coordination (p=3e-6), Ataxia (p=7.7e-6), Hyperactivity (p=3.7e-5) | Snap25, Atp1a3, Map1b, Plp1 |
 
-
-**MAX lower than PM** contains `r length(genes_MAX_lower_than_PM)` genes and over-representation analysis shows that it contains a **developmental/embryonic phenotype** dominated by morphogenetic processes, particularly skeletal patterning, organogenesis (kidney, heart, limb), and TGF-β superfamily signaling.
-
-| Category | Key Themes | Top Terms (by p-value) | Representative Genes |
-|----------|-----------|----------------------|---------------------|
-| **Skeletal Development** | Bone, cartilage, limb morphogenesis | Skeletal system development (p=2.4e-5), Cartilage development (p=7.9e-5) | Msx2, Tgfb1, Tgfb2, Bmp7, Runx3 |
-| **Heart Development** | Cardiac morphogenesis, cardiovascular physiology | Heart morphogenesis (p=5.6e-4), Heart development (p=0.0097) | Gja1, Gata3, Smad6, Hopx, Rbm20 |
-| **TGF-β Signaling** | BMP pathway, receptor serine/threonine kinase signaling | TGF-β receptor superfamily signaling (p=0.0039), TGF-β pathway (p=0.0092) | Tgfb1, Tgfb2, Smad6, Bmp7, Nbl1 |
-| **EMT & Migration** | Epithelial-mesenchymal transition, endothelial migration | Positive regulation of EMT (p=0.0075), Endothelial cell migration (p=0.0015) | Loxl2, Emp2, Gata3 |
-| **Extracellular Matrix** | Basement membrane, elastic fibers | Extracellular matrix (p=6.7e-5), Elastic fibre formation (p=1.3e-4) | Bgn, Loxl2, Serpinf1, Lamc3 |
-| **Kidney Development** | Renal system morphogenesis | Renal system development (p=0.001) | Sall1, Wnt9b, Emx2 |
+**MAX lower than PM** contains `r length(genes_MAX_lower_than_PM)` genes and over-representation analysis shows that it contains a developmental/embryonic phenotype dominated by morphogenetic processes, particularly skeletal patterning, organogenesis (kidney, heart, limb), and TGF-β superfamily signaling.
 
 ```{r}
 #| label: max-vs-pm-table
@@ -1121,7 +1417,7 @@ b6_domain_main_effects_clean |>
   create_dt()
 ```
 
-Over-represented pathways and biological processes:
+Full list of over-represented pathways and biological processes:
 
 ```{r}
 #| label: mx-vs-pm-ora
@@ -1155,12 +1451,14 @@ genes_MAX_higher_than_PM_ora$result |>
 
 ```
 
-### POST vs PM
+## POST vs PM
 
 ```{r}
 #| label: post-vs-pm-plot
 #| warning: false
 #| message: false
+#| fig-width: 12
+#| fig-height: 11
 
 genes_POST_higher_than_PM <- gene_assignments |>
   filter(POST_higher_PM) |>
@@ -1181,34 +1479,12 @@ if(length(genes_POST_higher_than_PM) > 0 & length(genes_POST_lower_than_PM) > 0)
 }
 ```
 
-**Pattern:** Consistent expression differences between posterior and palatine midline domains.
+This sub-section contains genes with consistent expression differences between POST and PM domains.
 
 **POST higher than PM** contains `r length(genes_POST_higher_than_PM)` genes and over-representation analysis show that it exhibits a mature functional phenotype (synaptic transmission, ion channels, behavior) combined with a notable muscle/cardiac signature (sarcomere, myofibrils, cardiac conduction).
 
-| Category | Key Themes | Top Terms (by p-value) | Representative Genes |
-|----------|-----------|----------------------|---------------------|
-| **Synaptic Structure** | Synaptic membranes, postsynaptic specialization, neuron-to-neuron synapses | Synaptic membrane (p=4.5e-13), Postsynaptic specialization (p=3.2e-9) | Nlgn1, Dlgap3, Shisa7, Nrxn2, Lrrtm1, Gria2 |
-| **Synaptic Signaling** | Synapse organization, trans-synaptic signaling, chemical transmission | Synapse organization (p=1.8e-8), Modulation of chemical synaptic transmission (p=2.7e-7) | Camk2b, Dgkb, Nrn1, Apba1, Plcb1 |
-| **Ion Channels** | Cation channels, membrane potential regulation, gated channels | Ion channel complex (p=2e-5), Cation channel activity (p=0.00099) | Kcnd2, Kcna4, Kcna5, Cacnb1, Trpc4, Trpc5 |
-| **Muscle/Cardiac** | Muscle contraction, myofibril assembly, sarcomere, cardiac conduction | Muscle contraction (p=5.9e-6), Cardiac conduction (p=0.00031) | Ryr1, Tmod1, Lmod2, Myh7b, Tnnt3, Myoz1 |
-| **Behavior/Cognition** | Locomotion, adult behavior, anxiety, learning | Locomotory behavior (p=0.00059), Decreased anxiety (p=0.00082) | Atp1a3, Gpr88, Ppp1r1b, Camk2b |
-| **Mammalian Phenotypes** | Hyperactivity, seizures, impaired learning | Hyperactivity (p=3e-5), Seizures (p=0.0015) | Camk2b, Gria2, Kcnt1, Atp1a3, Cers1 |
 
-
-**POST lower than PM** contains `r length(genes_POST_lower_than_PM)` genes and over-representation analysis shows that they are enriched for early developmental processes including embryonic patterning (Wnt, Hedgehog/Gli signaling), organogenesis (tooth, kidney, skeleton), and epithelial differentiation (skin, desmosomes). 
-
-| Category | Key Themes | Top Terms (by p-value) | Representative Genes |
-|----------|-----------|----------------------|---------------------|
-| **Tooth Development** | Odontogenesis, dentin formation, enamel | Odontogenesis of dentin-containing tooth (p=1.4e-6) | Enam, Odam, Runx2, Msx1, Trp63 |
-| **Embryonic Development** | Embryonic morphogenesis, organ development, pattern specification | Embryonic morphogenesis (p=4.1e-5), Embryonic organ development (p=4.6e-5) | Gli3, Gli1, Wnt3a, Wnt7a, Pax6, Gata3 |
-| **Skeletal Development** | Bone, cartilage, ossification, osteoblast differentiation | Skeletal system development (p=0.00017), Osteoblast differentiation (p=0.00037) | Runx2, Satb2, Gja1, Tgfb1, Fam20c |
-| **Wnt Signaling** | WNT ligand biogenesis, basal cell carcinoma pathway | WNT ligand biogenesis (p=0.0036), Basal cell carcinoma (p=0.0002) | Wnt3a, Wnt7a, Wnt9a, Wnt2b, Wnt9b |
-| **Epithelial/Skin** | Epidermis development, cornified envelope, keratoderma | Cornified envelope formation (p=3.8e-5), Epidermis development (p=0.0012) | Trp63, Spink5, Ovol1, Krt79, Dsg1a, Dsc2 |
-| **Kidney Development** | Ureteric bud, mesonephros development | Ureteric bud development (p=0.0029), Single kidney phenotype (p=0.00064) | Gdnf, Wnt9b, Gata3, Gli3, Npnt, Itga8 |
-| **ECM/Cell Adhesion** | Desmosome, ECM-receptor interaction, integrins | Desmosome (p=0.00058), ECM-receptor interaction (p=3.3e-5) | Itgb3, Itgav, Sdc4, Cd44, Dsc2, Dsg2 |
-| **Mammalian Phenotypes** | Neonatal lethality, skin barrier defects, fertility | Neonatal lethality (p=5.4e-6), Impaired skin barrier (p=0.0011) | Gli3, Msx1, Runx2, Spink5, Gja1 |
-
-
+**POST lower than PM** contains `r length(genes_POST_lower_than_PM)` genes and over-representation analysis shows that they are enriched for early developmental processes including embryonic patterning (Wnt, Hedgehog/Gli signaling), organogenesis (tooth, kidney, skeleton), and epithelial differentiation (skin, desmosomes).
 
 ```{r}
 #| label: post-vs-pm-table
@@ -1222,7 +1498,7 @@ b6_domain_main_effects_clean |>
   create_dt()
 ```
 
-Over-represented pathways and biological processes:
+Full list of over-represented pathways and biological processes:
 
 ```{r}
 #| label: post-vs-pm-ora
@@ -1253,12 +1529,14 @@ genes_POST_higher_than_PM_ora$result |>
   create_dt()
 ```
 
-### POST vs MAX
+## POST vs MAX
 
 ```{r}
 #| label: post-vs-max-plot
 #| warning: false
 #| message: false
+#| fig-width: 12
+#| fig-height: 11
 
 genes_POST_higher_than_MAX <- gene_assignments |>
   filter(POST_higher_MAX) |>
@@ -1279,36 +1557,16 @@ if(length(genes_POST_higher_than_MAX) > 0 & length(genes_POST_lower_than_MAX) > 
 }
 ```
 
-**Pattern:** Expression differences between posterior and maxillary domains.
+This sub-section contains genes with expression differences between POST and MAX domains.
 
-**POST higher than MAX** contain `r length(genes_POST_higher_than_MAX)` genes and over-representation analysis shows an enrichment for **muscle/contractile apparatus** genes—sarcomere components, myofibrils, and muscle contraction machinery. The strong human phenotype associations with myopathies (Gowers sign, muscle weakness, abnormal muscle fibers) underscore this muscle identity. There's also a cell adhesion signature involving protocadherins.
-
-| Category | Key Themes | Top Terms (by p-value) | Representative Genes |
-|----------|-----------|----------------------|---------------------|
-| **Cell Adhesion** | Plasma membrane adhesion, protocadherins | Cell-cell adhesion via plasma-membrane adhesion molecules (p=4.8e-7) | Pcdh11x, Pcdh18, Pcdh15, Cdh18, Dchs2, Tenm4 |
-| **Muscle Contraction** | Muscle system process, sarcomere function | Muscle contraction (p=2.2e-6), Muscle system process (p=0.0002) | Ryr1, Tmod1, Lmod2, Myh7b, Tnnt3, Tpm2 |
-| **Sarcomere/Myofibril** | Thin filaments, contractile fibers | Myofibril (p=1.5e-5), Sarcomere (p=4.7e-5) | Tcap, Ldb3, Nexn, Ank1, Unc45b |
-| **Synapse Organization** | Presynapse assembly, protein-protein interactions | Synapse organization (p=3.3e-5), Receptor-type tyrosine-protein phosphatases (p=2.3e-5) | Il1rap, Il1rapl1, Il1rapl2, Lrrc4b, Slitrk3 |
-| **Extracellular Matrix** | Collagen, ECM components | Extracellular matrix (p=0.001), Collagen trimer (p=0.0049) | Col3a1, Col8a1, Col16a1, Lum, Thbs2 |
-| **Human Phenotypes** | Myopathy, muscle weakness, respiratory distress | Gowers sign (p=5.2e-5), Proximal muscle weakness (p=0.00012), Myopathy (p=0.0002) | Sgcg, Ryr1, Scn4a, Dok7, Tpm2, Unc45b |
-| **Mammalian Phenotypes** | Sarcomere defects, respiratory distress | Respiratory distress (p=0.00016), Abnormal sarcomere morphology (p=0.00023) | Ryr1, Lmod2, Stac3, Ldb3, Scn4a |
+**POST higher than MAX** contain `r length(genes_POST_higher_than_MAX)` genes and over-representation analysis shows an enrichment for **muscle/contractile apparatus** genes—sarcomere components, myofibrils, and muscle contraction machinery.
+The strong human phenotype associations with myopathies (Gowers sign, muscle weakness, abnormal muscle fibers) underscore this muscle identity.
+There's also a cell adhesion signature involving protocadherins.
 
 
-**POST lower than MAX** contain `r length(genes_POST_lower_than_MAX)` genes and over-representation analysis show that it displays a mixed **neural + epithelial** signature. The neural component includes synapse organization and axon guidance, while the epithelial component features epidermis development, desmosomes, and cornified envelope. Wnt signaling is prominent, along with developmental processes (cell fate commitment, kidney/nephron development).
-
-
-| Category | Key Themes | Top Terms (by p-value) | Representative Genes |
-|----------|-----------|----------------------|---------------------|
-| **Synapse Organization** | Synapse assembly, synaptic regulation | Synapse organization (p=1.4e-5), Synapse assembly (p=0.00017) | Snap25, Snca, Cyfip2, Dock4, Celsr2, Oxtr |
-| **Epidermis/Skin** | Epidermal differentiation, cornified envelope | Epidermis development (p=0.00011), Cornified envelope formation (p=0.00026) | Trp63, Spink5, Krt79, Gata6, Pax6, Tfap2c |
-| **Wnt Signaling** | WNT ligand biogenesis, stem cell pluripotency | Basal cell carcinoma/Wnt (p=0.00018), WNT ligand biogenesis (p=0.00061) | Wnt3a, Wnt7a, Wnt9a, Wnt2b, Wnt9b |
-| **Cell Adhesion** | Desmosomes, homophilic adhesion | Desmosome (p=0.0024), Homophilic cell adhesion (p=0.00088) | Dsc3, Dsg1a, Dsg1b, Dsg2, Pkp3, Nectin4 |
-| **Cell Fate/Development** | Cell fate commitment, embryonic morphogenesis | Cell fate commitment (p=0.0013), Embryonic morphogenesis (p=0.0061) | Foxg1, Gata3, Gata6, Pax6, Gli1, Msx1 |
-| **Kidney Development** | Nephron/tubule formation, ureteric bud | Mesonephric tubule formation (p=0.0027), Nephron development (p=0.0081) | Gdnf, Six1, Wnt9b, Gata3, Npnt |
-| **Neuron Development** | Axon guidance, neuron projection | Cell morphogenesis in neuron differentiation (p=0.0011), Axon guidance (p=0.0039) | Cntn1, Sema4d, Cyfip2, Lama5, Pax6 |
-
-
-
+**POST lower than MAX** contain `r length(genes_POST_lower_than_MAX)` genes and over-representation analysis show that it displays a mixed **neural + epithelial** signature.
+The neural component includes synapse organization and axon guidance, while the epithelial component features epidermis development, desmosomes, and cornified envelope.
+Wnt signaling is prominent, along with developmental processes (cell fate commitment, kidney/nephron development).
 
 
 ```{r}
@@ -1323,7 +1581,7 @@ b6_domain_main_effects_clean |>
   create_dt()
 ```
 
-Over-represented pathways and biological processes:
+Full list of over-represented pathways and biological processes:
 
 ```{r}
 #| label: post-vs-max-ora
@@ -1354,40 +1612,80 @@ genes_POST_higher_than_MAX_ora$result |>
   filter( p_value < 0.01) |> 
   create_dt()
 
-
-
-
-
 ```
 
-### Highest in Each Domain
-
-#### PM Highest
+## Highest in Each Domain
 
 ```{r}
-#| label: pm-highest-plot
+#| label: combined-highest-genes
 #| warning: false
 #| message: false
+#| results: hide
 
 genes_PM_highest <- gene_assignments |>
   filter(Highest_PM) |>
   pull(gene_id)
 
+genes_MAX_highest <- gene_assignments |>
+  filter(Highest_MAX) |>
+  pull(gene_id)
+
+genes_POST_highest <- gene_assignments |>
+  filter(Highest_POST) |>
+  pull(gene_id)
+
 if(length(genes_PM_highest) > 0) {
-  n_show <- ifelse(length(genes_PM_highest) < 15, length(genes_PM_highest), 3)
-  plot_domain_hierarchy(
+  n_show <- ifelse(length(genes_PM_highest) < 2, length(genes_PM_highest), 1)
+  p1 <- plot_domain_hierarchy(
     genes_highest = genes_PM_highest,
     domain_name = "PM",
     count_data = b6_gene_counts,
     n = n_show
   )
 }
+
+if(length(genes_MAX_highest) > 0) {
+  n_show <- ifelse(length(genes_MAX_highest) < 2, length(genes_MAX_highest), 1)
+  p2 <- plot_domain_hierarchy(
+    genes_highest = genes_MAX_highest,
+    domain_name = "MAX",
+    count_data = b6_gene_counts,
+    n = n_show
+  )
+}
+
+if(length(genes_POST_highest) > 0) {
+  n_show <- ifelse(length(genes_POST_highest) < 2, length(genes_POST_highest), 1)
+  p3 <- plot_domain_hierarchy(
+    genes_highest = genes_POST_highest,
+    domain_name = "POST",
+    count_data = b6_gene_counts,
+    n = n_show
+  )
+}
+
 ```
 
 `r length(genes_PM_highest)` genes with highest expression at the PM compared to both MAX and POST domains.
 
+`r length(genes_MAX_highest)` genes showing highest expression in MAX compared to both PM and POST domains.
+
+`r length(genes_POST_highest)` genes with peak expression in POST in comparison to MAX and PM domains.
+
 ```{r}
-#| label: pm-highest-table
+#| label: combined-highest-plot
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 10
+
+wrap_plots( p1,p2, p3, nrow = 3, ncol = 1, guides = "collect") & theme( legend.position = "bottom")
+
+```
+
+
+```{r}
+#| label: combined-highest-table
 #| warning: false
 #| message: false
 
@@ -1402,7 +1700,7 @@ b6_domain_main_effects_clean |>
 Over-represented pathways and biological processes:
 
 ```{r}
-#| label: pm-highest-ora
+#| label: combined-highest-ora
 #| warning: false
 #| message: false
 #| results: hide
@@ -1411,124 +1709,10 @@ Over-represented pathways and biological processes:
 genes_PM_highest_ora <- run_enrichment_hybrid(gene_ids = genes_PM_highest,
                                      description = "PM highest"
                                      )
-```
-
-```{r}
-#| label: pm-highest-ora-table
-#| warning: false
-#| message: false
-
-genes_PM_highest_ora$result |> 
-  create_dt()
-```
-
-#### MAX Highest
-
-```{r}
-#| label: max-highest-plot
-#| warning: false
-#| message: false
-
-genes_MAX_highest <- gene_assignments |>
-  filter(Highest_MAX) |>
-  pull(gene_id)
-
-if(length(genes_MAX_highest) > 0) {
-  n_show <- ifelse(length(genes_MAX_highest) < 15, length(genes_MAX_highest), 3)
-  plot_domain_hierarchy(
-    genes_highest = genes_MAX_highest,
-    domain_name = "MAX",
-    count_data = b6_gene_counts,
-    n = n_show
-  )
-}
-```
-
-`r length(genes_MAX_highest)` genes showing highest expression in MAX compared to both PM and POST domains.
-
-
-```{r}
-#| label: max-highest-table
-#| warning: false
-#| message: false
-
-b6_domain_main_effects_clean |>
-  filter(gene_id %in% genes_MAX_highest) |>
-  select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
-  distinct(gene_id, .keep_all = TRUE) |>
-  arrange(desc(log2FoldChange)) |>
-  create_dt()
-```
-
-Over-represented pathways and biological processes:
-
-```{r}
-#| label: max-highest-ora
-#| warning: false
-#| message: false
-#| results: hide
-#| cache: true
 
 genes_MAX_highest_ora <- run_enrichment_hybrid(gene_ids = genes_MAX_highest,
                                      description = "MAX highest"
                                      )
-```
-
-```{r}
-#| label: max-highest-ora-table
-#| warning: false
-#| message: false
-genes_MAX_highest_ora$result |> 
-  filter(p_value < 0.01) |> 
-  create_dt()
-```
-
-#### POST Highest
-
-```{r}
-#| label: post-highest-plot
-#| warning: false
-#| message: false
-
-genes_POST_highest <- gene_assignments |>
-  filter(Highest_POST) |>
-  pull(gene_id)
-
-if(length(genes_POST_highest) > 0) {
-  n_show <- ifelse(length(genes_POST_highest) < 15, length(genes_POST_highest), 3)
-  plot_domain_hierarchy(
-    genes_highest = genes_POST_highest,
-    domain_name = "POST",
-    count_data = b6_gene_counts,
-    n = n_show
-  )
-}
-```
-
-`r length(genes_POST_highest)` genes with peak expression in POST in comparison to MAX and PM domains.
-
-
-```{r}
-#| label: post-highest-table
-#| warning: false
-#| message: false
-
-b6_domain_main_effects_clean |>
-  filter(gene_id %in% genes_POST_highest) |>
-  select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
-  distinct(gene_id, .keep_all = TRUE) |>
-  arrange(desc(log2FoldChange)) |>
-  create_dt()
-```
-
-Over-represented pathways and biological processes:
-
-```{r}
-#| label: post-highest-ora
-#| warning: false
-#| message: false
-#| results: hide
-#| cache: true
 
 genes_POST_highest_ora <- run_enrichment_hybrid(gene_ids = genes_POST_highest,
                                      description = "POST highest"
@@ -1536,17 +1720,22 @@ genes_POST_highest_ora <- run_enrichment_hybrid(gene_ids = genes_POST_highest,
 ```
 
 ```{r}
-#| label: post-highest-ora-table
+#| label: combined-highest-ora-table
 #| warning: false
 #| message: false
-genes_POST_highest_ora$result |> 
-  filter( p_value < 0.01) |> 
+
+genes_PM_highest_ora$result |> 
+  rbind(genes_MAX_highest_ora$result) |> 
+  rbind(genes_POST_highest_ora$result) |> 
+  filter(p_value < 0.01) |> 
   create_dt()
+
 ```
 
 
 
-### A-P Gradients
+
+## A-P Gradients
 
 ```{r}
 #| label: ap-gradients-plot
@@ -1567,18 +1756,18 @@ if(length(genes_AP_decreasing) > 0 | length(genes_AP_increasing) > 0) {
   if(length(genes_AP_increasing) < 15) n_each <- min(n_each, length(genes_AP_increasing))
   
   plot_AP_gradient(
-    genes_decreasing = genes_AP_decreasing,
-    genes_increasing = genes_AP_increasing,
+    genes_decreasing_with_development = genes_AP_decreasing,
+    genes_increasing_with_development = genes_AP_increasing,
     count_data = b6_gene_counts,
     n_each = n_each
   )
 }
 ```
 
-**Pattern:** Monotonic gradients along the anterior-posterior axis.
+These genes show monotonic gradients along the A-P axis.
 
--   **A→P decreasing** (PM \> MAX \> POST): `r length(genes_AP_decreasing)` genes. 
--   **A→P increasing** (POST \> MAX \> PM): `r length(genes_AP_increasing)` genes. 
+-   **A→P decreasing** (PM \> MAX \> POST): `r length(genes_AP_decreasing)` genes.
+-   **A→P increasing** (POST \> MAX \> PM): `r length(genes_AP_increasing)` genes.
 
 ```{r}
 #| label: ap-gradients-table
@@ -1621,21 +1810,39 @@ genes_AP_decreasing_ora$result |>
   rbind(
     genes_AP_increasing_ora$result
   ) |> 
+  filter(p_value < 0.01) |> 
   create_dt()
 ```
 :::
 
-## Stage Main Effects
+# Stage Main Effects
 
-These genes show developmental changes that are consistent across all three domains. All domains increase or decrease together, representing shared developmental programs.
+These genes show developmental changes that are consistent across all three domains.
+All domains increase or decrease together, representing shared developmental programs.
 
 ::: {#B6_DESeq2_stage_effects .panel-tabset .nav-pills}
-### Overview
+## Overview
 
 ```{r}
 #| label: stage-main-overview
 #| warning: false
 #| message: false
+
+genes_increasing_with_development <- b6_stage_main_effects_clean |>
+  filter(Direction == "Increase") |>
+  pull(gene_id)
+
+genes_decreasing_with_development <- b6_stage_main_effects_clean |>
+  filter(Direction == "Decrease") |>
+  pull(gene_id)
+
+strong_increasers <- b6_stage_main_effects_clean |>
+  filter(Direction == "Increase", abs(log2FoldChange) > 1) |>
+  pull(gene_id)
+
+strong_decreasers <- b6_stage_main_effects_clean |>
+  filter(Direction == "Decrease", abs(log2FoldChange) > 1) |>
+  pull(gene_id)
 
 pattern_summary |>
   filter(Category == "Stage Main Effects") |>
@@ -1643,37 +1850,26 @@ pattern_summary |>
   create_dt()
 ```
 
-### Increasing with Development
+## Increasing with Development
 
 ```{r}
 #| label: dev-increasing-plot
 #| warning: false
 #| message: false
 
-genes_increasing <- gene_assignments |>
-  filter(Dev_increasing) |>
-  pull(gene_id)
-
-if(length(genes_increasing) > 0) {
-  n_show <- ifelse(length(genes_increasing) < 15, length(genes_increasing), 5)
+if(length(genes_increasing_with_development) > 0) {
+  n_show <- ifelse(length(genes_increasing_with_development) < 15, length(genes_increasing_with_development), 6)
   plot_simple_trajectories(
-    gene_ids = genes_increasing,
+    gene_ids = genes_increasing_with_development,
     count_data = b6_gene_counts,
-    title_text = paste0("Increasing with Development (n=", length(genes_increasing), ")"),
+    title_text = paste0("Increasing with Development (n=", length(genes_increasing_with_development), ")"),
     n = n_show
   )
 }
 ```
 
-`r length(genes_increasing)` genes increasing across all domains as development progresses showing an over-representation of genes involved in ciliary assembly, extracellular matrix, immune response, epithelial differentiation and ion transport. 
+**`r length(genes_increasing_with_development)`** genes increasing across all domains as development progresses showing an over-representation of genes involved in ciliary assembly, extracellular matrix, immune response, epithelial differentiation and ion transport.
 
-| Category | Key Terms | Top Genes | Best p-value |
-|----------|-----------|-----------|--------------|
-| Ciliary assembly/motility | Cilium movement, axoneme assembly, microtubule bundle formation | *Cfap91*, *Spag6l*, *Nme5*, *Spef2*, *Dnah11*, *Rsph4a* | 4.17×10⁻¹⁷ |
-| Extracellular matrix | ECM organization, collagen formation, integrin interactions | *Col1a2*, *Col5a2*, *Col8a1*, *Bgn*, *Lum*, *Postn* | 4.36×10⁻¹¹ |
-| Immune/inflammatory | Leukocyte migration, cytokine production, antigen presentation | *Cd74*, *Lgals3*, *Tlr9*, *Tgfb1*, *Il18*, *Tnf* | 1.29×10⁻⁹ |
-| Epithelial differentiation | Cornified envelope, keratinization, intermediate filaments | *Krt6a*, *Krt16*, *Krt17*, *Dsc2*, *Dsg1a*, *Cdsn* | 1.23×10⁻¹¹ |
-| Ion transport | Sodium/potassium channels, transmembrane transport | *Cftr*, *Slc6a19*, *Kcnj15*, *Scnn1b* | 1.62×10⁻⁴ |
 
 ```{r}
 #| label: dev-increasing-table
@@ -1697,14 +1893,14 @@ Over-represented pathways and biological processes:
 #| cache: true
 
 # Run enrichment on all sets
-dev_increasing_enrichment_results <- run_enrichment_hybrid(gene_ids = b6_stage_main_effects_clean |>
+dev_increasing_ora <- run_enrichment_hybrid(gene_ids = b6_stage_main_effects_clean |>
                                        filter(Direction == "Increase") |> 
                                          pull(gene_id),
                                      description = "Increase"
                                      )
 
 # Format and combine results
-dev_increasing_enrichment_table <- format_enrichment_result(dev_increasing_enrichment_results)
+dev_increasing_ora_table <- format_enrichment_result(dev_increasing_ora)
 ```
 
 ```{r}
@@ -1712,39 +1908,31 @@ dev_increasing_enrichment_table <- format_enrichment_result(dev_increasing_enric
 #| warning: false
 #| message: false
 
-dev_increasing_enrichment_table |> 
+dev_increasing_ora_table |> 
+  filter(p_value < 0.01) |> 
   create_dt()
 
 ```
 
-### Decreasing with Development
+## Decreasing with Development
 
 ```{r}
 #| label: dev-decreasing-plot
 #| warning: false
 #| message: false
 
-genes_decreasing <- gene_assignments |>
-  filter(Dev_decreasing) |>
-  pull(gene_id)
-
-if(length(genes_decreasing) > 0) {
-  n_show <- ifelse(length(genes_decreasing) < 15, length(genes_decreasing), 5)
+if(length(genes_decreasing_with_development) > 0) {
+  n_show <- ifelse(length(genes_decreasing_with_development) < 15, length(genes_decreasing_with_development), 6)
   plot_simple_trajectories(
-    gene_ids = genes_decreasing,
+    gene_ids = genes_decreasing_with_development,
     count_data = b6_gene_counts,
-    title_text = paste0("Decreasing with Development (n=", length(genes_decreasing), ")"),
+    title_text = paste0("Decreasing with Development (n=", length(genes_decreasing_with_development), ")"),
     n = n_show
   )
 }
 ```
 
-`r length(genes_decreasing)` genes decreasing across all domains that are over-represented for genes involved in  erythropoiesis and early hematopoietic processes.
-
-| Category | Key Terms | Top Genes | Best p-value |
-|----------|-----------|-----------|--------------|
-| Erythropoiesis/gas transport | Hemoglobin complex, oxygen transport, erythrocyte development | *Hbb-bh1*, *Hbb-y*, *Hba-x*, *Hbq1b*, *Gata1*, *Rhag* | 5.17×10⁻⁵ |
-| Platelet function | Platelet aggregation, megakaryocyte development | *Gp9*, *Gfi1b*, *Gp6*, *Tubb1*, *Mpl* | 1.73×10⁻³ |
+**`r length(genes_decreasing_with_development)`** genes decreasing across all domains that are over-represented for genes involved in erythropoiesis and early hematopoietic processes.
 
 
 ```{r}
@@ -1769,532 +1957,388 @@ Over-represented pathways and biological processes:
 #| cache: true
 
 # Run enrichment on all sets
-dev_decreasing_enrichment_results <- run_enrichment_hybrid(gene_ids = b6_stage_main_effects_clean |>
+dev_decreasing_ora <- run_enrichment_hybrid(gene_ids = b6_stage_main_effects_clean |>
                                        filter(Direction == "Decrease") |> 
                                          pull(gene_id),
                                      description = "Decrease"
                                      )
 
 # Format and combine results
-dev_decreasing_enrichment_table <- format_enrichment_result(dev_decreasing_enrichment_results)
+dev_decreasing_ora_table <- format_enrichment_result(dev_decreasing_ora)
 ```
 
 ```{r}
 #| label: dev-decreasing-ora-table
 #| warning: false
 #| message: false
-dev_decreasing_enrichment_table |> 
+dev_decreasing_ora_table |> 
+  filter(p_value < 0.01) |> 
   create_dt()
 
 ```
 :::
 
-## Diverging Trajectories
+# Developmental Trajectory Patterns
 
-**These genes show different developmental trajectories between domains** - true domain × stage interactions where domains respond differently to developmental cues.
+These genes show significant **domain × stage interactions**, meaning their developmental trajectories differ between domains. I classify them by **what the slopes are actually doing** rather than just whether domains are converging or diverging.
 
-::: {#B6_DESeq2_diverging_traj .panel-tabset .nav-pills}
-### Overview
+**Pattern types:**
+
+- **Opposite trajectories**: One domain increases while another decreases - the most biologically distinct patterns
+- **Co-increasing/Co-decreasing**: Both domains change in the same direction but at different rates
+- **Domain-restricted**: Only one or two domains show developmental changes
+
+::: {#B6_trajectory_patterns .panel-tabset .nav-pills}
+
+## Overview
 
 ```{r}
-#| label: diverging-overview
+#| label: trajectory-overview
 #| warning: false
 #| message: false
 
-pattern_summary |>
-  filter(Category == "Diverging") |>
-  arrange(desc(N_Genes)) |>
+trajectory_patterns |>
+  count(overall_pattern, name = "n_genes") |>
+  arrange(desc(n_genes)) |>
   create_dt()
 ```
 
-### MAX Diverging from PM
-
 ```{r}
-#| label: max-div-pm-plot
+#| label: trajectory-overview-plot
 #| warning: false
 #| message: false
+#| fig-width: 10
+#| fig-height: 6
 
-genes_MAX_div <- gene_assignments |>
-  filter(MAX_div_PM) |>
-  pull(gene_id)
+trajectory_summary <- trajectory_patterns |>
+  count(overall_pattern) |>
+  filter(n > 0) |>
+  mutate(overall_pattern = fct_reorder(overall_pattern, n))
 
-# Get faster vs opposite
-genes_MAX_faster <- b6_domain_slopes_clean |>
-  filter(gene_id %in% genes_MAX_div, Domain == "MAX", log2FoldChange > 0.5, padj < 0.05) |>
-  pull(gene_id)
+ggplot(trajectory_summary, aes(x = n, y = overall_pattern, fill = overall_pattern)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = n), hjust = -0.2, size = 3) +
+  scale_fill_viridis_d(option = "turbo") +
+  labs(title = "Distribution of Developmental Trajectory Patterns",
+       subtitle = "Genes with significant domain × stage interactions",
+       x = "Number of genes", y = "") +
+  theme_pubclean() +
+  theme(axis.text.y = element_text(size = 9)) +
+  xlim(0, max(trajectory_summary$n) * 1.15)
+```
 
-genes_MAX_opposite <- b6_domain_slopes_clean |>
-  filter(gene_id %in% genes_MAX_div) |>
-  select(gene_id, Domain, log2FoldChange) |>
-  pivot_wider(names_from = Domain, values_from = log2FoldChange) |>
-  filter(!is.na(MAX), !is.na(PM), MAX > 0, PM < 0) |>
-  pull(gene_id)
+## MAX vs PM Trajectories
 
-if(length(genes_MAX_faster) > 0 | length(genes_MAX_opposite) > 0) {
-  n_each <- 2
-  if(length(genes_MAX_faster) < 15) n_each <- min(n_each, length(genes_MAX_faster))
-  if(length(genes_MAX_opposite) < 15) n_each <- min(n_each, length(genes_MAX_opposite))
-  
-  plot_diverging_detailed(
-    genes_faster = genes_MAX_faster,
-    genes_opposite = genes_MAX_opposite,
-    domain_name = "MAX vs PM",
-    count_data = b6_gene_counts,
-    n_each = n_each
-  )
+### Opposite Trajectories
+
+```{r}
+#| label: max-pm-opposite-up
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 8
+
+if(length(genes_MAX_up_PM_down) > 0) {
+  #cat("**MAX↑ while PM↓:**", length(genes_MAX_up_PM_down), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_MAX_up_PM_down, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Opposite: MAX↑ PM↓ (n=", length(genes_MAX_up_PM_down), ")"), n = 4)
 }
 ```
 
-**Pattern:** MAX and PM follow different developmental trajectories.
+```{r}
+#| label: max-pm-opposite-down
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 8
 
-**Biological Interpretation:**
+if(length(genes_MAX_down_PM_up) > 0) {
+  #cat("**MAX↓ while PM↑:**", length(genes_MAX_down_PM_up), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_MAX_down_PM_up, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Opposite: MAX↓ PM↑ (n=", length(genes_MAX_down_PM_up), ")"), n = 4)
+}
+```
 
--   **MAX increases faster**: `r length(genes_MAX_faster)` genes becoming progressively enriched in MAX
--   **MAX up, PM down**: `r length(genes_MAX_opposite)` genes with opposite responses
+### Co-increasing Patterns
 
 ```{r}
-#| label: max-div-pm-table
+#| label: max-pm-coinc
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 8
+
+if(length(genes_coinc_MAX_faster_PM) > 0) {
+  cat("**Both↑, MAX faster (diverging):**", length(genes_coinc_MAX_faster_PM), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_coinc_MAX_faster_PM, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Co-increasing: MAX faster (n=", length(genes_coinc_MAX_faster_PM), ")"), n = 4)
+}
+
+if(length(genes_coinc_PM_faster_MAX) > 0) {
+  cat("**Both↑, PM faster (converging):**", length(genes_coinc_PM_faster_MAX), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_coinc_PM_faster_MAX, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Co-increasing: PM faster (n=", length(genes_coinc_PM_faster_MAX), ")"), n = 4)
+}
+```
+
+### Co-decreasing Patterns
+
+```{r}
+#| label: max-pm-codec
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 8
+
+if(length(genes_codec_MAX_faster_PM) > 0) {
+  cat("**Both↓, MAX faster:**", length(genes_codec_MAX_faster_PM), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_codec_MAX_faster_PM, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Co-decreasing: MAX faster (n=", length(genes_codec_MAX_faster_PM), ")"), n = 4)
+}
+
+if(length(genes_codec_PM_faster_MAX) > 0) {
+  cat("**Both↓, PM faster:**", length(genes_codec_PM_faster_MAX), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_codec_PM_faster_MAX, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Co-decreasing: PM faster (n=", length(genes_codec_PM_faster_MAX), ")"), n = 4)
+}
+```
+
+### MAX vs PM Gene Table
+
+```{r}
+#| label: max-pm-table
 #| warning: false
 #| message: false
 
-b6_slope_differences |>
-  filter(Comparison == "MAX vs PM slope difference", padj < 0.05) |>
-  select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
-  arrange(desc(abs(log2FoldChange))) |>
+trajectory_patterns |>
+  filter(!MAX_PM_pattern %in% c("Both stable", "Unclassified")) |>
+  select(gene_id, symbol, MAX_PM_pattern, 
+         PM_slope = PM_log2FoldChange, MAX_slope = MAX_log2FoldChange,
+         PM_padj, MAX_padj) |>
+  mutate(across(c(PM_slope, MAX_slope), ~round(., 3))) |>
+  arrange(MAX_PM_pattern, desc(abs(MAX_slope - PM_slope))) |>
   create_dt()
 ```
 
-Over-represented pathways and biological processes:
+## POST vs PM Trajectories
+
+### Opposite Trajectories
 
 ```{r}
-#| label: max-div-pm-ora
+#| label: post-pm-opposite
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 8
+
+if(length(genes_POST_up_PM_down) > 0) {
+  cat("**POST↑ while PM↓:**", length(genes_POST_up_PM_down), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_POST_up_PM_down, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Opposite: POST↑ PM↓ (n=", length(genes_POST_up_PM_down), ")"), n = 4)
+}
+
+if(length(genes_POST_down_PM_up) > 0) {
+  cat("**POST↓ while PM↑:**", length(genes_POST_down_PM_up), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_POST_down_PM_up, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Opposite: POST↓ PM↑ (n=", length(genes_POST_down_PM_up), ")"), n = 4)
+}
+```
+
+### Co-increasing Patterns
+
+```{r}
+#| label: post-pm-coinc
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 8
+
+if(length(genes_coinc_POST_faster_PM) > 0) {
+  cat("**Both↑, POST faster:**", length(genes_coinc_POST_faster_PM), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_coinc_POST_faster_PM, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Co-increasing: POST faster (n=", length(genes_coinc_POST_faster_PM), ")"), n = 4)
+}
+
+if(length(genes_coinc_PM_faster_POST) > 0) {
+  cat("**Both↑, PM faster:**", length(genes_coinc_PM_faster_POST), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_coinc_PM_faster_POST, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Co-increasing: PM faster (n=", length(genes_coinc_PM_faster_POST), ")"), n = 4)
+}
+```
+
+### POST vs PM Gene Table
+
+```{r}
+#| label: post-pm-table
+#| warning: false
+#| message: false
+
+trajectory_patterns |>
+  filter(!POST_PM_pattern %in% c("Both stable", "Unclassified")) |>
+  select(gene_id, symbol, POST_PM_pattern,
+         PM_slope = PM_log2FoldChange, POST_slope = POST_log2FoldChange,
+         PM_padj, POST_padj) |>
+  mutate(across(c(PM_slope, POST_slope), ~round(., 3))) |>
+  arrange(POST_PM_pattern, desc(abs(POST_slope - PM_slope))) |>
+  create_dt()
+```
+
+## POST vs MAX Trajectories
+
+### Opposite Trajectories
+
+```{r}
+#| label: post-max-opposite
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 8
+
+if(length(genes_POST_up_MAX_down) > 0) {
+  cat("**POST↑ while MAX↓:**", length(genes_POST_up_MAX_down), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_POST_up_MAX_down, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Opposite: POST↑ MAX↓ (n=", length(genes_POST_up_MAX_down), ")"), n = 4)
+}
+
+if(length(genes_POST_down_MAX_up) > 0) {
+  cat("**POST↓ while MAX↑:**", length(genes_POST_down_MAX_up), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_POST_down_MAX_up, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Opposite: POST↓ MAX↑ (n=", length(genes_POST_down_MAX_up), ")"), n = 4)
+}
+```
+
+### Co-increasing Patterns
+
+```{r}
+#| label: post-max-coinc
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 8
+
+if(length(genes_coinc_POST_faster_MAX) > 0) {
+  cat("**Both↑, POST faster:**", length(genes_coinc_POST_faster_MAX), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_coinc_POST_faster_MAX, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Co-increasing: POST faster (n=", length(genes_coinc_POST_faster_MAX), ")"), n = 4)
+}
+
+if(length(genes_coinc_MAX_faster_POST) > 0) {
+  cat("**Both↑, MAX faster:**", length(genes_coinc_MAX_faster_POST), "genes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_coinc_MAX_faster_POST, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Co-increasing: MAX faster (n=", length(genes_coinc_MAX_faster_POST), ")"), n = 4)
+}
+```
+
+### POST vs MAX Gene Table
+
+```{r}
+#| label: post-max-table
+#| warning: false
+#| message: false
+
+trajectory_patterns |>
+  filter(!POST_MAX_pattern %in% c("Both stable", "Unclassified")) |>
+  select(gene_id, symbol, POST_MAX_pattern,
+         MAX_slope = MAX_log2FoldChange, POST_slope = POST_log2FoldChange,
+         MAX_padj, POST_padj) |>
+  mutate(across(c(MAX_slope, POST_slope), ~round(., 3))) |>
+  arrange(POST_MAX_pattern, desc(abs(POST_slope - MAX_slope))) |>
+  create_dt()
+```
+
+## Trajectory Enrichment
+
+```{r}
+#| label: trajectory-ora
 #| warning: false
 #| message: false
 #| results: hide
 #| cache: true
 
-# Run enrichment on all MAX diverging genes
-genes_MAX_div_ora <- run_enrichment_hybrid(gene_ids = genes_MAX_div,
-                                     description = "MAX diverging from PM"
-                                     )
+ora_MAX_up_PM_down <- run_enrichment_hybrid(gene_ids = genes_MAX_up_PM_down, description = "MAX↑ PM↓")
+ora_MAX_down_PM_up <- run_enrichment_hybrid(gene_ids = genes_MAX_down_PM_up, description = "MAX↓ PM↑")
+ora_POST_up_PM_down <- run_enrichment_hybrid(gene_ids = genes_POST_up_PM_down, description = "POST↑ PM↓")
+ora_POST_down_PM_up <- run_enrichment_hybrid(gene_ids = genes_POST_down_PM_up, description = "POST↓ PM↑")
+ora_coinc_MAX_faster <- run_enrichment_hybrid(gene_ids = genes_coinc_MAX_faster_PM, description = "Co-inc: MAX faster")
+ora_coinc_POST_faster <- run_enrichment_hybrid(gene_ids = genes_coinc_POST_faster_PM, description = "Co-inc: POST faster")
 ```
 
 ```{r}
-#| label: max-div-pm-ora-table
-#| warning: false
-#| message: false
-genes_MAX_div_ora$result |> 
-  create_dt()
-```
-
-### POST Diverging from PM
-
-```{r}
-#| label: post-div-pm-plot
+#| label: trajectory-ora-table
 #| warning: false
 #| message: false
 
-genes_POST_div <- gene_assignments |>
-  filter(POST_div_PM) |>
-  pull(gene_id)
+trajectory_ora_results <- bind_rows(
+  ora_MAX_up_PM_down$result, ora_MAX_down_PM_up$result,
+  ora_POST_up_PM_down$result, ora_POST_down_PM_up$result,
+  ora_coinc_MAX_faster$result, ora_coinc_POST_faster$result
+)
 
-genes_POST_faster <- b6_domain_slopes_clean |>
-  filter(gene_id %in% genes_POST_div, Domain == "POST", log2FoldChange > 0.5, padj < 0.05) |>
-  pull(gene_id)
-
-genes_POST_opposite <- b6_domain_slopes_clean |>
-  filter(gene_id %in% genes_POST_div) |>
-  select(gene_id, Domain, log2FoldChange) |>
-  pivot_wider(names_from = Domain, values_from = log2FoldChange) |>
-  filter(!is.na(POST), !is.na(PM), POST > 0, PM < 0) |>
-  pull(gene_id)
-
-if(length(genes_POST_faster) > 0 | length(genes_POST_opposite) > 0) {
-  n_each <- 2
-  if(length(genes_POST_faster) < 15) n_each <- min(n_each, length(genes_POST_faster))
-  if(length(genes_POST_opposite) < 15) n_each <- min(n_each, length(genes_POST_opposite))
-  
-  plot_diverging_detailed(
-    genes_faster = genes_POST_faster,
-    genes_opposite = genes_POST_opposite,
-    domain_name = "POST vs PM",
-    count_data = b6_gene_counts,
-    n_each = n_each
-  )
+if(!is.null(trajectory_ora_results) && nrow(trajectory_ora_results) > 0) {
+  trajectory_ora_results |> filter(p_value < 0.01) |> create_dt()
 }
 ```
 
-**Pattern:** POST and PM show divergent trajectories.
-
-```{r}
-#| label: post-div-pm-table
-#| warning: false
-#| message: false
-
-b6_slope_differences |>
-  filter(Comparison == "POST vs PM slope difference", padj < 0.05) |>
-  select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
-  arrange(desc(abs(log2FoldChange))) |>
-  create_dt()
-```
-
-Over-represented pathways and biological processes:
-
-```{r}
-#| label: post-div-pm-ora
-#| warning: false
-#| message: false
-#| results: hide
-#| cache: true
-
-# Run enrichment on all POST diverging genes
-genes_POST_div_ora <- run_enrichment_hybrid(gene_ids = genes_POST_div,
-                                     description = "POST diverging from PM"
-                                     )
-```
-
-```{r}
-#| label: post-div-pm-ora-table
-#| warning: false
-#| message: false
-genes_POST_div_ora$result |> 
-  create_dt()
-```
-
-### POST Diverging from MAX
-
-```{r}
-#| label: post-div-max-plot
-#| warning: false
-#| message: false
-
-genes_POST_div_MAX <- gene_assignments |>
-  filter(POST_div_MAX) |>
-  pull(gene_id)
-
-genes_POST_faster_MAX <- b6_domain_slopes_clean |>
-  filter(gene_id %in% genes_POST_div_MAX, Domain == "POST", log2FoldChange > 0.5, padj < 0.05) |>
-  pull(gene_id)
-
-genes_POST_opposite_MAX <- b6_domain_slopes_clean |>
-  filter(gene_id %in% genes_POST_div_MAX) |>
-  select(gene_id, Domain, log2FoldChange) |>
-  pivot_wider(names_from = Domain, values_from = log2FoldChange) |>
-  filter(!is.na(POST), !is.na(MAX), POST > 0, MAX < 0) |>
-  pull(gene_id)
-
-if(length(genes_POST_faster_MAX) > 0 | length(genes_POST_opposite_MAX) > 0) {
-  n_each <- 2
-  if(length(genes_POST_faster_MAX) < 15) n_each <- min(n_each, length(genes_POST_faster_MAX))
-  if(length(genes_POST_opposite_MAX) < 15) n_each <- min(n_each, length(genes_POST_opposite_MAX))
-  
-  plot_diverging_detailed(
-    genes_faster = genes_POST_faster_MAX,
-    genes_opposite = genes_POST_opposite_MAX,
-    domain_name = "POST vs MAX",
-    count_data = b6_gene_counts,
-    n_each = n_each
-  )
-}
-```
-
-**Pattern:** POST and MAX show divergent developmental responses.
-
-```{r}
-#| label: post-div-max-table
-#| warning: false
-#| message: false
-
-b6_slope_differences |>
-  filter(Comparison == "POST vs MAX slope difference", padj < 0.05) |>
-  select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
-  arrange(desc(abs(log2FoldChange))) |>
-  create_dt()
-```
-
-Over-represented pathways and biological processes:
-
-```{r}
-#| label: post-div-max-ora
-#| warning: false
-#| message: false
-#| results: hide
-#| cache: true
-
-# Run enrichment on all POST diverging genes
-genes_POST_div_MAX_ora <- run_enrichment_hybrid(gene_ids = genes_POST_div_MAX,
-                                     description = "POST diverging from MAX"
-                                     )
-```
-
-```{r}
-#| label: post-div-max-ora-table
-#| warning: false
-#| message: false
-genes_POST_div_MAX_ora$result |> 
-  create_dt()
-```
 :::
 
-## Converging Trajectories
+# Domain-Specific Dynamics
 
-**These genes show domains becoming more similar over time**, with initially different expression levels that converge as development progresses.
+Genes showing significant developmental changes in **only specific domains** while others remain stable.
 
-::: {#B6_DESeq2_conv_traj .panel-tabset .nav-pills}
-### Overview
+::: {#B6_domain_dynamics .panel-tabset .nav-pills}
+
+## Overview
 
 ```{r}
-#| label: converging-overview
+#| label: domain-dynamics-overview
 #| warning: false
 #| message: false
 
-pattern_summary |>
-  filter(Category == "Converging") |>
-  arrange(desc(N_Genes)) |>
+tibble(
+  Pattern = c("PM↑ only", "PM↓ only", "MAX↑ only", "MAX↓ only", "POST↑ only", "POST↓ only",
+              "PM+MAX↑", "PM+MAX↓", "PM+POST↑", "PM+POST↓", "MAX+POST↑", "MAX+POST↓"),
+  N_Genes = c(length(genes_PM_only_up), length(genes_PM_only_down),
+              length(genes_MAX_only_up), length(genes_MAX_only_down),
+              length(genes_POST_only_up), length(genes_POST_only_down),
+              length(genes_PM_MAX_up), length(genes_PM_MAX_down),
+              length(genes_PM_POST_up), length(genes_PM_POST_down),
+              length(genes_MAX_POST_up), length(genes_MAX_POST_down))
+) |>
+  filter(N_Genes > 0) |>
   create_dt()
 ```
 
-### MAX Converging to PM
+## PM Only Dynamic
 
 ```{r}
-#| label: max-conv-pm-plot
+#| label: pm-only-up
 #| warning: false
 #| message: false
-
-genes_MAX_conv <- gene_assignments |>
-  filter(MAX_conv_PM) |>
-  pull(gene_id)
-
-if(length(genes_MAX_conv) > 0) {
-  n_show <- ifelse(length(genes_MAX_conv) < 15, length(genes_MAX_conv), 5)
-  plot_simple_trajectories(
-    gene_ids = genes_MAX_conv,
-    count_data = b6_gene_counts,
-    title_text = paste0("MAX Converging to PM (n=", length(genes_MAX_conv), ")"),
-    n = n_show
-  )
-}
-```
-
-**Pattern:** `r length(genes_MAX_conv)` genes where MAX and PM become more similar over time.
-
-**Biological Interpretation:** Equalization of expression suggesting tissue integration or coordinated maturation.
-
-```{r}
-#| label: max-conv-pm-table
-#| warning: false
-#| message: false
-
-b6_slope_differences |>
-  filter(Comparison == "MAX vs PM slope difference", padj < 0.05, log2FoldChange < -0.5) |>
-  select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
-  arrange(log2FoldChange) |>
-  create_dt()
-```
-
-Over-represented pathways and biological processes:
-
-```{r}
-#| label: max-conv-pm-ora
-#| warning: false
-#| message: false
-#| results: hide
-#| cache: true
-
-genes_MAX_conv_ora <- run_enrichment_hybrid(gene_ids = genes_MAX_conv,
-                                     description = "MAX converging to PM"
-                                     )
-```
-
-```{r}
-#| label: max-conv-pm-ora-table
-#| warning: false
-#| message: false
-genes_MAX_conv_ora$result |> 
-  create_dt()
-```
-
-### POST Converging to PM
-
-```{r}
-#| label: post-conv-pm-plot
-#| warning: false
-#| message: false
-
-genes_POST_conv <- gene_assignments |>
-  filter(POST_conv_PM) |>
-  pull(gene_id)
-
-if(length(genes_POST_conv) > 0) {
-  n_show <- ifelse(length(genes_POST_conv) < 15, length(genes_POST_conv), 5)
-  plot_simple_trajectories(
-    gene_ids = genes_POST_conv,
-    count_data = b6_gene_counts,
-    title_text = paste0("POST Converging to PM (n=", length(genes_POST_conv), ")"),
-    n = n_show
-  )
-}
-```
-
-**Pattern:** `r length(genes_POST_conv)` genes converging between POST and PM.
-
-```{r}
-#| label: post-conv-pm-table
-#| warning: false
-#| message: false
-
-b6_slope_differences |>
-  filter(Comparison == "POST vs PM slope difference", padj < 0.05, log2FoldChange < -0.5) |>
-  select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
-  arrange(log2FoldChange) |>
-  create_dt()
-```
-
-Over-represented pathways and biological processes:
-
-```{r}
-#| label: post-conv-pm-ora
-#| warning: false
-#| message: false
-#| results: hide
-#| cache: true
-
-genes_POST_conv_ora <- run_enrichment_hybrid(gene_ids = genes_POST_conv,
-                                     description = "POST converging to PM"
-                                     )
-```
-
-```{r}
-#| label: post-conv-pm-ora-table
-#| warning: false
-#| message: false
-genes_POST_conv_ora$result |> 
-  create_dt()
-```
-
-### POST Converging to MAX
-
-```{r}
-#| label: post-conv-max-plot
-#| warning: false
-#| message: false
-
-genes_POST_conv_MAX <- gene_assignments |>
-  filter(POST_conv_MAX) |>
-  pull(gene_id)
-
-if(length(genes_POST_conv_MAX) > 0) {
-  n_show <- ifelse(length(genes_POST_conv_MAX) < 15, length(genes_POST_conv_MAX), 5)
-  plot_simple_trajectories(
-    gene_ids = genes_POST_conv_MAX,
-    count_data = b6_gene_counts,
-    title_text = paste0("POST Converging to MAX (n=", length(genes_POST_conv_MAX), ")"),
-    n = n_show
-  )
-}
-```
-
-**Pattern:** `r length(genes_POST_conv_MAX)` genes converging between POST and MAX.
-
-```{r}
-#| label: post-conv-max-table
-#| warning: false
-#| message: false
-
-b6_slope_differences |>
-  filter(Comparison == "POST vs MAX slope difference", padj < 0.05, log2FoldChange < -0.5) |>
-  select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
-  arrange(log2FoldChange) |>
-  create_dt()
-```
-
-Over-represented pathways and biological processes:
-
-```{r}
-#| label: post-conv-max-ora
-#| warning: false
-#| message: false
-#| results: hide
-#| cache: true
-
-genes_POST_conv_MAX_ora <- run_enrichment_hybrid(gene_ids = genes_POST_conv_MAX,
-                                     description = "POST converging to MAX"
-                                     )
-```
-
-```{r}
-#| label: post-conv-max-ora-table
-#| warning: false
-#| message: false
-genes_POST_conv_MAX_ora$result |> 
-  create_dt()
-```
-:::
-
-## Domain-Specific Dynamics
-
-**These genes show significant developmental changes in only one or two domains** while remaining stable in others.
-
-::: {#B6_DESeq2_domain_dyn .panel-tabset .nav-pills}
-### Overview
-
-```{r}
-#| label: domain-specific-overview
-#| warning: false
-#| message: false
-
-pattern_summary |>
-  filter(Category == "Domain-Specific") |>
-  arrange(desc(N_Genes)) |>
-  create_dt()
-```
-
-### PM Only
-
-```{r}
-#| label: pm-only-plot
-#| warning: false
-#| message: false
-
-genes_PM_only_up <- gene_assignments |>
-  filter(PM_only_up) |>
-  pull(gene_id)
-
-genes_PM_only_down <- domain_dynamics |>
-  filter(PM_dynamic, !MAX_dynamic, !POST_dynamic, PM_slope < -0.5) |>
-  pull(gene_id)
+#| fig-width: 10
+#| fig-height: 8
 
 if(length(genes_PM_only_up) > 0) {
-  n_show <- ifelse(length(genes_PM_only_up) < 15, length(genes_PM_only_up), 3)
-  plot_domain_specific_dynamics(
-    gene_ids = genes_PM_only_up,
-    domain_name = "PM",
-    direction = "Increasing",
-    count_data = b6_gene_counts,
-    slope_data = b6_domain_slopes_clean,
-    n = n_show
-  )
+  cat("### PM↑ Only (MAX & POST stable)\n\n")
+  cat(length(genes_PM_only_up), "genes increase specifically in PM\n\n")
+  plot_domain_specific_dynamics(gene_ids = genes_PM_only_up, domain_name = "PM", direction = "↑",
+    count_data = b6_gene_counts, slope_data = b6_domain_slopes_clean, n = 3)
 }
 ```
 
-**Pattern:** Developmental changes only in PM domain.
-
-**Biological Interpretation:** PM-specific processes like midline fusion.
-Found `r length(genes_PM_only_up)` increasing and `r length(genes_PM_only_down)` decreasing.
-
 ```{r}
-#| label: pm-only-table
+#| label: pm-only-down
 #| warning: false
 #| message: false
+#| fig-width: 10
+#| fig-height: 8
 
-b6_domain_slopes_clean |>
-  filter(gene_id %in% c(genes_PM_only_up, genes_PM_only_down), Domain == "PM") |>
-  select(gene_id, symbol, chromosome, Domain, log2FoldChange, padj) |>
-  arrange(desc(abs(log2FoldChange))) |>
-  create_dt()
+if(length(genes_PM_only_down) > 0) {
+  cat("### PM↓ Only (MAX & POST stable)\n\n")
+  cat(length(genes_PM_only_down), "genes decrease specifically in PM\n\n")
+  plot_domain_specific_dynamics(gene_ids = genes_PM_only_down, domain_name = "PM", direction = "↓",
+    count_data = b6_gene_counts, slope_data = b6_domain_slopes_clean, n = 3)
+}
 ```
-
-Over-represented pathways and biological processes:
 
 ```{r}
 #| label: pm-only-ora
@@ -2303,74 +2347,42 @@ Over-represented pathways and biological processes:
 #| results: hide
 #| cache: true
 
-# Run enrichment on both sets
-genes_PM_only_up_ora <- run_enrichment_hybrid(gene_ids = genes_PM_only_up,
-                                     description = "PM only increasing"
-                                     )
-
-genes_PM_only_down_ora <- run_enrichment_hybrid(gene_ids = genes_PM_only_down,
-                                     description = "PM only decreasing"
-                                     )
-
+ora_PM_only_up <- run_enrichment_hybrid(gene_ids = genes_PM_only_up,description =  "PM↑ only")
+ora_PM_only_down <- run_enrichment_hybrid(gene_ids = genes_PM_only_down, description = "PM↓ only")
 ```
 
 ```{r}
 #| label: pm-only-ora-table
 #| warning: false
 #| message: false
-genes_PM_only_up_ora$result |> 
-  rbind(
-    genes_PM_only_down_ora$result
-  ) |> 
-  create_dt()
+
+pm_ora <- bind_rows(ora_PM_only_up$result, ora_PM_only_down$result)
+if(!is.null(pm_ora) && nrow(pm_ora) > 0) pm_ora |> filter(p_value < 0.01) |> create_dt()
 ```
 
-### MAX Only
+## MAX Only Dynamic
 
 ```{r}
-#| label: max-only-plot
+#| label: max-only-dynamics
 #| warning: false
 #| message: false
-
-genes_MAX_only_up <- gene_assignments |>
-  filter(MAX_only_up) |>
-  pull(gene_id)
-
-genes_MAX_only_down <- domain_dynamics |>
-  filter(!PM_dynamic, MAX_dynamic, !POST_dynamic, MAX_slope < -0.5) |>
-  pull(gene_id)
+#| fig-width: 10
+#| fig-height: 8
 
 if(length(genes_MAX_only_up) > 0) {
-  n_show <- ifelse(length(genes_MAX_only_up) < 15, length(genes_MAX_only_up), 3)
-  plot_domain_specific_dynamics(
-    gene_ids = genes_MAX_only_up,
-    domain_name = "MAX",
-    direction = "Increasing",
-    count_data = b6_gene_counts,
-    slope_data = b6_domain_slopes_clean,
-    n = n_show
-  )
+  cat("### MAX↑ Only (PM & POST stable)\n\n")
+  cat(length(genes_MAX_only_up), "genes increase specifically in MAX\n\n")
+  plot_domain_specific_dynamics(gene_ids = genes_MAX_only_up, domain_name = "MAX", direction = "↑",
+    count_data = b6_gene_counts, slope_data = b6_domain_slopes_clean, n = 3)
+}
+
+if(length(genes_MAX_only_down) > 0) {
+  cat("### MAX↓ Only (PM & POST stable)\n\n")
+  cat(length(genes_MAX_only_down), "genes decrease specifically in MAX\n\n")
+  plot_domain_specific_dynamics(gene_ids = genes_MAX_only_down, domain_name = "MAX", direction = "↓",
+    count_data = b6_gene_counts, slope_data = b6_domain_slopes_clean, n = 3)
 }
 ```
-
-**Pattern:** Developmental changes only in MAX domain.
-
-**Biological Interpretation:** MAX-specific processes like lateral shelf morphogenesis.
-Found `r length(genes_MAX_only_up)` increasing and `r length(genes_MAX_only_down)` decreasing.
-
-```{r}
-#| label: max-only-table
-#| warning: false
-#| message: false
-
-b6_domain_slopes_clean |>
-  filter(gene_id %in% c(genes_MAX_only_up, genes_MAX_only_down), Domain == "MAX") |>
-  select(gene_id, symbol, chromosome, Domain, log2FoldChange, padj) |>
-  arrange(desc(abs(log2FoldChange))) |>
-  create_dt()
-```
-
-Over-represented pathways and biological processes:
 
 ```{r}
 #| label: max-only-ora
@@ -2379,74 +2391,42 @@ Over-represented pathways and biological processes:
 #| results: hide
 #| cache: true
 
-# Run enrichment on both sets
-genes_MAX_only_up_ora <- run_enrichment_hybrid(gene_ids = genes_MAX_only_up,
-                                     description = "MAX only increasing"
-                                     )
-
-genes_MAX_only_down_ora <- run_enrichment_hybrid(gene_ids = genes_MAX_only_down,
-                                     description = "MAX only decreasing"
-                                     )
+ora_MAX_only_up <- run_enrichment_hybrid(gene_ids = genes_MAX_only_up, description = "MAX↑ only")
+ora_MAX_only_down <- run_enrichment_hybrid(gene_ids = genes_MAX_only_down, description = "MAX↓ only")
 ```
-
 
 ```{r}
 #| label: max-only-ora-table
 #| warning: false
 #| message: false
-genes_MAX_only_up_ora$result |> 
-  rbind(
-    genes_MAX_only_down_ora$result
-  ) |> 
-  create_dt()
+
+max_ora <- bind_rows(ora_MAX_only_up$result, ora_MAX_only_down$result)
+if(!is.null(max_ora) && nrow(max_ora) > 0) max_ora |> filter(p_value < 0.01) |> create_dt()
 ```
 
-### POST Only
+## POST Only Dynamic
 
 ```{r}
-#| label: post-only-plot
+#| label: post-only-dynamics
 #| warning: false
 #| message: false
-
-genes_POST_only_up <- gene_assignments |>
-  filter(POST_only_up) |>
-  pull(gene_id)
-
-genes_POST_only_down <- domain_dynamics |>
-  filter(!PM_dynamic, !MAX_dynamic, POST_dynamic, POST_slope < -0.5) |>
-  pull(gene_id)
+#| fig-width: 10
+#| fig-height: 8
 
 if(length(genes_POST_only_up) > 0) {
-  n_show <- ifelse(length(genes_POST_only_up) < 15, length(genes_POST_only_up), 3)
-  plot_domain_specific_dynamics(
-    gene_ids = genes_POST_only_up,
-    domain_name = "POST",
-    direction = "Increasing",
-    count_data = b6_gene_counts,
-    slope_data = b6_domain_slopes_clean,
-    n = n_show
-  )
+  cat("### POST↑ Only (PM & MAX stable)\n\n")
+  cat(length(genes_POST_only_up), "genes increase specifically in POST\n\n")
+  plot_domain_specific_dynamics(gene_ids = genes_POST_only_up, domain_name = "POST", direction = "↑",
+    count_data = b6_gene_counts, slope_data = b6_domain_slopes_clean, n = 3)
+}
+
+if(length(genes_POST_only_down) > 0) {
+  cat("### POST↓ Only (PM & MAX stable)\n\n")
+  cat(length(genes_POST_only_down), "genes decrease specifically in POST\n\n")
+  plot_domain_specific_dynamics(gene_ids = genes_POST_only_down, domain_name = "POST", direction = "↓",
+    count_data = b6_gene_counts, slope_data = b6_domain_slopes_clean, n = 3)
 }
 ```
-
-**Pattern:** Developmental changes only in POST domain.
-
-**Biological Interpretation:** Posterior-specific programs like soft palate differentiation.
-Found `r length(genes_POST_only_up)` increasing and `r length(genes_POST_only_down)` decreasing.
-
-```{r}
-#| label: post-only-table
-#| warning: false
-#| message: false
-
-b6_domain_slopes_clean |>
-  filter(gene_id %in% c(genes_POST_only_up, genes_POST_only_down), Domain == "POST") |>
-  select(gene_id, symbol, chromosome, Domain, log2FoldChange, padj) |>
-  arrange(desc(abs(log2FoldChange))) |>
-  create_dt()
-```
-
-Over-represented pathways and biological processes:
 
 ```{r}
 #| label: post-only-ora
@@ -2455,389 +2435,544 @@ Over-represented pathways and biological processes:
 #| results: hide
 #| cache: true
 
-# Run enrichment on both sets
-genes_POST_only_up_ora <- run_enrichment_hybrid(gene_ids = genes_POST_only_up,
-                                     description = "POST only increasing"
-                                     )
-
-genes_POST_only_down_ora <- run_enrichment_hybrid(gene_ids = genes_POST_only_down,
-                                     description = "POST only decreasing"
-                                     )
-
+ora_POST_only_up <- run_enrichment_hybrid(genes_POST_only_up, "POST↑ only")
+ora_POST_only_down <- run_enrichment_hybrid(genes_POST_only_down, "POST↓ only")
 ```
 
 ```{r}
 #| label: post-only-ora-table
 #| warning: false
 #| message: false
-genes_POST_only_up_ora$result |> 
-  rbind(
-    genes_POST_only_down_ora$result
-  ) |> 
-  create_dt()
+
+post_ora <- bind_rows(ora_POST_only_up$result, ora_POST_only_down$result)
+if(!is.null(post_ora) && nrow(post_ora) > 0) post_ora |> filter(p_value < 0.01) |> create_dt()
 ```
+
+## Two Domains Dynamic
+
+```{r}
+#| label: two-domain-pm-max
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 8
+
+if(length(genes_PM_MAX_up) > 0) {
+  cat("### PM + MAX↑ (POST stable)\n\n")
+  cat(length(genes_PM_MAX_up), "genes - anterior domains activate together\n\n")
+  plot_simple_trajectories(gene_ids = genes_PM_MAX_up, count_data = b6_gene_counts,
+    title_text = paste0("PM + MAX↑, POST stable (n=", length(genes_PM_MAX_up), ")"), n = 4)
+}
+
+if(length(genes_PM_MAX_down) > 0) {
+  cat("### PM + MAX↓ (POST stable)\n\n")
+  cat(length(genes_PM_MAX_down), "genes - anterior domains repress together\n\n")
+  plot_simple_trajectories(gene_ids = genes_PM_MAX_down, count_data = b6_gene_counts,
+    title_text = paste0("PM + MAX↓, POST stable (n=", length(genes_PM_MAX_down), ")"), n = 4)
+}
+```
+
+```{r}
+#| label: two-domain-max-post
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 8
+
+if(length(genes_MAX_POST_up) > 0) {
+  cat("### MAX + POST↑ (PM stable)\n\n")
+  cat(length(genes_MAX_POST_up), "genes - posterior domains activate together\n\n")
+  plot_simple_trajectories(gene_ids = genes_MAX_POST_up, count_data = b6_gene_counts,
+    title_text = paste0("MAX + POST↑, PM stable (n=", length(genes_MAX_POST_up), ")"), n = 4)
+}
+
+if(length(genes_MAX_POST_down) > 0) {
+  cat("### MAX + POST↓ (PM stable)\n\n")
+  cat(length(genes_MAX_POST_down), "genes - posterior domains repress together\n\n")
+  plot_simple_trajectories(gene_ids = genes_MAX_POST_down, count_data = b6_gene_counts,
+    title_text = paste0("MAX + POST↓, PM stable (n=", length(genes_MAX_POST_down), ")"), n = 4)
+}
+```
+
+```{r}
+#| label: two-domain-pm-post
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 8
+
+if(length(genes_PM_POST_up) > 0) {
+  cat("### PM + POST↑ (MAX stable)\n\n")
+  cat(length(genes_PM_POST_up), "genes - peripheral domains activate\n\n")
+  plot_simple_trajectories(gene_ids = genes_PM_POST_up, count_data = b6_gene_counts,
+    title_text = paste0("PM + POST↑, MAX stable (n=", length(genes_PM_POST_up), ")"), n = 4)
+}
+
+if(length(genes_PM_POST_down) > 0) {
+  cat("### PM + POST↓ (MAX stable)\n\n")
+  cat(length(genes_PM_POST_down), "genes - peripheral domains repress\n\n")
+  plot_simple_trajectories(gene_ids = genes_PM_POST_down, count_data = b6_gene_counts,
+    title_text = paste0("PM + POST↓, MAX stable (n=", length(genes_PM_POST_down), ")"), n = 4)
+}
+```
+
+```{r}
+#| label: two-domain-ora
+#| warning: false
+#| message: false
+#| results: hide
+#| cache: true
+
+ora_PM_MAX_up <- run_enrichment_hybrid(genes_PM_MAX_up, "PM+MAX↑")
+ora_MAX_POST_up <- run_enrichment_hybrid(genes_MAX_POST_up, "MAX+POST↑")
+ora_PM_POST_up <- run_enrichment_hybrid(genes_PM_POST_up, "PM+POST↑")
+```
+
+```{r}
+#| label: two-domain-ora-table
+#| warning: false
+#| message: false
+
+two_domain_ora <- bind_rows(ora_PM_MAX_up$result, ora_MAX_POST_up$result, ora_PM_POST_up$result)
+if(!is.null(two_domain_ora) && nrow(two_domain_ora) > 0) two_domain_ora |> filter(p_value < 0.01) |> create_dt()
+```
+
 :::
 
-## Complex Patterns
+# Complex Trajectory Patterns
 
-**Genes showing particularly complex spatiotemporal dynamics** including opposite trajectories or three-way divergence.
+Genes with particularly complex spatiotemporal dynamics including **all domains changing** (at different rates) or **opposite trajectories** across domain pairs.
 
-::: {#B6_DESeq2_comp_pat .panel-tabset .nav-pills}
-### Overview
+::: {#B6_complex .panel-tabset .nav-pills}
+
+## Overview
 
 ```{r}
 #| label: complex-overview
 #| warning: false
 #| message: false
 
-pattern_summary |>
-  filter(Category == "Complex") |>
-  arrange(desc(N_Genes)) |>
-  create_dt()
+tibble(
+  Pattern = c("All domains↑ (different rates)", "All domains↓ (different rates)",
+              "Any opposite slopes", "Three-way divergent"),
+  N_Genes = c(length(genes_all_increasing), length(genes_all_decreasing),
+              length(genes_opposite_slopes), length(genes_three_way_divergent))
+) |> create_dt()
 ```
 
-### Opposite Slopes
+## All Domains Increasing
 
 ```{r}
-#| label: opposite-slopes-plot
+#| label: all-increasing
 #| warning: false
 #| message: false
+#| fig-width: 10
+#| fig-height: 8
 
-genes_opposite <- gene_assignments |>
-  filter(Opposite_slopes) |>
-  pull(gene_id)
-
-if(length(genes_opposite) > 0) {
-  n_show <- ifelse(length(genes_opposite) < 15, length(genes_opposite), 5)
-  plot_simple_trajectories(
-    gene_ids = genes_opposite,
-    count_data = b6_gene_counts,
-    title_text = paste0("Genes with Opposite Slopes (n=", length(genes_opposite), ")"),
-    n = n_show
-  )
+if(length(genes_all_increasing) > 0) {
+  cat(length(genes_all_increasing), "genes increase in all three domains (at different rates)\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_all_increasing, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("All Domains Increasing (n=", length(genes_all_increasing), ")"), n = 6)
 }
 ```
 
-**Pattern:** `r length(genes_opposite)` genes where at least one domain increases while another decreases.
+```{r}
+#| label: all-increasing-table
+#| warning: false
+#| message: false
 
-**Biological Interpretation:** Fundamentally different developmental programs between domains, potentially key regulators of domain identity.
+if(length(genes_all_increasing) > 0) {
+  trajectory_patterns |>
+    filter(gene_id %in% genes_all_increasing) |>
+    select(gene_id, symbol, PM = PM_log2FoldChange, MAX = MAX_log2FoldChange, POST = POST_log2FoldChange) |>
+    mutate(across(c(PM, MAX, POST), ~round(., 2))) |>
+    arrange(desc(PM + MAX + POST)) |>
+    create_dt()
+}
+```
+
+## All Domains Decreasing
+
+```{r}
+#| label: all-decreasing
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 8
+
+if(length(genes_all_decreasing) > 0) {
+  cat(length(genes_all_decreasing), "genes decrease in all three domains (at different rates)\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_all_decreasing, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("All Domains Decreasing (n=", length(genes_all_decreasing), ")"), n = 6)
+}
+```
+
+## Opposite Slopes
+
+```{r}
+#| label: opposite-slopes
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 10
+
+if(length(genes_opposite_slopes) > 0) {
+  cat(length(genes_opposite_slopes), "genes where at least one domain pair has opposite trajectories\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_opposite_slopes, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Genes with Opposite Slopes (n=", length(genes_opposite_slopes), ")"), n = 6)
+}
+```
 
 ```{r}
 #| label: opposite-slopes-table
 #| warning: false
 #| message: false
 
-b6_domain_slopes_clean |>
-  filter(gene_id %in% genes_opposite) |>
-  select(gene_id, symbol, chromosome, Domain, log2FoldChange, padj) |>
-  arrange(gene_id, Domain) |>
-  create_dt()
-```
-
-Over-represented pathways and biological processes:
-
-```{r}
-#| label: opposite-slopes-ora
-#| warning: false
-#| message: false
-#| results: hide
-#| cache: true
-
-genes_opposite_ora <- run_enrichment_hybrid(gene_ids = genes_opposite,
-                                     description = "Opposite slopes"
-                                     )
-```
-
-```{r}
-#| label: opposite-slopes-ora-table
-#| warning: false
-#| message: false
-genes_opposite_ora$result |> 
-  create_dt()
-```
-
-### Three-Way Divergent
-
-```{r}
-#| label: three-way-plot
-#| warning: false
-#| message: false
-
-genes_three_way <- gene_assignments |>
-  filter(Three_way) |>
-  pull(gene_id)
-
-if(length(genes_three_way) > 0) {
-  n_show <- ifelse(length(genes_three_way) < 15, length(genes_three_way), 5)
-  plot_simple_trajectories(
-    gene_ids = genes_three_way,
-    count_data = b6_gene_counts,
-    title_text = paste0("Three-Way Divergent Genes (n=", length(genes_three_way), ")"),
-    n = n_show
-  )
+if(length(genes_opposite_slopes) > 0) {
+  trajectory_patterns |>
+    filter(gene_id %in% genes_opposite_slopes) |>
+    select(gene_id, symbol, overall_pattern, 
+           PM = PM_log2FoldChange, MAX = MAX_log2FoldChange, POST = POST_log2FoldChange) |>
+    mutate(across(c(PM, MAX, POST), ~round(., 2))) |>
+    arrange(overall_pattern) |>
+    create_dt()
 }
 ```
 
-**Pattern:** `r length(genes_three_way)` genes where all three domains show different developmental slopes.
-
-**Biological Interpretation:** Maximum spatiotemporal complexity, likely central regulators of domain-specific identity and function.
+## Three-Way Divergent
 
 ```{r}
-#| label: three-way-table
+#| label: three-way
 #| warning: false
 #| message: false
+#| fig-width: 10
+#| fig-height: 10
 
-b6_domain_slopes_clean |>
-  filter(gene_id %in% genes_three_way) |>
-  select(gene_id, symbol, chromosome, Domain, log2FoldChange, padj) |>
-  arrange(gene_id, Domain) |>
-  create_dt()
+if(length(genes_three_way_divergent) > 0) {
+  cat(length(genes_three_way_divergent), "genes where all three domains show significant but different slopes\n\n")
+  plot_trajectory_with_slopes(gene_ids = genes_three_way_divergent, count_data = b6_gene_counts,
+    slope_data = b6_domain_slopes, title_text = paste0("Three-Way Divergent (n=", length(genes_three_way_divergent), ")"), n = 6)
+}
 ```
 
-Over-represented pathways and biological processes:
+## Complex Enrichment
 
 ```{r}
-#| label: three-way-ora
+#| label: complex-ora
 #| warning: false
 #| message: false
 #| results: hide
 #| cache: true
 
-genes_three_way_ora <- run_enrichment_hybrid(gene_ids = genes_three_way,
-                                     description = "Three-way divergent"
-                                     )
+ora_all_increasing <- run_enrichment_hybrid(genes_all_increasing, "All↑")
+ora_all_decreasing <- run_enrichment_hybrid(genes_all_decreasing, "All↓")
+ora_opposite <- run_enrichment_hybrid(genes_opposite_slopes, "Opposite slopes")
+ora_three_way <- run_enrichment_hybrid(genes_three_way_divergent, "Three-way divergent")
 ```
 
 ```{r}
-#| label: three-way-ora-table
+#| label: complex-ora-table
 #| warning: false
 #| message: false
-genes_three_way_ora$result |> 
-  create_dt()
+
+complex_ora <- bind_rows(ora_all_increasing$result, ora_all_decreasing$result,
+                         ora_opposite$result, ora_three_way$result)
+if(!is.null(complex_ora) && nrow(complex_ora) > 0) complex_ora |> filter(p_value < 0.01) |> create_dt()
 ```
+
 :::
 
-## Pattern Overlap Analysis
+# Pattern Summary
 
-::: {#B6_DESeq2_pattern_overlap .panel-tabset .nav-pills}
-### Multi-Pattern Genes
+::: {#B6_pattern_summary .panel-tabset .nav-pills}
+
+## Overall Summary
 
 ```{r}
-#| label: pattern-overlap
+#| label: overall-summary
 #| warning: false
 #| message: false
 
-multi_pattern_genes <- gene_assignments |>
-  filter(n_patterns > 1) |>
-  arrange(desc(n_patterns))
-
-multi_pattern_genes |>
-  select(symbol, n_patterns) |>
-  group_by(n_patterns) |>
-  summarize(n_genes = n(), .groups = "drop") |>
-  create_dt()
-```
-
-### Top Multi-Pattern Genes
-
-```{r}
-#| label: top-multi-pattern
-#| warning: false
-#| message: false
-
-multi_pattern_genes |>
-  left_join(all_genes_palate |> select(gene_id, chromosome), by = "gene_id") |>
-  select(gene_id, symbol, chromosome, n_patterns) |>
-  head(50) |>
-  create_dt()
-```
-
-### Pattern Overlap UpSet Plot
-
-```{r}
-#| label: pattern-upset-plot
-#| warning: false
-#| message: false
-#| fig.width: 14
-#| fig.height: 10
-
-# Prepare data for upset plot - select key pattern categories
-upset_data <- gene_assignments |>
-  select(
-    gene_id,
+# Create comprehensive summary
+pattern_summary_all <- tibble(
+  Category = c(
+    rep("Domain Main Effects", 11),
+    rep("Stage Main Effects", 4),
+    rep("Trajectory: Opposite", 6),
+    rep("Trajectory: Co-increasing", 6),
+    rep("Trajectory: Co-decreasing", 6),
+    rep("Domain-Specific: Single", 6),
+    rep("Domain-Specific: Two", 6),
+    rep("Complex", 4)
+  ),
+  Pattern = c(
     # Domain main effects
-    MAX_higher_PM, MAX_lower_PM,
-    POST_higher_PM, POST_lower_PM,
-    POST_higher_MAX, POST_lower_MAX,
-    Highest_MAX, Highest_POST, Highest_PM,
-    AP_decreasing, AP_increasing,
+    "MAX higher than PM", "MAX lower than PM",
+    "POST higher than PM", "POST lower than PM",
+    "POST higher than MAX", "POST lower than MAX",
+    "Highest in MAX", "Highest in POST", "Highest in PM",
+    "A→P decreasing", "A→P increasing",
     # Stage main effects
-    Dev_increasing, Dev_decreasing,
-    # Diverging
-    MAX_div_PM, POST_div_PM, POST_div_MAX,
-    # Converging
-    MAX_conv_PM, POST_conv_PM, POST_conv_MAX,
-    # Domain-specific
-    PM_only_up, MAX_only_up, POST_only_up,
+    "All↑ (common)", "All↓ (common)", "Strong↑", "Strong↓",
+    # Opposite trajectories
+    "MAX↑ PM↓", "MAX↓ PM↑", "POST↑ PM↓", "POST↓ PM↑", "POST↑ MAX↓", "POST↓ MAX↑",
+    # Co-increasing
+    "MAX vs PM: MAX faster", "MAX vs PM: PM faster",
+    "POST vs PM: POST faster", "POST vs PM: PM faster",
+    "POST vs MAX: POST faster", "POST vs MAX: MAX faster",
+    # Co-decreasing
+    "MAX vs PM: MAX faster↓", "MAX vs PM: PM faster↓",
+    "POST vs PM: POST faster↓", "POST vs PM: PM faster↓",
+    "POST vs MAX: POST faster↓", "POST vs MAX: MAX faster↓",
+    # Single domain
+    "PM↑ only", "PM↓ only", "MAX↑ only", "MAX↓ only", "POST↑ only", "POST↓ only",
+    # Two domain
+    "PM+MAX↑", "PM+MAX↓", "PM+POST↑", "PM+POST↓", "MAX+POST↑", "MAX+POST↓",
     # Complex
-    Opposite_slopes, Three_way
-  ) |>
-  # Convert to data frame and set gene_id as rownames
-  as.data.frame() |>
-  column_to_rownames("gene_id") |>
-  # Convert logical to numeric
-  mutate(across(everything(), as.numeric))
+    "All↑ (interaction)", "All↓ (interaction)", "Any opposite", "Three-way"
+  ),
+  N_Genes = c(
+    # Domain main effects
+    length(genes_MAX_higher_than_PM), length(genes_MAX_lower_than_PM),
+    length(genes_POST_higher_than_PM), length(genes_POST_lower_than_PM),
+    length(genes_POST_higher_than_MAX), length(genes_POST_lower_than_MAX),
+    length(genes_MAX_highest), length(genes_POST_highest), length(genes_PM_highest),
+    length(genes_AP_decreasing), length(genes_AP_increasing),
+    # Stage main effects
+    length(genes_increasing_with_development), length(genes_decreasing_with_development),
+    length(strong_increasers), length(strong_decreasers),
+    # Opposite
+    length(genes_MAX_up_PM_down), length(genes_MAX_down_PM_up),
+    length(genes_POST_up_PM_down), length(genes_POST_down_PM_up),
+    length(genes_POST_up_MAX_down), length(genes_POST_down_MAX_up),
+    # Co-increasing
+    length(genes_coinc_MAX_faster_PM), length(genes_coinc_PM_faster_MAX),
+    length(genes_coinc_POST_faster_PM), length(genes_coinc_PM_faster_POST),
+    length(genes_coinc_POST_faster_MAX), length(genes_coinc_MAX_faster_POST),
+    # Co-decreasing
+    length(genes_codec_MAX_faster_PM), length(genes_codec_PM_faster_MAX),
+    length(genes_codec_POST_faster_PM), length(genes_codec_PM_faster_POST),
+    length(trajectory_patterns |> filter(POST_MAX_pattern == "Co-decreasing: POST faster") |> nrow()),
+    length(trajectory_patterns |> filter(POST_MAX_pattern == "Co-decreasing: MAX faster") |> nrow()),
+    # Single domain
+    length(genes_PM_only_up), length(genes_PM_only_down),
+    length(genes_MAX_only_up), length(genes_MAX_only_down),
+    length(genes_POST_only_up), length(genes_POST_only_down),
+    # Two domain
+    length(genes_PM_MAX_up), length(genes_PM_MAX_down),
+    length(genes_PM_POST_up), length(genes_PM_POST_down),
+    length(genes_MAX_POST_up), length(genes_MAX_POST_down),
+    # Complex
+    length(genes_all_increasing), length(genes_all_decreasing),
+    length(genes_opposite_slopes), length(genes_three_way_divergent)
+  )
+) |>
+  filter(N_Genes > 0)
 
-# Create upset plot
-UpSetR::upset(
-  upset_data,
-  sets = colnames(upset_data),
-  order.by = "freq",
-  decreasing = TRUE,
-  mb.ratio = c(0.6, 0.4),
-  number.angles = 0,
-  point.size = 3,
-  line.size = 1,
-  mainbar.y.label = "Pattern Intersections",
-  sets.x.label = "Genes per Pattern",
-  text.scale = c(1.5, 1.2, 1.2, 1.2, 1.5, 1.2),
-  set_size.show = TRUE,
-  keep.order = TRUE,
-  sets.bar.color = "#56B4E9"
-)
+pattern_summary_all |> create_dt()
 ```
-
-This UpSet plot visualizes: - The size of each pattern category (left bar chart) - Which pattern combinations occur most frequently (top bar chart) - The degree of overlap between different patterns (connection lines) - Genes with multiple pattern assignments
-:::
-::::::::::
-
-# Comprehensive Tables
-
-::: {#B6_DESeq2_tables .panel-tabset .nav-pills}
-## All Patterns Summary
 
 ```{r}
-#| label: all-patterns-table
+#| label: category-summary-plot
 #| warning: false
 #| message: false
+#| fig-width: 12
+#| fig-height: 6
 
-pattern_summary |>
-  create_dt()
+# Summary by category
+category_summary <- pattern_summary_all |>
+  group_by(Category) |>
+  summarize(Total_Genes = sum(N_Genes), N_Patterns = n(), .groups = "drop") |>
+  mutate(Category = fct_reorder(Category, Total_Genes))
+
+ggplot(category_summary, aes(x = Total_Genes, y = Category, fill = Category)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = paste0(Total_Genes, " (", N_Patterns, " patterns)")), hjust = -0.05, size = 3.5) +
+  scale_fill_viridis_d(option = "plasma") +
+  labs(title = "Gene Counts by Pattern Category",
+       subtitle = "Numbers show total genes (number of patterns)",
+       x = "Number of genes", y = "") +
+  theme_pubclean() +
+  xlim(0, max(category_summary$Total_Genes) * 1.3)
 ```
 
-## Gene-Level Pattern Assignments
+## Trajectory Heatmap
+
+```{r}
+#| label: trajectory-heatmap
+#| warning: false
+#| message: false
+#| fig-width: 8
+#| fig-height: 12
+
+# Create slope matrix for heatmap
+if(nrow(trajectory_patterns) > 10) {
+  slope_matrix <- trajectory_patterns |>
+    select(gene_id, symbol, PM_log2FoldChange, MAX_log2FoldChange, POST_log2FoldChange) |>
+    column_to_rownames("gene_id") |>
+    select(-symbol) |>
+    as.matrix()
+  
+  colnames(slope_matrix) <- c("PM", "MAX", "POST")
+  slope_matrix[is.na(slope_matrix)] <- 0
+  
+  # Limit to max 200 genes for visibility
+  if(nrow(slope_matrix) > 200) {
+    # Select genes with highest variance in slopes
+    slope_var <- apply(slope_matrix, 1, var, na.rm = TRUE)
+    top_genes <- names(sort(slope_var, decreasing = TRUE))[1:200]
+    slope_matrix <- slope_matrix[top_genes, ]
+  }
+  
+  # Create annotation for overall pattern
+  row_annot <- trajectory_patterns |>
+    filter(gene_id %in% rownames(slope_matrix)) |>
+    select(gene_id, overall_pattern) |>
+    column_to_rownames("gene_id")
+  
+  pheatmap(slope_matrix,
+           color = colorRampPalette(c("#2166AC", "white", "#B2182B"))(100),
+           breaks = seq(-3, 3, length.out = 101),
+           cluster_cols = FALSE,
+           show_rownames = FALSE,
+           main = "Developmental Slopes by Domain\n(Genes with Interactions)",
+           annotation_row = row_annot,
+           fontsize = 10)
+}
+```
+
+## Gene-Level Assignments
 
 ```{r}
 #| label: gene-assignments-table
 #| warning: false
 #| message: false
 
-gene_assignments |>
-  left_join(all_genes_palate |> select(gene_id, chromosome), by = "gene_id") |>
-  select(gene_id, symbol, chromosome, n_patterns, everything()) |>
+# Create comprehensive gene-level table
+all_genes_classified <- unique(c(
+  b6_domain_main_effects_clean$gene_id,
+  b6_stage_main_effects_clean$gene_id,
+  trajectory_patterns$gene_id
+))
+
+gene_level_summary <- tibble(gene_id = all_genes_classified) |>
+  left_join(all_genes_palate |> select(gene_id, symbol, chromosome), by = "gene_id") |>
+  mutate(
+    # Main effects
+    Has_Domain_Effect = gene_id %in% b6_domain_main_effects_clean$gene_id,
+    Has_Stage_Effect = gene_id %in% b6_stage_main_effects_clean$gene_id,
+    Has_Interaction = gene_id %in% genes_with_interaction,
+    
+    # Domain patterns
+    Domain_Pattern = case_when(
+      gene_id %in% genes_PM_highest ~ "Highest in PM",
+      gene_id %in% genes_MAX_highest ~ "Highest in MAX",
+      gene_id %in% genes_POST_highest ~ "Highest in POST",
+      gene_id %in% genes_AP_decreasing ~ "A→P decreasing",
+      gene_id %in% genes_AP_increasing ~ "A→P increasing",
+      TRUE ~ NA_character_
+    ),
+    
+    # Stage direction
+    Stage_Direction = case_when(
+      gene_id %in% genes_increasing_with_development ~ "Increasing",
+      gene_id %in% genes_decreasing_with_development ~ "Decreasing",
+      TRUE ~ NA_character_
+    )
+  ) |>
+  # Add trajectory pattern for interaction genes
+  left_join(
+    trajectory_patterns |> select(gene_id, overall_pattern, MAX_PM_pattern, POST_PM_pattern, POST_MAX_pattern),
+    by = "gene_id"
+  )
+
+gene_level_summary |>
+  select(gene_id, symbol, chromosome, Has_Domain_Effect, Has_Stage_Effect, Has_Interaction,
+         Domain_Pattern, Stage_Direction, overall_pattern) |>
   create_dt()
 ```
 
-## Over-representation analysis summary
+## Enrichment Summary
 
 ```{r}
-#| label: combined-ora-results
+#| label: all-ora-summary
 #| warning: false
 #| message: false
 
-# Collect all ORA results and combine them
+# Combine all enrichment results
 all_ora_results <- bind_rows(
-  # Domain Main Effects
+  # Domain effects
   genes_MAX_higher_than_PM_ora$result,
   genes_MAX_lower_than_PM_ora$result,
   genes_POST_higher_than_PM_ora$result,
   genes_POST_lower_than_PM_ora$result,
   genes_POST_higher_than_MAX_ora$result,
   genes_POST_lower_than_MAX_ora$result,
+  genes_PM_highest_ora$result,
   genes_MAX_highest_ora$result,
   genes_POST_highest_ora$result,
-  genes_PM_highest_ora$result,
   genes_AP_decreasing_ora$result,
   genes_AP_increasing_ora$result,
-  
-  # Stage Main Effects
-  dev_increasing_enrichment_results$result,
-  dev_decreasing_enrichment_results$result,
-  
-  # Diverging Trajectories
-  genes_MAX_div_ora$result,
-  genes_POST_div_ora$result,
-  genes_POST_div_MAX_ora$result,
-  
-  # Converging Trajectories
-  genes_MAX_conv_ora$result,
-  genes_POST_conv_ora$result,
-  genes_POST_conv_MAX_ora$result,
-  
-  # Domain-Specific Dynamics
-  genes_PM_only_up_ora$result,
-  genes_PM_only_down_ora$result,
-  genes_MAX_only_up_ora$result,
-  genes_MAX_only_down_ora$result,
-  genes_POST_only_up_ora$result,
-  genes_POST_only_down_ora$result,
-  
-  # Complex Patterns
-  genes_opposite_ora$result,
-  genes_three_way_ora$result
-) |>
-  # Add category grouping for easier filtering
-  mutate(
-    Category = case_when(
-      gene_set %in% c("MAX higher than PM", "MAX lower than PM", 
-                      "POST higher than PM", "POST lower than PM",
-                      "POST higher than MAX", "POST lower than MAX",
-                      "MAX highest", "POST highest", "PM highest",
-                      "A→P decreasing", "A→P increasing") ~ "Domain Main Effects",
-      gene_set %in% c("Increase", "Decrease") ~ "Stage Main Effects",
-      gene_set %in% c("MAX diverging from PM", "POST diverging from PM", 
-                      "POST diverging from MAX") ~ "Diverging Trajectories",
-      gene_set %in% c("MAX converging to PM", "POST converging to PM", 
-                      "POST converging to MAX") ~ "Converging Trajectories",
-      gene_set %in% c("PM only increasing", "PM only decreasing",
-                      "MAX only increasing", "MAX only decreasing",
-                      "POST only increasing", "POST only decreasing") ~ "Domain-Specific Dynamics",
-      gene_set %in% c("Opposite slopes", "Three-way divergent") ~ "Complex Patterns",
-      TRUE ~ "Other"
-    )
-  ) |>
-  # Reorder columns
-  select(Category, gene_set, source, term_id, term_name, p_value, 
-         query_size, term_size, intersection_size, intersection) |>
-  filter( p_value < 0.01) |> 
-  arrange(Category, gene_set, p_value)
-```
+  # Stage effects
+  dev_increasing_ora$result,
+  dev_decreasing_ora$result,
+  # Trajectory patterns
+  ora_MAX_up_PM_down$result,
+  ora_MAX_down_PM_up$result,
+  ora_POST_up_PM_down$result,
+  ora_POST_down_PM_up$result,
+  ora_coinc_MAX_faster$result,
+  ora_coinc_POST_faster$result,
+  # Domain-specific
+  ora_PM_only_up$result,
+  ora_PM_only_down$result,
+  ora_MAX_only_up$result,
+  ora_MAX_only_down$result,
+  ora_POST_only_up$result,
+  ora_POST_only_down$result,
+  ora_PM_MAX_up$result,
+  ora_MAX_POST_up$result,
+  ora_PM_POST_up$result,
+  # Complex
+  ora_all_increasing$result,
+  ora_all_decreasing$result,
+  ora_opposite$result,
+  ora_three_way$result
+)
 
-```{r}
-#| label: combined-ora-results-table
-#| warning: false
-#| message: false
-# Display the combined results
-all_ora_results |>
-  create_dt()
-
-# # Summary by category
-# all_ora_results |>
-#   group_by(Category, gene_set) |>
-#   summarize(
-#     n_enriched_terms = n(),
-#     .groups = "drop"
-#   ) |>
-#   arrange(Category, desc(n_enriched_terms)) |>
-#   create_dt()
-
+if(!is.null(all_ora_results) && nrow(all_ora_results) > 0) {
+  # Add category
+  all_ora_results <- all_ora_results |>
+    mutate(
+      Category = case_when(
+        gene_set %in% c("MAX higher than PM", "MAX lower than PM", 
+                        "POST higher than PM", "POST lower than PM",
+                        "POST higher than MAX", "POST lower than MAX",
+                        "PM highest", "MAX highest", "POST highest",
+                        "A→P decreasing", "A→P increasing") ~ "Domain Main Effects",
+        gene_set %in% c("Increasing", "Decreasing") ~ "Stage Main Effects",
+        gene_set %in% c("MAX↑ PM↓", "MAX↓ PM↑", "POST↑ PM↓", "POST↓ PM↑") ~ "Opposite Trajectories",
+        gene_set %in% c("Co-inc: MAX faster", "Co-inc: POST faster") ~ "Co-increasing",
+        grepl("only", gene_set) ~ "Domain-Specific",
+        grepl("\\+", gene_set) ~ "Two-Domain",
+        gene_set %in% c("All↑", "All↓", "Opposite slopes", "Three-way divergent") ~ "Complex",
+        TRUE ~ "Other"
+      )
+    ) |>
+    select(Category, gene_set, source, term_name, p_value, intersection_size, term_size) |>
+    filter(as.numeric(p_value) < 0.01) |>
+    arrange(Category, gene_set, p_value)
+  
+  all_ora_results |> create_dt()
+}
 ```
 
 :::
 
-
 # Session Info
 
 ```{r}
+#| label: session-info
+
 sessionInfo()
 ```
