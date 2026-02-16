@@ -22,6 +22,7 @@ main_patterns <- strain_effects_classified |>
   filter(main_strain_pattern != "No effect / filtered") |>
   arrange(main_strain_pval)
 
+
 genes_CAST_high_strong <- main_patterns |>
   filter(main_strain_pattern == "CAST >> B6 (strong)") |> pull(gene_id)
 genes_CAST_high_mod <- main_patterns |>
@@ -377,6 +378,12 @@ print(pattern_summary)
 # ===================================================================
 # PART 7: GENE ASSIGNMENT TABLE (add new categories)
 # ===================================================================
+
+all_strain_genes <- strain_effects_classified |>
+  filter(any_strain_sig) |>
+  select(gene_id, symbol, main_strain_lfc, main_strain_pval, 
+         main_strain_pattern, has_any_interaction,
+         domain_int_sig, time_int_sig, threeway_int_sig)
 
 gene_assignments <- all_strain_genes |>
   mutate(
