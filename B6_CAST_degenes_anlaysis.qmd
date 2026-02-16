@@ -91,8 +91,8 @@ create_dt <- function(x){
 filter_deseq_results <- function(res, 
                                   min_basemean = NULL,
                                   min_basemean_quantile = 0.1,
-                                  max_lfcse = 1.5, 
-                                  max_abs_lfc = 10, 
+                                  max_lfcse = 3, 
+                                  max_abs_lfc = 20, 
                                   min_abs_lfc = 0.5, 
                                   max_padj = 0.05) {
   
@@ -276,54 +276,104 @@ plot_main_strain_effect <- function(gene_ids, direction, count_data, n = 5) {
 }
 
 plot_domain_strain_interaction <- function(gene_ids, pattern_desc, count_data, n = 5) {
+  
   example_genes <- gene_ids[1:min(n, length(gene_ids))]
+  
   plots <- lapply(example_genes, function(gid) {
-    gene_data <- count_data |> filter(gene_id == gid) |> 
+    
+    gene_data <- count_data |> 
+      filter(gene_id == gid) |> 
       mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    
+    eff_data <- domain_patterns |> 
+      filter( gene_id == gid)
+    
     if(nrow(gene_data) == 0) return(NULL)
+    
     gene_name <- unique(gene_data$symbol)[1]
-    strain_diffs <- gene_data |> group_by(AP_domain, strain) |> 
-      summarize(mean_count = mean(count, na.rm = TRUE), .groups = "drop") |> 
-      pivot_wider(names_from = strain, values_from = mean_count) |> 
-      mutate(pct_diff = (CAST - B6) / B6 * 100)
+    
+    # strain_diffs <- gene_data |> 
+    #   group_by(AP_domain, strain) |> 
+    #   summarize(mean_count = mean(count, na.rm = TRUE), .groups = "drop") |> 
+    #   pivot_wider(names_from = strain, values_from = mean_count) |> 
+    #   mutate(pct_diff = (CAST - B6) / B6 * 100)
+    # plot the effects instead of the diff
+    
+    strain_diffs <- eff_data |> 
+      select(gene_id, symbol,
+                 strain_effect_PM, strain_effect_MAX, strain_effect_POST,
+                 strain_effect_PM_pval, strain_effect_MAX_pval, strain_effect_POST_pval) |>
+      pivot_longer(
+            cols = -c(gene_id, symbol),
+            names_to = c("AP_domain", "metric"),
+            names_pattern = "strain_effect_(PM|MAX|POST)(_pval)?$",
+            values_to = "value"
+          ) |>
+      mutate(metric = case_when(
+            is.na(metric) | metric == "" ~ "effects",
+            TRUE ~ "pvalues"
+          )) |> 
+      pivot_wider(
+            names_from = metric,
+            values_from = value
+          ) |> 
+      mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    
     p1 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = strain)) +
       geom_point(alpha = 0.4, size = 2) +
       geom_smooth(method = "loess", se = TRUE, alpha = 0.2, linewidth = 1) +
       facet_wrap(~ AP_domain, nrow = 1) +
-      scale_y_log10(labels = scales::comma) + scale_color_manual(values = strain_colors) +
+      scale_y_log10(labels = scales::comma) + 
+      scale_color_manual(values = strain_colors) +
       labs(title = gene_name, subtitle = pattern_desc, x = "LB stage (centered)", y = "Normalized Counts") +
       theme_pubclean(base_size = 16) +
       theme(legend.position = "bottom", plot.title = element_text(face = "bold"), strip.text = element_text(face = "bold"))
-    p2 <- ggplot(strain_diffs, aes(x = AP_domain, y = pct_diff, fill = AP_domain)) +
-      geom_col(alpha = 0.8) + geom_hline(yintercept = 0, linetype = "dashed") +
-      scale_fill_manual(values = domain_colors) + labs(y = "% Diff\n(CAST-B6)", x = "") +
-      theme_pubclean(base_size = 16) + theme(legend.position = "none")
+    
+    p2 <- ggplot(strain_diffs, aes(x = AP_domain, y = effects, fill = AP_domain)) +
+      geom_col(alpha = 0.8) + 
+      geom_hline(yintercept = 0, linetype = "dashed") +
+      scale_fill_manual(values = domain_colors) + 
+      labs(y = "Strain Effects (CAST vs B6)", x = "") +
+      theme_pubclean(base_size = 16) + 
+      theme(legend.position = "none")
+    
     p1 + p2 + plot_layout(widths = c(2.5, 1))
   })
+  
   plots <- plots[!sapply(plots, is.null)]
+  
   if(length(plots) == 0) return(NULL)
+  
   wrap_plots(plots, ncol = 1)
 }
 
 plot_time_strain_interaction <- function(gene_ids, pattern_desc, count_data, n = 5) {
+  
   example_genes <- gene_ids[1:min(n, length(gene_ids))]
+  
   plots <- lapply(example_genes, function(gid) {
+    
     gene_data <- count_data |> filter(gene_id == gid) |> 
       mutate(AP_domain = factor(AP_domain, levels = c("PM", "MAX", "POST")))
+    
     if(nrow(gene_data) == 0) return(NULL)
+    
     gene_name <- unique(gene_data$symbol)[1]
+    
     p1 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = strain)) +
       geom_point(aes(shape = AP_domain), alpha = 0.5, size = 2.5) +
       geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1.5) +
       scale_y_log10(labels = scales::comma) + scale_color_manual(values = strain_colors) +
       labs(title = gene_name, subtitle = pattern_desc, x = "LB stage (centered)", y = "Normalized Counts") +
       theme_pubclean(base_size = 16) + theme(legend.position = "right", plot.title = element_text(face = "bold"))
+    
     p2 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = strain)) +
       geom_point(alpha = 0.4, size = 1.5) + geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
       facet_wrap(~ AP_domain, nrow = 1) +
       scale_y_log10(labels = scales::comma) + scale_color_manual(values = strain_colors) +
       labs(x = "LB stage (centered)", y = "Normalized Counts") +
       theme_pubclean(base_size = 16) + theme(legend.position = "none", strip.text = element_text(face = "bold"))
+    
     p1 + p2 + plot_layout(nrow = 1, widths = c(1, 2.5))
   })
   plots <- plots[!sapply(plots, is.null)]
@@ -414,7 +464,7 @@ sample_annot <- sample_details |>
 #| message: false
 #| warning: false
 
-# ── Sample preparation ──────────────────────────────────────────────────────
+# ── Prep data for DESeq2 ──────────────────────────────────────────────────────
 b6_cast_samples <- sample_annot |>
   filter(strain %in% c("B6", "CAST")) |>
   separate(sample, sep = "_", into = c("s","e","d","ind","rep"), remove = FALSE) |>
@@ -454,12 +504,18 @@ strain_dds_additive <- strain_dds_coll
 design(strain_dds_additive) <- ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + strain
 strain_dds_additive <- DESeq(strain_dds_additive, parallel = TRUE)
 
-# ── LRT tests (from full model) ────────────────────────────────────────────
+# ── LRT tests  ────────────────────────────────────────────
+# These tests will get us the genes with strain and strain interaction effects.
 # Any strain effect at all
-strain_dds_lrt <- DESeq(strain_dds_coll, test = "LRT", 
-                        reduced = ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind,
+strain_dds_lrt <- DESeq(strain_dds_additive, test = "LRT", 
+                         full = ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + 
+                               strain,
+                        reduced = ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind ,
                         parallel = TRUE)
 res_any_strain <- results(strain_dds_lrt)
+genes_w_strain_eff <- res_any_strain |> 
+  as_tibble( rownames = "gene_id") |> 
+  filter( padj < 0.05 )
 
 # Domain × Strain interaction
 dds_domain_lrt <- DESeq(strain_dds_coll, test = "LRT",
@@ -470,7 +526,9 @@ dds_domain_lrt <- DESeq(strain_dds_coll, test = "LRT",
                                    strain + strain:LB_stage_from_start,
                         parallel = TRUE)
 res_domain_lrt <- results(dds_domain_lrt)
-
+genes_w_strain_by_domain_eff <- res_domain_lrt |> 
+  as_tibble( rownames = "gene_id") |> 
+  filter( padj < 0.05)
 # Time × Strain interaction
 dds_time_lrt <- DESeq(strain_dds_coll, test = "LRT",
                       full = ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + 
@@ -480,7 +538,9 @@ dds_time_lrt <- DESeq(strain_dds_coll, test = "LRT",
                                  strain + strain:AP_domain,
                       parallel = TRUE)
 res_time_lrt <- results(dds_time_lrt)
-
+genes_w_strain_by_time_eff <- res_time_lrt |> 
+  as_tibble( rownames = "gene_id") |> 
+  filter( padj < 0.05)
 # Three-way interaction (domain × time × strain)
 dds_3way_lrt <- DESeq(strain_dds_coll, test = "LRT",
                       full = ~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + 
@@ -490,76 +550,88 @@ dds_3way_lrt <- DESeq(strain_dds_coll, test = "LRT",
                                  strain + strain:AP_domain + strain:LB_stage_from_start,
                       parallel = TRUE)
 res_3way_lrt <- results(dds_3way_lrt)
-
+genes_w_3way_eff <- res_3way_lrt |> 
+  as_tibble( rownames = "gene_id") |> 
+  filter( padj < 0.05)
 # ── Extract main strain effect (additive model) ────────────────────────────
-res_strain_main <- results(strain_dds_additive, name = "strain_CAST_vs_B6")
+res_strain_main <- results(strain_dds_additive, name = "strain_CAST_vs_B6") 
 
 # ── Extract interaction effects (full model) ───────────────────────────────
 # Domain × strain interaction coefficients (how CAST effect in MAX/POST differs from PM)
-res_domain_int_MAX <- results(strain_dds_full, name = "AP_domainMAX.strainCAST")
+res_domain_int_MAX <- results(strain_dds_full, name = "AP_domainMAX.strainCAST") 
 res_domain_int_POST <- results(strain_dds_full, name = "AP_domainPOST.strainCAST")
 
 # Time × strain interaction (change in log2FC per unit developmental time)
-res_time_int <- results(strain_dds_full, name = "LB_stage_from_start.strainCAST")
+res_time_int <- results(strain_dds_full, name = "LB_stage_from_start.strainCAST") 
 
 # Three-way interaction coefficients (how temporal slope differs by domain)
-res_3way_MAX <- results(strain_dds_full, name = "AP_domainMAX.LB_stage_from_start.strainCAST")
-res_3way_POST <- results(strain_dds_full, name = "AP_domainPOST.LB_stage_from_start.strainCAST")
+res_3way_MAX <- results(strain_dds_full, name = "AP_domainMAX.LB_stage_from_start.strainCAST") 
+res_3way_POST <- results(strain_dds_full, name = "AP_domainPOST.LB_stage_from_start.strainCAST") 
 
 # ── Extract domain-specific strain effects (full model contrasts) ──────────
 # Strain effect in PM = strain coefficient from full model (PM is reference, time=0)
-res_strain_PM <- results(strain_dds_full, name = "strain_CAST_vs_B6")
-
+res_strain_PM <- results(strain_dds_full, name = "strain_CAST_vs_B6") 
 # Strain effect in MAX = main + strainCAST:AP_domainMAX
 res_strain_MAX <- results(strain_dds_full,
-                          contrast = list(c("strain_CAST_vs_B6", "AP_domainMAX.strainCAST")))
-
+                          contrast = list(c("strain_CAST_vs_B6", "AP_domainMAX.strainCAST"))) 
 # Strain effect in POST = main + strainCAST:AP_domainPOST  
 res_strain_POST <- results(strain_dds_full,
-                           contrast = list(c("strain_CAST_vs_B6", "AP_domainPOST.strainCAST")))
+                           contrast = list(c("strain_CAST_vs_B6", "AP_domainPOST.strainCAST"))) 
 
-# ── Identify genes with any significant interactions ───────────────────────
-# Used to filter main strain effect to only genes with consistent effects
-genes_with_domain_int <- rownames(res_domain_lrt)[which(res_domain_lrt$padj < 0.05)]
-genes_with_time_int <- rownames(res_time_lrt)[which(res_time_lrt$padj < 0.05)]
-genes_with_any_interaction <- unique(c(genes_with_domain_int, genes_with_time_int))
 
-# ── Apply quality filters ──────────────────────────────────────────────────
-# Main strain effect: from additive model, excluding genes with interactions
-res_strain_main_filtered <- filter_deseq_results(res_strain_main) |>
-  filter(!gene_id %in% genes_with_any_interaction)
+# ── Extract time-specific strain effects (full model contrasts) ──────────
+# Note: Since time is a continuous variable I can't get an overall effect like I do with the domains. That is why I am only going to use the interaction term.
+
+
+# ── Apply quality & LRT filters ──────────────────────────────────────────────────
+# Main strain effect: from additive model, including genes with interactions
+res_strain_main_filtered <- filter_deseq_results(res_strain_main) |> 
+  filter(gene_id %in% genes_w_strain_eff$gene_id)
 genes_main_strain_pass <- res_strain_main_filtered$gene_id
 
 # Strain effect in each domain (from full model)
-res_strain_PM_filtered <- filter_deseq_results(res_strain_PM)
-res_strain_MAX_filtered <- filter_deseq_results(res_strain_MAX)
-res_strain_POST_filtered <- filter_deseq_results(res_strain_POST)
+res_strain_PM_filtered <- filter_deseq_results(res_strain_PM) |> 
+  filter( gene_id %in% genes_w_strain_by_domain_eff$gene_id)
+res_strain_MAX_filtered <- filter_deseq_results(res_strain_MAX) |> 
+  filter( gene_id %in% genes_w_strain_by_domain_eff$gene_id)
+res_strain_POST_filtered <- filter_deseq_results(res_strain_POST) |> 
+  filter( gene_id %in% genes_w_strain_by_domain_eff$gene_id)
 
 genes_strain_PM_pass <- res_strain_PM_filtered$gene_id
 genes_strain_MAX_pass <- res_strain_MAX_filtered$gene_id
 genes_strain_POST_pass <- res_strain_POST_filtered$gene_id
 
 # Domain × strain interaction coefficients (differences from PM)
-res_domain_int_MAX_filtered <- filter_deseq_results(res_domain_int_MAX, min_abs_lfc = 0.3)
-res_domain_int_POST_filtered <- filter_deseq_results(res_domain_int_POST, min_abs_lfc = 0.3)
+res_domain_int_MAX_filtered <- filter_deseq_results(res_domain_int_MAX, min_abs_lfc = 0.3) |> 
+  filter( gene_id %in% genes_w_strain_by_domain_eff$gene_id)
+res_domain_int_POST_filtered <- filter_deseq_results(res_domain_int_POST, min_abs_lfc = 0.3) |> 
+  filter( gene_id %in% genes_w_strain_by_domain_eff$gene_id)
 
 genes_domain_int_MAX_pass <- res_domain_int_MAX_filtered$gene_id
 genes_domain_int_POST_pass <- res_domain_int_POST_filtered$gene_id
 
 # Time × strain interaction (slope — different scale)
-res_time_int_filtered <- filter_deseq_results(res_time_int, min_abs_lfc = 0.1, max_lfcse = 0.5)
+res_time_int_filtered <- filter_deseq_results(res_time_int, min_abs_lfc = 0.1, max_lfcse = 0.5) |> 
+  filter( gene_id %in% genes_w_strain_by_time_eff$gene_id)
 genes_time_int_pass <- res_time_int_filtered$gene_id
 
 # Three-way coefficients
-res_3way_MAX_filtered <- filter_deseq_results(res_3way_MAX, min_abs_lfc = 0.1, max_lfcse = 0.5)
-res_3way_POST_filtered <- filter_deseq_results(res_3way_POST, min_abs_lfc = 0.1, max_lfcse = 0.5)
+res_3way_MAX_filtered <- filter_deseq_results(res_3way_MAX, min_abs_lfc = 0.1, max_lfcse = 0.5) |> 
+  filter( gene_id %in% genes_w_3way_eff$gene_id)
+res_3way_POST_filtered <- filter_deseq_results(res_3way_POST, min_abs_lfc = 0.1, max_lfcse = 0.5) |> 
+  filter( gene_id %in% genes_w_3way_eff$gene_id)
 
 genes_3way_MAX_pass <- res_3way_MAX_filtered$gene_id
 genes_3way_POST_pass <- res_3way_POST_filtered$gene_id
 
+
+genes_with_any_interaction <- unique( c(genes_w_strain_by_time_eff$gene_id,
+                                     genes_w_strain_by_domain_eff$gene_id,
+                                     genes_w_3way_eff$gene_id)
+                                     )
 # ── Filter summary ─────────────────────────────────────────────────────────
 filter_summary <- tibble(
-  Result = c("Main strain effect (additive, no interactions)",
+  Result = c("Main strain effect (additive model)",
              "Strain in PM", "Strain in MAX", "Strain in POST",
              "Domain int (MAX)", "Domain int (POST)", "Time int", 
              "3-way (MAX)", "3-way (POST)"),
@@ -571,7 +643,7 @@ filter_summary <- tibble(
                      length(genes_domain_int_MAX_pass), length(genes_domain_int_POST_pass),
                      length(genes_time_int_pass), length(genes_3way_MAX_pass),
                      length(genes_3way_POST_pass)),
-  Notes = c(paste0("Excludes ", length(genes_with_any_interaction), " genes with domain or time interactions"),
+ Notes = c(paste0("Includes ", length(genes_with_any_interaction), " genes with domain, time, or three-way interactions"),
             rep("From full model", 3),
             rep("Interaction coefficient", 2),
             "Slope coefficient", rep("Three-way coefficient", 2))
@@ -582,8 +654,8 @@ strain_effects_classified <- tibble::tibble(
   gene_id = rownames(res_any_strain),
   baseMean = res_any_strain$baseMean,
   
-  # LRT significance
-  any_strain_sig = res_any_strain$padj < 0.05,
+  # LRT significance T/F
+  any_strain_sig = res_any_strain$padj < 0.05, 
   domain_int_sig = res_domain_lrt$padj < 0.05,
   time_int_sig = res_time_lrt$padj < 0.05,
   threeway_int_sig = res_3way_lrt$padj < 0.05,
@@ -652,18 +724,17 @@ strain_effects_classified <- tibble::tibble(
   )) |>
   dplyr::left_join(all_genes_palate |> dplyr::select(gene_id, symbol, gene_biotype), by = "gene_id") |>
   dplyr::mutate(
-    # Overall filter: significant LRT, passes QC, and NO interactions
-    passes_strain_filter = any_strain_sig & main_strain_pass & !has_any_interaction,
+    # Overall filter: significant strain LRT, passes QC
+    passes_strain_filter = any_strain_sig & main_strain_pass, #& !has_any_interaction,
     
-    # Main strain pattern (only for genes with consistent strain effect)
+    # Main strain pattern
     # Note: min_abs_lfc = 0.5 filter ensures no genes fall below 0.5
     main_strain_pattern = dplyr::case_when(
       !passes_strain_filter ~ "No effect / filtered",
       main_strain_lfc > 1 ~ "CAST >> B6 (strong)",
       main_strain_lfc > 0.5 ~ "CAST > B6 (moderate)",
       main_strain_lfc < -1 ~ "B6 >> CAST (strong)",
-      main_strain_lfc < -0.5 ~ "B6 > CAST (moderate)",
-      TRUE ~ "No effect / filtered"
+      main_strain_lfc < -0.5 ~ "B6 > CAST (moderate)"
     ),
     
     # Domain with largest strain effect (only for genes WITH domain interaction)
@@ -672,18 +743,20 @@ strain_effects_classified <- tibble::tibble(
       is.na(strain_effect_PM) | is.na(strain_effect_MAX) | is.na(strain_effect_POST) ~ NA_character_,
       abs(strain_effect_PM) >= abs(strain_effect_MAX) & 
         abs(strain_effect_PM) >= abs(strain_effect_POST) ~ "PM",
-      abs(strain_effect_MAX) >= abs(strain_effect_POST) ~ "MAX",
-      TRUE ~ "POST"
+      abs(strain_effect_MAX) >= abs(strain_effect_POST) & 
+        abs(strain_effect_MAX) >= abs(strain_effect_PM) ~ "MAX",
+      abs(strain_effect_POST) >= abs(strain_effect_MAX) & 
+        abs(strain_effect_POST) >= abs(strain_effect_PM) ~ "POST"
     ),
     
     max_domain_direction = dplyr::case_when(
       is.na(max_domain_effect) ~ NA_character_,
       max_domain_effect == "PM" & strain_effect_PM > 0 ~ "PM: CAST > B6",
-      max_domain_effect == "PM" ~ "PM: B6 > CAST",
+      max_domain_effect == "PM" & strain_effect_PM < 0 ~ "PM: B6 > CAST",
       max_domain_effect == "MAX" & strain_effect_MAX > 0 ~ "MAX: CAST > B6",
-      max_domain_effect == "MAX" ~ "MAX: B6 > CAST",
+      max_domain_effect == "MAX" & strain_effect_MAX < 0 ~ "MAX: B6 > CAST",
       max_domain_effect == "POST" & strain_effect_POST > 0 ~ "POST: CAST > B6",
-      TRUE ~ "POST: B6 > CAST"
+      max_domain_effect == "POST" & strain_effect_POST < 0 ~ "POST: B6 > CAST"
     ),
     
     domain_consistency = dplyr::case_when(
@@ -697,19 +770,19 @@ strain_effects_classified <- tibble::tibble(
       !time_int_sig ~ "No time interaction",
       !time_int_pass ~ "Filtered",
       is.na(time_int_slope) ~ NA_character_,
-      time_int_slope > 0.1 ~ "Diverging (CAST faster)",
-      time_int_slope < -0.1 ~ "Diverging (B6 faster)",
-      TRUE ~ "Parallel"
+      time_int_slope > 0.1 ~ "Diverging (CAST changing faster than B6)",
+      time_int_slope < -0.1 ~ "Diverging (B6 changing faster than CAST)",
+      TRUE ~ "Parallel - Both changing similarly over time"
     ),
     
     # Overall pattern type — now mutually exclusive by construction
     pattern_type = dplyr::case_when(
       !any_strain_sig ~ "No strain effect",
+      main_strain_pass ~ "Main strain effect only",
       threeway_int_sig ~ "Three-way interaction",
       domain_int_sig & time_int_sig ~ "Domain + Time interactions",
       domain_int_sig ~ "Domain × Strain interaction",
       time_int_sig ~ "Time × Strain interaction",
-      main_strain_pass ~ "Main strain effect only",
       TRUE ~ "Filtered (QC)"
     )
   )
@@ -718,6 +791,9 @@ strain_effects_classified <- tibble::tibble(
 strain_effects_filtered <- strain_effects_classified |>
   filter(passes_strain_filter)
 
+
+# # source the pattern identification script
+# source("DEgene_pattern_identification_CAST_B6.R")
 # ── Load pattern classification results ────────────────────────────────────
 pattern_summary <- read_csv(here("strain_pattern_summary.csv"))
 main_patterns <- read_csv(here("main_strain_effect_patterns.csv"))
@@ -728,7 +804,8 @@ domain_specificity <- read_csv(here("domain_specificity_patterns.csv"))
 gene_assignments <- read_csv(here("strain_gene_pattern_assignments.csv"))
 
 # ── Extract gene lists ─────────────────────────────────────────────────────
-# Main strain effects (consistent across domains and time)
+
+# Main strain effects (from additive model - average across contexts)
 genes_CAST_high_strong <- main_patterns |>
   filter(main_strain_pattern == "CAST >> B6 (strong)") |> pull(gene_id)
 genes_CAST_high_mod <- main_patterns |>
@@ -737,8 +814,10 @@ genes_B6_high_strong <- main_patterns |>
   filter(main_strain_pattern == "B6 >> CAST (strong)") |> pull(gene_id)
 genes_B6_high_mod <- main_patterns |>
   filter(main_strain_pattern == "B6 > CAST (moderate)") |> pull(gene_id)
+genes_main_only <- main_patterns |>
+  filter(!has_any_interaction) |> pull(gene_id)
 
-# Domain × strain patterns
+# Domain × strain patterns (spatial differences)
 genes_PM_biggest_effect <- domain_patterns |>
   filter(max_domain_effect == "PM") |> pull(gene_id)
 genes_MAX_biggest_effect <- domain_patterns |>
@@ -748,23 +827,37 @@ genes_POST_biggest_effect <- domain_patterns |>
 genes_opposite_directions <- domain_patterns |>
   filter(domain_consistency == "Variable") |> pull(gene_id)
 
-# Time × strain patterns
+# Domain × strain: temporal stability
+genes_domain_static <- domain_patterns |>
+  filter(temporal_stability == "Static: Domain pattern stable over time") |> pull(gene_id)
+genes_domain_time_affected <- domain_patterns |>
+  filter(temporal_stability == "Dynamic: Main time effect present, domain pattern may shift") |> pull(gene_id)
+genes_domain_time_varying <- domain_patterns |>
+  filter(temporal_stability == "Dynamic: Domain pattern changes over time (3-way)") |> pull(gene_id)
+
+# Time × strain patterns (temporal dynamics)
 genes_diverging_CAST_faster <- time_patterns |>
-  filter(time_int_slope > 0.1) |> pull(gene_id)
+  filter(base_slope > 0.1) |> pull(gene_id)
 genes_diverging_B6_faster <- time_patterns |>
-  filter(time_int_slope < -0.1) |> pull(gene_id)
+  filter(base_slope < -0.1) |> pull(gene_id)
 
-# Three-way patterns
-genes_PM_biggest_slope_diff <- threeway_patterns |>
-  filter(max_slope_diff_domain == "PM") |> pull(gene_id)
-genes_MAX_biggest_slope_diff <- threeway_patterns |>
-  filter(max_slope_diff_domain == "MAX") |> pull(gene_id)
-genes_POST_biggest_slope_diff <- threeway_patterns |>
-  filter(max_slope_diff_domain == "POST") |> pull(gene_id)
-genes_consistent_slopes <- threeway_patterns |>
-  filter(slope_consistency == "Consistent") |> pull(gene_id)
+# Time × strain: spatial uniformity
+genes_time_uniform <- time_patterns |>
+  filter(spatial_pattern == "Uniform: Same temporal dynamics across all domains") |> pull(gene_id)
+genes_time_domain_affected <- time_patterns |>
+  filter(spatial_pattern == "Domain-affected: Domains differ at t=0, parallel trajectories") |> pull(gene_id)
+genes_time_domain_specific <- time_patterns |>
+  filter(spatial_pattern == "Domain-specific: Different temporal dynamics across domains") |> pull(gene_id)
 
-# Domain specificity
+# Three-way patterns (domain-specific temporal dynamics)
+genes_threeway_complex <- threeway_patterns |>
+  filter(str_detect(pattern_type, "Complex")) |> pull(gene_id)
+genes_threeway_initial <- threeway_patterns |>
+  filter(str_detect(pattern_type, "Primarily initial")) |> pull(gene_id)
+genes_threeway_dynamic <- threeway_patterns |>
+  filter(str_detect(pattern_type, "Primarily dynamic")) |> pull(gene_id)
+
+# Domain specificity (which domains show effects at t=0)
 genes_strain_PM_only <- domain_specificity |>
   filter(specificity_pattern == "PM only") |> pull(gene_id)
 genes_strain_MAX_only <- domain_specificity |>
@@ -774,36 +867,66 @@ genes_strain_POST_only <- domain_specificity |>
 genes_strain_all_domains <- domain_specificity |>
   filter(specificity_pattern == "All domains") |> pull(gene_id)
 
+# Domain specificity: temporal stability
+genes_strain_domain_specific_static <- domain_specificity |>
+  filter(!has_time_int & specificity_pattern != "All domains" & 
+         specificity_pattern != "None (filtered)") |> pull(gene_id)
+genes_strain_domain_specific_dynamic <- domain_specificity |>
+  filter(has_time_int & specificity_pattern != "All domains" & 
+         specificity_pattern != "None (filtered)") |> pull(gene_id)
+
 # ── Pre-compute VST for plotting ──────────────────────────────────────────
 vsd_global <- vst(strain_dds_full, blind = FALSE)
 ```
 
 This analysis investigates how gene expression differs between B6 and CAST mouse strains across three palate domains (PM, MAX, POST) and developmental time. We use a statistical model that decomposes strain effects into:
  
-- **Main strain effect**: Average CAST vs B6 difference 
+- **Main strain effect**: Average CAST vs B6 difference, consistent across domains and time
 - **Domain × Strain interaction**: How strain effect differs between domains
 - **Time × Strain interaction**: How strain effect changes per unit developmental time
 - **Three-way interaction**: Domain-specific changes in temporal strain dynamics
 
-Briefly, I merge the technical replicates due to re-sequencing of several samples using `collapseReplicates()` function from DESeq2. Next, I calculate the relative or centered limb bud (LB) stage (LB_stage_from_start), where I subtract the minimum observed stage so that 0 represents the earliest developmental timepoint in the dataset. Then, I use likelihood ratio test (LRT) to compare the linear model that lacks strain effects (`~ sex + AP_domain + LB_stage_from_start + AP_domain:ind`) to the full model (`~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + strain + strain:AP_domain + strain:LB_stage_from_start + strain:AP_domain:LB_stage_from_start`) that includes strain and strain interaction effects with domain and developmental time. I run separate LRT tests to identify genes with significant domain × strain interactions (removing `strain:AP_domain` terms from the full model) and time × strain interactions (removing `strain:LB_stage_from_start` terms) and three-way interactions (removing `strain:AP_domain:LB_stage_from_start` terms).
 
-The LRT tests identify **which** genes have significant effects but do not provide the actual effect sizes. To get the magnitude and direction of effects, I extract coefficients from the fitted full model using Wald tests. The main strain effect (`strain_CAST_vs_B6`) represents the CAST vs B6 log2 fold change in the reference domain (PM) at developmental time = 0. The domain interaction coefficients (`strainCAST.AP_domainMAX` and `strainCAST.AP_domainPOST`) tell us how much the strain effect differs in MAX and POST compared to PM. To get the actual strain effect within each domain, I use contrasts that combine the main effect with the appropriate interaction term (e.g., for MAX: `strain_CAST_vs_B6 + strainCAST.AP_domainMAX`). Similarly, the time interaction coefficient (`strainCAST.LB_stage_from_start`) represents the change in log2FC(CAST/B6) per unit of developmental time, and the three-way coefficients indicate how this temporal slope differs by domain.
+**Sample preparation and model fitting**
 
-From this analysis, I have identified **`r sum(strain_effects_classified$any_strain_sig, na.rm = TRUE)`** genes with significant strain effects (padj < 0.05). I then apply quality filters to each result object individually, removing genes with low expression (baseMean below 10th percentile), high uncertainty (lfcSE ≥ 1.5 for effect estimates, ≥ 0.5 for slopes), unrealistically large effects (|log2FC| ≥ 10), or very small effects (thresholds vary by coefficient type). This per-result filtering ensures that each effect estimate meets quality standards appropriate for its scale. After filtering the main strain effect, **`r nrow(strain_effects_filtered)`** high-confidence genes remain. I use the `DEgene_pattern_identification_CAST_B6.R` script to classify these differentially expressed genes into various expression patterns based on the model coefficients: main strain effects (CAST vs B6 direction and magnitude), domain-specific patterns (which domain shows the largest effect, whether effects are consistent across domains), temporal patterns (diverging vs parallel trajectories), and domain specificity (which specific domains show significant strain differences).
+I merge technical replicates arising from re-sequencing of several samples using the `collapseReplicates()` function from DESeq2. I then calculate the relative or centered limb bud (LB) stage (`LB_stage_from_start`) by subtracting the minimum observed stage so that 0 represents the earliest developmental timepoint in the dataset.
 
-```{r}
-#| label: overview-summary
-#| message: false
-#| warning: false
-#| eval: false
+I fit two models. The **full interaction model** (`~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + strain + strain:AP_domain + strain:LB_stage_from_start + strain:AP_domain:LB_stage_from_start`) includes strain and all its interactions with domain and developmental time, and is used to extract interaction coefficients and domain-specific strain effects. A separate **additive model** (`~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + strain`) without strain interaction terms is used to estimate the marginal (average) strain effect, representing the overall CAST vs B6 log2 fold change averaged across all domains and developmental timepoints. In the full interaction model, the `strain_CAST_vs_B6` coefficient would instead represent the strain effect conditional on the reference domain (PM) at time = 0, which is not the quantity of interest for genes with consistent effects.
 
-strain_effects_filtered |>
-  filter(any_strain_sig) |>
-  count(pattern_type) |>
-  arrange(desc(n)) |>
-  rename(`Pattern Type` = pattern_type, `Number of Genes` = n) |>
-  create_dt()
-```
+**Identifying significant effects with LRT**
+
+I use likelihood ratio tests (LRT) to identify genes with significant strain-related effects. The overall strain LRT compares the full model to a reduced model lacking all strain terms (`~ sex + AP_domain + LB_stage_from_start + AP_domain:ind`). Separate LRT tests identify genes with significant domain × strain interactions (removing `strain:AP_domain` and `strain:AP_domain:LB_stage_from_start` terms), time × strain interactions (removing `strain:LB_stage_from_start` and `strain:AP_domain:LB_stage_from_start` terms), and three-way interactions (removing only `strain:AP_domain:LB_stage_from_start` terms).
+
+**Extracting effect sizes**
+
+The LRT tests identify **which** genes have significant effects but do not provide effect sizes. To get the magnitude and direction of effects, I extract coefficients using Wald tests:
+
+- **Main strain effect**: From the additive model — represents the average CAST vs B6 log2 fold change.
+- **Domain-specific strain effects**: From the full model using contrasts. The strain effect in PM is the `strain_CAST_vs_B6` coefficient (PM is the reference level at time = 0). The strain effect in MAX combines the main effect with the `strainCAST:AP_domainMAX` interaction term, and similarly for POST.
+- **Domain interaction coefficients**: From the full model — `strainCAST:AP_domainMAX` and `strainCAST:AP_domainPOST` indicate how much the strain effect in MAX and POST differs from PM.
+- **Time interaction coefficient**: From the full model — `strainCAST:LB_stage_from_start` represents the change in log2FC(CAST/B6) per unit of developmental time.
+- **Three-way coefficients**: From the full model — indicate how the temporal slope of the strain effect differs by domain.
+
+**Quality filtering**
+
+I apply quality filters to each result object individually, removing genes with low expression (baseMean below the 10th percentile), high uncertainty (lfcSE ≥ 1.5 for effect estimates, ≥ 0.5 for slope coefficients), unrealistically large effects (|log2FC| ≥ 10), or very small effects (|log2FC| < 0.5 for main effects, < 0.3 for interaction coefficients, < 0.1 for slope coefficients). This per-result filtering ensures that each effect estimate meets quality standards appropriate for its scale.
+
+**Results summary**
+
+From this analysis, I have identified **`r sum(strain_effects_classified$any_strain_sig, na.rm = TRUE)`** genes with significant strain effects (padj < 0.05). Of these, **`r nrow(strain_effects_filtered)`** have a main strain effect — they pass quality filters on the additive model's strain coefficient and the strain effect LRT. These significant genes are further classified into interaction categories based on their LRT results.
+
+**Pattern classification**
+
+I use the `DEgene_pattern_identification_CAST_B6.R` script to classify differentially expressed genes into expression pattern categories. The classification is hierarchical: genes are first separated into those with consistent effects versus those with interactions, and interaction genes are further sub-classified by the nature of their interaction.
+
+**Domain × Strain interaction patterns** are assigned to genes with a significant domain × strain LRT (padj < 0.05) and at least one domain interaction coefficient that passes quality filters. These genes are classified by which domain shows the largest strain effect magnitude (PM, MAX, or POST) and whether the strain effect direction is consistent or variable across domains. A subset of particular interest are genes with opposite directions — where the strain effect reverses sign between domains. Additionally, these patterns are characterized by their **temporal stability**: (1) Static patterns show stable domain differences throughout development (no time or three-way interactions); (2) Time-affected patterns may shift as both strains change over time (time interaction present, but no three-way interaction); (3) Time-varying patterns actively change their spatial structure during development (three-way interaction significant).
+
+**Domain specificity patterns** further characterize domain × strain interaction genes by identifying which specific domains show significant and well-estimated strain effects at t=0: PM only, MAX only, POST only, pairwise combinations, or all three domains. These patterns are additionally flagged as **temporally static** (no time or three-way interactions — domain specificity remains constant throughout development) or **temporally dynamic** (time or three-way interactions present — domain specificity pattern evolves during development).
+
+**Time × Strain interaction patterns** are assigned to genes with a significant time × strain LRT and a time interaction slope that passes quality filters. These are classified as diverging with CAST increasing faster (positive slope > 0.1), diverging with B6 increasing faster (negative slope < -0.1), or parallel/weak. Strong divergence (|slope| > 0.2) is distinguished from moderate divergence. Additionally, these patterns are characterized by their **spatial uniformity**: (1) Uniform patterns show the same temporal dynamics across all domains (no domain or three-way interactions); (2) Domain-affected patterns have domains that differ at t=0 but show parallel temporal trajectories (domain interaction present, no three-way interaction); (3) Domain-specific patterns show different temporal dynamics in different domains (three-way interaction present).
+
+**Three-way interaction patterns** are assigned to genes with a significant three-way LRT and at least one three-way coefficient passing quality filters. The domain-specific temporal slopes are reconstructed by combining the base time × strain slope with the three-way adjustments. These genes are classified based on **whether domains differ primarily in their initial state (t=0), their temporal dynamics (slopes), or both**: (1) Complex patterns show substantial differences across both initial effects and temporal trajectories; (2) Primarily initial patterns have domains that differ at t=0 but follow similar temporal trajectories; (3) Primarily dynamic patterns start similar but diverge over time with domain-specific slopes. Within each pattern type, genes are further characterized by which domain is most distinct when considering both initial state and temporal dynamics combined.
+
 
 ```{r}
 #| label: pattern-summary-table
@@ -816,7 +939,7 @@ pattern_summary |>
 
 # Main Strain Effects
 
-These genes show consistent expression differences between CAST and B6. The log2FC values represent the CAST vs B6 effect estimated from the model.
+These genes show consistent expression differences between CAST and B6. The log2FC values represent the CAST vs B6 effect estimated from the model. 
 
 :::: {#main-strain-tabs .panel-tabset .nav-pills}
 
@@ -869,9 +992,13 @@ genes_CAST_high_strong_ora <- run_enrichment_hybrid(genes_CAST_high_strong,
 #| message: false
 #| warning: false
 
-genes_CAST_high_strong_ora$result |> 
-  filter( p_value < 0.01) |> 
-  create_dt()
+if (!is.null(genes_CAST_high_strong_ora) && !is.null(genes_CAST_high_strong_ora$result)) {
+  genes_CAST_high_strong_ora$result |> 
+    filter(p_value < 0.01) |> 
+    create_dt()
+} else {
+  cat("No significant enrichment results found.")
+}
 
 ```
 
@@ -928,9 +1055,13 @@ genes_CAST_high_mod_ora <- run_enrichment_hybrid(genes_CAST_high_mod,
 #| message: false
 #| warning: false
 
-genes_CAST_high_mod_ora$result |> 
-  filter( p_value < 0.01) |> 
-  create_dt()
+if (!is.null(genes_CAST_high_mod_ora) && !is.null(genes_CAST_high_mod_ora$result)) {
+  genes_CAST_high_mod_ora$result |> 
+    filter(p_value < 0.01) |> 
+    create_dt()
+} else {
+  cat("No significant enrichment results found.")
+}
 
 ```
 
@@ -986,9 +1117,13 @@ genes_B6_high_strong_ora <- run_enrichment_hybrid(genes_B6_high_strong,
 #| warning: false
 
 
-genes_B6_high_strong_ora$result |> 
-  filter( p_value < 0.01) |> 
-  create_dt()
+if (!is.null(genes_B6_high_strong_ora) && !is.null(genes_B6_high_strong_ora$result)) {
+  genes_B6_high_strong_ora$result |> 
+    filter(p_value < 0.01) |> 
+    create_dt()
+} else {
+  cat("No significant enrichment results found.")
+}
 
 ```
 
@@ -1040,9 +1175,13 @@ genes_B6_high_mod_ora <- run_enrichment_hybrid(genes_B6_high_mod,
 #| message: false
 #| warning: false
 
-genes_B6_high_mod_ora$result |> 
-  filter( p_value < 0.01) |> 
-  create_dt()
+if (!is.null(genes_B6_high_mod_ora) && !is.null(genes_B6_high_mod_ora$result)) {
+  genes_B6_high_mod_ora$result |> 
+    filter(p_value < 0.01) |> 
+    create_dt()
+} else {
+  cat("No significant enrichment results found.")
+}
   
 ```
 
@@ -1085,21 +1224,18 @@ plot_domain_strain_interaction(genes_PM_biggest_effect, "Biggest strain effect i
 
 ```
 
-
 ```{r}
 #| label: domain-PM-biggest-table
 #| message: false
 #| warning: false
 
-
 domain_patterns |> 
   filter(gene_id %in% genes_PM_biggest_effect) |>
-  select(gene_id,symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
-           domain_int_MAX_lfc, domain_int_POST_lfc, max_domain_direction) |> 
+  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
+         domain_int_MAX_lfc, domain_int_POST_lfc, max_domain_direction, temporal_stability) |> 
   create_dt()
 
 ```
-
 
 ```{r}
 #| label: domain-PM-biggest-ora
@@ -1134,13 +1270,16 @@ genes_PM_biggest_effect_ora_down <- run_enrichment_hybrid(
 #| message: false
 #| warning: false
 
+combined <- bind_rows(
+  if (!is.null(genes_PM_biggest_effect_ora_up$result)) genes_PM_biggest_effect_ora_up$result,
+  if (!is.null(genes_PM_biggest_effect_ora_down$result)) genes_PM_biggest_effect_ora_down$result
+)
 
-genes_PM_biggest_effect_ora_up$result |> 
-  rbind(
-    genes_PM_biggest_effect_ora_down$result
-  ) |> 
-  filter(p_value < 0.01) |> 
-  create_dt()
+if (!is.null(combined) && nrow(combined) > 0) {
+  combined |> 
+    filter(p_value < 0.01) |> 
+    create_dt()
+}
   
 ```
 
@@ -1165,15 +1304,13 @@ plot_domain_strain_interaction(genes_MAX_biggest_effect, "Biggest strain effect 
 #| message: false
 #| warning: false
 
-
 domain_patterns |> 
   filter(gene_id %in% genes_MAX_biggest_effect) |>
-    select(gene_id,symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
-           domain_int_MAX_lfc, domain_int_POST_lfc, max_domain_direction) |> 
+  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
+         domain_int_MAX_lfc, domain_int_POST_lfc, max_domain_direction, temporal_stability) |> 
   create_dt()
 
 ```
-
 
 ```{r}
 #| label: domain-MAX-biggest-ora
@@ -1203,21 +1340,23 @@ genes_MAX_biggest_effect_ora_down <- run_enrichment_hybrid(
   
 ```
 
-
 ```{r}
 #| label: domain-MAX-biggest-ora-table
 #| message: false
 #| warning: false
 
-genes_MAX_biggest_effect_ora_up$result |> 
-  rbind( 
-    genes_MAX_biggest_effect_ora_down$result 
-    ) |> 
-  filter(p_value < 0.01) |> 
-  create_dt()
+combined <- bind_rows(
+  if (!is.null(genes_MAX_biggest_effect_ora_up$result)) genes_MAX_biggest_effect_ora_up$result,
+  if (!is.null(genes_MAX_biggest_effect_ora_down$result)) genes_MAX_biggest_effect_ora_down$result
+)
+
+if (!is.null(combined) && nrow(combined) > 0) {
+  combined |> 
+    filter(p_value < 0.01) |> 
+    create_dt()
+}
   
 ```
-
 
 ## POST: Biggest Effect
 
@@ -1235,17 +1374,15 @@ plot_domain_strain_interaction(genes_POST_biggest_effect, "Biggest strain effect
 
 ```
 
-
 ```{r}
 #| label: domain-POST-biggest-table
 #| message: false
 #| warning: false
 
-
 domain_patterns |> 
   filter(gene_id %in% genes_POST_biggest_effect) |>
-    select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
-           domain_int_MAX_lfc, domain_int_POST_lfc, max_domain_direction) |> 
+  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
+         domain_int_MAX_lfc, domain_int_POST_lfc, max_domain_direction, temporal_stability) |> 
   create_dt()
 
 ```
@@ -1283,12 +1420,16 @@ genes_POST_biggest_effect_ora_down <- run_enrichment_hybrid(
 #| message: false
 #| warning: false
 
-genes_POST_biggest_effect_ora_up$result |> 
-  rbind(
-    genes_POST_biggest_effect_ora_down$result
-  ) |> 
-  filter(p_value < 0.01) |> 
-  create_dt()
+combined <- bind_rows(
+  if (!is.null(genes_POST_biggest_effect_ora_up$result)) genes_POST_biggest_effect_ora_up$result,
+  if (!is.null(genes_POST_biggest_effect_ora_down$result)) genes_POST_biggest_effect_ora_down$result
+)
+
+if (!is.null(combined) && nrow(combined) > 0) {
+  combined |> 
+    filter(p_value < 0.01) |> 
+    create_dt()
+}
 
 ```
 
@@ -1313,10 +1454,10 @@ plot_domain_strain_interaction(genes_opposite_directions, "Opposite directions a
 #| message: false
 #| warning: false
 
-
 domain_patterns |> 
   filter(gene_id %in% genes_opposite_directions) |>
-  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, domain_consistency) |> 
+  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
+         domain_consistency, temporal_stability) |> 
   create_dt()
 
 ```
@@ -1354,20 +1495,111 @@ genes_opposite_directions_ora_down <- run_enrichment_hybrid(
 #| message: false
 #| warning: false
 
-genes_opposite_directions_ora_up$result |> 
-  rbind(
-    genes_opposite_directions_ora_down$result
-  ) |> 
-  filter(p_value < 0.01) |> 
+combined <- bind_rows(
+  if (!is.null(genes_opposite_directions_ora_up$result)) genes_opposite_directions_ora_up$result,
+  if (!is.null(genes_opposite_directions_ora_down$result)) genes_opposite_directions_ora_down$result
+)
+
+if (!is.null(combined) && nrow(combined) > 0) {
+  combined |> 
+    filter(p_value < 0.01) |> 
+    create_dt()
+}
+
+```
+
+## Static Pattern
+
+Domain differences that remain stable over developmental time (no time or three-way interaction). These represent fixed spatial differences in strain effects.
+
+```{r}
+#| label: domain-static-plot
+#| message: false
+#| warning: false
+#| fig-height: 12
+#| fig-width: 14
+
+count_data <- get_normalized_counts(strain_dds_full, genes_domain_static, vsd = vsd_global)
+plot_domain_strain_interaction(genes_domain_static, "Static domain pattern", count_data, n = 2)
+
+```
+
+```{r}
+#| label: domain-static-table
+#| message: false
+#| warning: false
+
+domain_patterns |> 
+  filter(gene_id %in% genes_domain_static) |>
+  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
+         max_domain_effect, domain_consistency, temporal_stability) |> 
   create_dt()
- 
+
+```
+
+## Time-Affected Pattern
+
+Domain differences where main time effects are present, so the spatial pattern may shift over development, but without domain-specific temporal dynamics (no three-way interaction).
+
+```{r}
+#| label: domain-time-affected-plot
+#| message: false
+#| warning: false
+#| fig-height: 12
+#| fig-width: 14
+
+count_data <- get_normalized_counts(strain_dds_full, genes_domain_time_affected, vsd = vsd_global)
+plot_domain_strain_interaction(genes_domain_time_affected, "Time-affected domain pattern", count_data, n = 2)
+
+```
+
+```{r}
+#| label: domain-time-affected-table
+#| message: false
+#| warning: false
+
+domain_patterns |> 
+  filter(gene_id %in% genes_domain_time_affected) |>
+  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
+         max_domain_effect, domain_consistency, temporal_stability) |> 
+  create_dt()
+
+```
+
+## Time-Varying Pattern
+
+Domain differences that actively change over developmental time (three-way interaction significant). The spatial pattern of strain effects evolves during development.
+
+```{r}
+#| label: domain-time-varying-plot
+#| message: false
+#| warning: false
+#| fig-height: 12
+#| fig-width: 14
+
+count_data <- get_normalized_counts(strain_dds_full, genes_domain_time_varying, vsd = vsd_global)
+plot_domain_strain_interaction(genes_domain_time_varying, "Time-varying domain pattern", count_data, n = 2)
+
+```
+
+```{r}
+#| label: domain-time-varying-table
+#| message: false
+#| warning: false
+
+domain_patterns |> 
+  filter(gene_id %in% genes_domain_time_varying) |>
+  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
+         max_domain_effect, domain_consistency, temporal_stability) |> 
+  create_dt()
+
 ```
 
 ::::
 
 # Time × Strain Interactions
 
-These genes show strain differences that change over developmental time. The `time_int_slope` coefficient represents the change in log2FC(CAST/B6) per unit of developmental time.
+These genes show strain differences that change over developmental time. The temporal slope coefficient represents the change in log2FC(CAST/B6) per unit of developmental time.
 
 :::: {#time-strain-tabs .panel-tabset .nav-pills}
 
@@ -1379,9 +1611,9 @@ These genes show strain differences that change over developmental time. The `ti
 #| warning: false
 
 time_patterns |> 
-  count(trajectory_pattern) |> 
+  count(detailed_pattern) |> 
   arrange(desc(n)) |>
-  rename(Pattern = trajectory_pattern, `N Genes` = n) |> 
+  rename(Pattern = detailed_pattern, `N Genes` = n) |> 
   create_dt()
 
 ```
@@ -1398,7 +1630,7 @@ Genes where strains diverge over developmental time, with CAST expression increa
 #| fig-width: 16
 
 count_data <- get_normalized_counts(strain_dds_full, genes_diverging_CAST_faster, vsd = vsd_global)
-plot_time_strain_interaction(genes_diverging_CAST_faster, "Diverging: CAST faster", count_data, n = 2)
+plot_time_strain_interaction(genes_diverging_CAST_faster, "Diverging: CAST changing faster", count_data, n = 2)
 
 ```
 
@@ -1409,7 +1641,8 @@ plot_time_strain_interaction(genes_diverging_CAST_faster, "Diverging: CAST faste
 
 time_patterns |> 
   filter(gene_id %in% genes_diverging_CAST_faster) |>
-  select(gene_id, symbol, time_int_slope, time_int_pval, main_strain_lfc, trajectory_pattern) |>
+  select(gene_id, symbol, base_slope, time_int_pval, main_strain_lfc, 
+         trajectory_pattern, spatial_pattern) |>
   create_dt()
 
 ```
@@ -1453,7 +1686,6 @@ combined_diverging_cast_ora_results <- bind_rows(
 ) 
 
 if (!is.null(combined_diverging_cast_ora_results) && nrow(combined_diverging_cast_ora_results) > 0) {
-
   combined_diverging_cast_ora_results |> 
     filter(p_value < 0.01) |> 
     create_dt()
@@ -1473,7 +1705,7 @@ Genes where strains diverge over developmental time, with B6 expression increasi
 #| fig-width: 16
 
 count_data <- get_normalized_counts(strain_dds_full, genes_diverging_B6_faster, vsd = vsd_global)
-plot_time_strain_interaction(genes_diverging_B6_faster, "Diverging: B6 faster", count_data, n = 4)
+plot_time_strain_interaction(genes_diverging_B6_faster, "Diverging: B6 changing faster", count_data, n = 4)
 
 ```
 
@@ -1484,7 +1716,8 @@ plot_time_strain_interaction(genes_diverging_B6_faster, "Diverging: B6 faster", 
 
 time_patterns |> 
   filter(gene_id %in% genes_diverging_B6_faster) |>
-  select(gene_id, symbol, time_int_slope, time_int_pval, main_strain_lfc, trajectory_pattern) |> 
+  select(gene_id, symbol, base_slope, time_int_pval, main_strain_lfc, 
+         trajectory_pattern, spatial_pattern) |> 
   create_dt()
 
 ```
@@ -1528,7 +1761,6 @@ combined_diverging_b6_ora_results <- bind_rows(
 ) 
 
 if (!is.null(combined_diverging_b6_ora_results) && nrow(combined_diverging_b6_ora_results) > 0) {
-
   combined_diverging_b6_ora_results |> 
     filter(p_value < 0.01) |> 
     create_dt()
@@ -1536,11 +1768,96 @@ if (!is.null(combined_diverging_b6_ora_results) && nrow(combined_diverging_b6_or
 
 ```
 
+## Uniform Across Domains
+
+Temporal strain dynamics that are consistent across all palate domains (no domain or three-way interaction). These represent spatially uniform temporal changes.
+
+```{r}
+#| label: time-uniform-plot
+#| message: false
+#| warning: false
+#| fig-height: 10
+#| fig-width: 16
+
+count_data <- get_normalized_counts(strain_dds_full, genes_time_uniform, vsd = vsd_global)
+plot_time_strain_interaction(genes_time_uniform, "Uniform temporal dynamics", count_data, n = 2)
+
+```
+
+```{r}
+#| label: time-uniform-table
+#| message: false
+#| warning: false
+
+time_patterns |> 
+  filter(gene_id %in% genes_time_uniform) |>
+  select(gene_id, symbol, base_slope, main_strain_lfc, trajectory_pattern, spatial_pattern) |> 
+  create_dt()
+
+```
+
+## Domain-Affected
+
+Temporal dynamics where domains differ at t=0 but show parallel trajectories over time (domain interaction present, but no three-way interaction).
+
+```{r}
+#| label: time-domain-affected-plot
+#| message: false
+#| warning: false
+#| fig-height: 10
+#| fig-width: 16
+
+count_data <- get_normalized_counts(strain_dds_full, genes_time_domain_affected, vsd = vsd_global)
+plot_time_strain_interaction(genes_time_domain_affected, "Domain-affected temporal dynamics", count_data, n = 2)
+
+```
+
+```{r}
+#| label: time-domain-affected-table
+#| message: false
+#| warning: false
+
+time_patterns |> 
+  filter(gene_id %in% genes_time_domain_affected) |>
+  select(gene_id, symbol, base_slope, main_strain_lfc, trajectory_pattern, spatial_pattern) |> 
+  create_dt()
+
+```
+
+## Domain-Specific Dynamics
+
+Temporal dynamics that differ across domains (three-way interaction present). Different domains show different temporal trajectories of strain effects.
+
+```{r}
+#| label: time-domain-specific-plot
+#| message: false
+#| warning: false
+#| fig-height: 10
+#| fig-width: 16
+
+count_data <- get_normalized_counts(strain_dds_full, genes_time_domain_specific, vsd = vsd_global)
+plot_time_strain_interaction(genes_time_domain_specific, "Domain-specific temporal dynamics", count_data, n = 2)
+
+```
+
+```{r}
+#| label: time-domain-specific-table
+#| message: false
+#| warning: false
+
+time_patterns |> 
+  filter(gene_id %in% genes_time_domain_specific) |>
+  select(gene_id, symbol, base_slope, slope_range, main_strain_lfc, 
+         trajectory_pattern, spatial_pattern) |> 
+  create_dt()
+
+```
+
 ::::
 
 # Three-Way Interactions
 
-These genes show domain-specific strain differences that also change over developmental time. The three-way coefficients indicate how the temporal slope of strain effects differs by domain.
+These genes show domain-specific strain differences that also change over developmental time. We classify them based on whether domains primarily differ in their initial state (t=0), their temporal dynamics (slopes), or both.
 
 :::: {#threeway-tabs .panel-tabset .nav-pills}
 
@@ -1552,229 +1869,295 @@ These genes show domain-specific strain differences that also change over develo
 #| warning: false
 
 threeway_patterns |> 
-  count(pattern) |> 
+  count(detailed_pattern) |> 
   arrange(desc(n)) |>
-  rename(Pattern = pattern, `N Genes` = n) |> 
+  rename(Pattern = detailed_pattern, `N Genes` = n) |> 
   create_dt()
 
 ```
 
-## PM Diverges Most
+## Complex Pattern
 
-Genes where the PM domain shows the most distinct temporal trajectory of strain differences compared to the other domains. The strain effect in PM changes over time differently than in MAX or POST.
+Genes where domains differ in BOTH their initial state (t=0) AND their temporal dynamics. These show substantial differences across both dimensions.
 
 ```{r}
-#| label: threeway-PM-plot
+#| label: threeway-complex-plot
 #| message: false
 #| warning: false
 #| fig-height: 10
-#| fig-width: 10
+#| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_PM_biggest_slope_diff, vsd = vsd_global)
-plot_threeway_interaction(genes_PM_biggest_slope_diff, "PM diverges most", count_data, n = 2)
+count_data <- get_normalized_counts(strain_dds_full, genes_threeway_complex, vsd = vsd_global)
+plot_threeway_interaction(genes_threeway_complex, "Complex: Differ in initial state & dynamics", count_data, n = 2)
 
 ```
 
 ```{r}
-#| label: threeway-PM-table
+#| label: threeway-complex-table
 #| message: false
 #| warning: false
 
 threeway_patterns |> 
-  filter(gene_id %in% genes_PM_biggest_slope_diff) |>
-  select(gene_id, symbol, slope_PM, slope_MAX, slope_POST, pattern) |> 
+  filter(gene_id %in% genes_threeway_complex) |>
+  select(gene_id, symbol, init_PM, init_MAX, init_POST, slope_PM, slope_MAX, slope_POST, 
+         init_range, slope_range, most_distinct_domain) |> 
   create_dt()
 
 ```
 
 ```{r}
-#| label: threeway-PM-ora
+#| label: threeway-complex-ora
 #| message: false
 #| warning: false
 #| cache: true
 #| results: hide
 
-# Split by slope direction in PM
-genes_PM_slope_up <- threeway_patterns |> 
-  filter(gene_id %in% genes_PM_biggest_slope_diff, slope_PM > 0) |> 
+# Split by the most distinct domain
+genes_complex_PM <- threeway_patterns |> 
+  filter(gene_id %in% genes_threeway_complex, most_distinct_domain == "PM") |> 
   pull(gene_id)
 
-genes_PM_slope_down <- threeway_patterns |> 
-  filter(gene_id %in% genes_PM_biggest_slope_diff, slope_PM < 0) |> 
+genes_complex_MAX <- threeway_patterns |> 
+  filter(gene_id %in% genes_threeway_complex, most_distinct_domain == "MAX") |> 
   pull(gene_id)
 
-genes_PM_biggest_slope_diff_ora_up <- run_enrichment_hybrid(
-  genes_PM_slope_up, 
-  description = "PM diverges most - Positive slope"
+genes_complex_POST <- threeway_patterns |> 
+  filter(gene_id %in% genes_threeway_complex, most_distinct_domain == "POST") |> 
+  pull(gene_id)
+
+genes_threeway_complex_ora_PM <- run_enrichment_hybrid(
+  genes_complex_PM, 
+  description = "Complex pattern - PM most distinct"
 )
 
-genes_PM_biggest_slope_diff_ora_down <- run_enrichment_hybrid(
-  genes_PM_slope_down, 
-  description = "PM diverges most - Negative slope"
+genes_threeway_complex_ora_MAX <- run_enrichment_hybrid(
+  genes_complex_MAX, 
+  description = "Complex pattern - MAX most distinct"
 )
-  
+
+genes_threeway_complex_ora_POST <- run_enrichment_hybrid(
+  genes_complex_POST, 
+  description = "Complex pattern - POST most distinct"
+)
+
 ```
 
 ```{r}
-#| label: threeway-PM-ora-table
+#| label: threeway-complex-ora-table
 #| message: false
 #| warning: false
 
-bind_rows(
-  genes_PM_biggest_slope_diff_ora_up$result |> 
-    mutate(direction = paste0("Positive slope (n=", length(genes_PM_slope_up), ")")),
-  genes_PM_biggest_slope_diff_ora_down$result |> 
-    mutate(direction = paste0("Negative slope (n=", length(genes_PM_slope_down), ")"))
-) |> 
-  filter(p_value < 0.01) |> 
-  select(direction, everything()) |> 
-  create_dt()
-  
+combined <- bind_rows(
+  if (!is.null(genes_threeway_complex_ora_PM$result)) {
+    genes_threeway_complex_ora_PM$result |> 
+      mutate(distinct_domain = paste0("PM (n=", length(genes_complex_PM), ")"))
+  },
+  if (!is.null(genes_threeway_complex_ora_MAX$result)) {
+    genes_threeway_complex_ora_MAX$result |> 
+      mutate(distinct_domain = paste0("MAX (n=", length(genes_complex_MAX), ")"))
+  },
+  if (!is.null(genes_threeway_complex_ora_POST$result)) {
+    genes_threeway_complex_ora_POST$result |> 
+      mutate(distinct_domain = paste0("POST (n=", length(genes_complex_POST), ")"))
+  }
+)
+
+if (!is.null(combined) && nrow(combined) > 0) {
+  combined |> 
+    filter(p_value < 0.01) |> 
+    select(distinct_domain, everything()) |> 
+    create_dt()
+}
+
 ```
 
-## MAX Diverges Most
+## Primarily Initial Differences
 
-Genes where the MAX domain shows the most distinct temporal trajectory of strain differences. The temporal dynamics of the CAST vs B6 effect in MAX diverge from those in PM and POST.
+Genes where domains differ mainly at t=0, but show similar temporal trajectories. The spatial pattern is established early and maintained over time.
 
 ```{r}
-#| label: threeway-MAX-plot
+#| label: threeway-initial-plot
 #| message: false
 #| warning: false
 #| fig-height: 10
-#| fig-width: 10
+#| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_MAX_biggest_slope_diff, vsd = vsd_global)
-plot_threeway_interaction(genes_MAX_biggest_slope_diff, "MAX diverges most", count_data, n = 2)
+count_data <- get_normalized_counts(strain_dds_full, genes_threeway_initial, vsd = vsd_global)
+plot_threeway_interaction(genes_threeway_initial, "Primarily initial differences", count_data, n = 2)
 
 ```
 
 ```{r}
-#| label: threeway-MAX-table
+#| label: threeway-initial-table
 #| message: false
 #| warning: false
 
 threeway_patterns |> 
-  filter(gene_id %in% genes_MAX_biggest_slope_diff) |>
-  select(gene_id, symbol, slope_PM, slope_MAX, slope_POST, pattern) |> 
+  filter(gene_id %in% genes_threeway_initial) |>
+  select(gene_id, symbol, init_PM, init_MAX, init_POST, slope_PM, slope_MAX, slope_POST, 
+         init_range, slope_range, most_distinct_domain) |> 
   create_dt()
 
 ```
 
 ```{r}
-#| label: threeway-MAX-ora
+#| label: threeway-initial-ora
 #| message: false
 #| warning: false
 #| cache: true
 #| results: hide
 
-# Split by slope direction in MAX
-genes_MAX_slope_up <- threeway_patterns |> 
-  filter(gene_id %in% genes_MAX_biggest_slope_diff, slope_MAX > 0) |> 
+# Split by the most distinct domain
+genes_initial_PM <- threeway_patterns |> 
+  filter(gene_id %in% genes_threeway_initial, most_distinct_domain == "PM") |> 
   pull(gene_id)
 
-genes_MAX_slope_down <- threeway_patterns |> 
-  filter(gene_id %in% genes_MAX_biggest_slope_diff, slope_MAX < 0) |> 
+genes_initial_MAX <- threeway_patterns |> 
+  filter(gene_id %in% genes_threeway_initial, most_distinct_domain == "MAX") |> 
   pull(gene_id)
 
-genes_MAX_biggest_slope_diff_ora_up <- run_enrichment_hybrid(
-  genes_MAX_slope_up, 
-  description = "MAX diverges most - Positive slope"
+genes_initial_POST <- threeway_patterns |> 
+  filter(gene_id %in% genes_threeway_initial, most_distinct_domain == "POST") |> 
+  pull(gene_id)
+
+genes_threeway_initial_ora_PM <- run_enrichment_hybrid(
+  genes_initial_PM, 
+  description = "Initial differences - PM most distinct"
 )
 
-genes_MAX_biggest_slope_diff_ora_down <- run_enrichment_hybrid(
-  genes_MAX_slope_down, 
-  description = "MAX diverges most - Negative slope"
+genes_threeway_initial_ora_MAX <- run_enrichment_hybrid(
+  genes_initial_MAX, 
+  description = "Initial differences - MAX most distinct"
+)
+
+genes_threeway_initial_ora_POST <- run_enrichment_hybrid(
+  genes_initial_POST, 
+  description = "Initial differences - POST most distinct"
 )
 
 ```
 
 ```{r}
-#| label: threeway-MAX-ora-table
+#| label: threeway-initial-ora-table
 #| message: false
 #| warning: false
 
-bind_rows(
-  genes_MAX_biggest_slope_diff_ora_up$result |> 
-    mutate(direction = paste0("Positive slope (n=", length(genes_MAX_slope_up), ")")),
-  genes_MAX_biggest_slope_diff_ora_down$result |> 
-    mutate(direction = paste0("Negative slope (n=", length(genes_MAX_slope_down), ")"))
-) |> 
-  filter(p_value < 0.01) |> 
-  select(direction, everything()) |> 
-  create_dt()
+combined <- bind_rows(
+  if (!is.null(genes_threeway_initial_ora_PM$result)) {
+    genes_threeway_initial_ora_PM$result |> 
+      mutate(distinct_domain = paste0("PM (n=", length(genes_initial_PM), ")"))
+  },
+  if (!is.null(genes_threeway_initial_ora_MAX$result)) {
+    genes_threeway_initial_ora_MAX$result |> 
+      mutate(distinct_domain = paste0("MAX (n=", length(genes_initial_MAX), ")"))
+  },
+  if (!is.null(genes_threeway_initial_ora_POST$result)) {
+    genes_threeway_initial_ora_POST$result |> 
+      mutate(distinct_domain = paste0("POST (n=", length(genes_initial_POST), ")"))
+  }
+)
+
+if (!is.null(combined) && nrow(combined) > 0) {
+  combined |> 
+    filter(p_value < 0.01) |> 
+    select(distinct_domain, everything()) |> 
+    create_dt()
+}
 
 ```
 
-## POST Diverges Most
+## Primarily Dynamic Differences
 
-Genes where the POST domain shows the most distinct temporal trajectory of strain differences. The temporal dynamics of the CAST vs B6 effect in POST diverge from those in PM and MAX.
+Genes where domains start similar at t=0 but diverge over time with different temporal trajectories. The spatial pattern emerges during development.
 
 ```{r}
-#| label: threeway-POST-plot
+#| label: threeway-dynamic-plot
 #| message: false
 #| warning: false
 #| fig-height: 10
-#| fig-width: 10
+#| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_POST_biggest_slope_diff, vsd = vsd_global)
-plot_threeway_interaction(genes_POST_biggest_slope_diff, "POST diverges most", count_data, n = 2)
+count_data <- get_normalized_counts(strain_dds_full, genes_threeway_dynamic, vsd = vsd_global)
+plot_threeway_interaction(genes_threeway_dynamic, "Primarily dynamic differences", count_data, n = 2)
 
 ```
 
 ```{r}
-#| label: threeway-POST-table
+#| label: threeway-dynamic-table
 #| message: false
 #| warning: false
 
 threeway_patterns |> 
-  filter(gene_id %in% genes_POST_biggest_slope_diff) |>
-  select(gene_id, symbol, slope_PM, slope_MAX, slope_POST, pattern) |> 
+  filter(gene_id %in% genes_threeway_dynamic) |>
+  select(gene_id, symbol, init_PM, init_MAX, init_POST, slope_PM, slope_MAX, slope_POST, 
+         init_range, slope_range, most_distinct_domain) |> 
   create_dt()
 
 ```
 
 ```{r}
-#| label: threeway-POST-ora
+#| label: threeway-dynamic-ora
 #| message: false
 #| warning: false
 #| cache: true
 #| results: hide
 
-# Split by slope direction in POST
-genes_POST_slope_up <- threeway_patterns |> 
-  filter(gene_id %in% genes_POST_biggest_slope_diff, slope_POST > 0) |> 
+# Split by the most distinct domain
+genes_dynamic_PM <- threeway_patterns |> 
+  filter(gene_id %in% genes_threeway_dynamic, most_distinct_domain == "PM") |> 
   pull(gene_id)
 
-genes_POST_slope_down <- threeway_patterns |> 
-  filter(gene_id %in% genes_POST_biggest_slope_diff, slope_POST < 0) |> 
+genes_dynamic_MAX <- threeway_patterns |> 
+  filter(gene_id %in% genes_threeway_dynamic, most_distinct_domain == "MAX") |> 
   pull(gene_id)
 
-genes_POST_biggest_slope_diff_ora_up <- run_enrichment_hybrid(
-  genes_POST_slope_up, 
-  description = "POST diverges most - Positive slope"
+genes_dynamic_POST <- threeway_patterns |> 
+  filter(gene_id %in% genes_threeway_dynamic, most_distinct_domain == "POST") |> 
+  pull(gene_id)
+
+genes_threeway_dynamic_ora_PM <- run_enrichment_hybrid(
+  genes_dynamic_PM, 
+  description = "Dynamic differences - PM most distinct"
 )
 
-genes_POST_biggest_slope_diff_ora_down <- run_enrichment_hybrid(
-  genes_POST_slope_down, 
-  description = "POST diverges most - Negative slope"
+genes_threeway_dynamic_ora_MAX <- run_enrichment_hybrid(
+  genes_dynamic_MAX, 
+  description = "Dynamic differences - MAX most distinct"
+)
+
+genes_threeway_dynamic_ora_POST <- run_enrichment_hybrid(
+  genes_dynamic_POST, 
+  description = "Dynamic differences - POST most distinct"
 )
 
 ```
 
 ```{r}
-#| label: threeway-POST-ora-table
+#| label: threeway-dynamic-ora-table
 #| message: false
 #| warning: false
 
-bind_rows(
-  genes_POST_biggest_slope_diff_ora_up$result |> 
-    mutate(direction = paste0("Positive slope (n=", length(genes_POST_slope_up), ")")),
-  genes_POST_biggest_slope_diff_ora_down$result |> 
-    mutate(direction = paste0("Negative slope (n=", length(genes_POST_slope_down), ")"))
-) |> 
-  filter(p_value < 0.01) |> 
-  select(direction, everything()) |> 
-  create_dt()
+combined <- bind_rows(
+  if (!is.null(genes_threeway_dynamic_ora_PM$result)) {
+    genes_threeway_dynamic_ora_PM$result |> 
+      mutate(distinct_domain = paste0("PM (n=", length(genes_dynamic_PM), ")"))
+  },
+  if (!is.null(genes_threeway_dynamic_ora_MAX$result)) {
+    genes_threeway_dynamic_ora_MAX$result |> 
+      mutate(distinct_domain = paste0("MAX (n=", length(genes_dynamic_MAX), ")"))
+  },
+  if (!is.null(genes_threeway_dynamic_ora_POST$result)) {
+    genes_threeway_dynamic_ora_POST$result |> 
+      mutate(distinct_domain = paste0("POST (n=", length(genes_dynamic_POST), ")"))
+  }
+)
+
+if (!is.null(combined) && nrow(combined) > 0) {
+  combined |> 
+    filter(p_value < 0.01) |> 
+    select(distinct_domain, everything()) |> 
+    create_dt()
+}
 
 ```
 
@@ -1782,7 +2165,7 @@ bind_rows(
 
 # Domain-Specific Strain Effects
 
-For genes with domain × strain interactions, we identify which specific domains show significant strain effects (combining significance and effect size thresholds).
+For genes with domain × strain interactions, we identify which specific domains show significant strain effects (at t=0) and whether these patterns are stable or change over time.
 
 :::: {#domain-specific-tabs .panel-tabset .nav-pills}
 
@@ -1794,16 +2177,16 @@ For genes with domain × strain interactions, we identify which specific domains
 #| warning: false
 
 domain_specificity |> 
-  count(specificity_pattern) |> 
+  count(specificity_with_time) |> 
   arrange(desc(n)) |>
-  rename(`Specificity Pattern` = specificity_pattern, `Number of Genes` = n) |> 
+  rename(`Specificity Pattern` = specificity_with_time, `Number of Genes` = n) |> 
   create_dt()
 
 ```
 
 ## PM Only
 
-Genes where the strain difference passes significance and effect size thresholds only in the PM domain. These represent PM-specific regulatory divergence between B6 and CAST.
+Genes where the strain difference passes significance and effect size thresholds only in the PM domain (at t=0). These represent PM-specific regulatory divergence between B6 and CAST.
 
 ```{r}
 #| label: domain-specific-PM-only-plot
@@ -1824,7 +2207,8 @@ plot_domain_specificity(genes_strain_PM_only, "PM only", count_data, n = 2)
 
 domain_specificity |> 
   filter(gene_id %in% genes_strain_PM_only) |>
-  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, specificity_pattern) |> 
+  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
+         specificity_pattern, has_time_int) |> 
   create_dt()
 
 ```
@@ -1862,21 +2246,25 @@ genes_strain_PM_only_ora_down <- run_enrichment_hybrid(
 #| message: false
 #| warning: false
 
-bind_rows(
+combined <- bind_rows(
   genes_strain_PM_only_ora_up$result |> 
     mutate(direction = paste0("Up in CAST (n=", length(genes_PM_only_up), ")")),
   genes_strain_PM_only_ora_down$result |> 
     mutate(direction = paste0("Down in CAST (n=", length(genes_PM_only_down), ")"))
-) |> 
-  filter(p_value < 0.01) |> 
-  select(direction, everything()) |> 
-  create_dt()
+)
+
+if (!is.null(combined) && nrow(combined) > 0) {
+  combined |> 
+    filter(p_value < 0.01) |> 
+    select(direction, everything()) |> 
+    create_dt()
+}
 
 ```
 
 ## MAX Only
 
-Genes where the strain difference passes significance and effect size thresholds only in the MAX domain.
+Genes where the strain difference passes significance and effect size thresholds only in the MAX domain (at t=0).
 
 ```{r}
 #| label: domain-specific-MAX-only-plot
@@ -1900,7 +2288,8 @@ if (length(genes_strain_MAX_only) > 0) {
 if (length(genes_strain_MAX_only) > 0) {
   domain_specificity |> 
     filter(gene_id %in% genes_strain_MAX_only) |>
-    select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, specificity_pattern) |> 
+    select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
+           specificity_pattern, has_time_int) |> 
     create_dt()
 }
 
@@ -1948,7 +2337,7 @@ if (length(genes_strain_MAX_only) > 0) {
 #| warning: false
 
 if (!is.null(genes_strain_MAX_only_ora_up) || !is.null(genes_strain_MAX_only_ora_down)) {
-  bind_rows(
+  combined <- bind_rows(
     if (!is.null(genes_strain_MAX_only_ora_up)) {
       genes_strain_MAX_only_ora_up$result |> 
         mutate(direction = paste0("Up in CAST (n=", length(genes_MAX_only_up), ")"))
@@ -1957,17 +2346,21 @@ if (!is.null(genes_strain_MAX_only_ora_up) || !is.null(genes_strain_MAX_only_ora
       genes_strain_MAX_only_ora_down$result |> 
         mutate(direction = paste0("Down in CAST (n=", length(genes_MAX_only_down), ")"))
     }
-  ) |> 
-    filter(p_value < 0.01) |> 
-    select(direction, everything()) |> 
-    create_dt()
+  )
+  
+  if (!is.null(combined) && nrow(combined) > 0) {
+    combined |> 
+      filter(p_value < 0.01) |> 
+      select(direction, everything()) |> 
+      create_dt()
+  }
 }
 
 ```
 
 ## POST Only
 
-Genes where the strain difference passes significance and effect size thresholds only in the POST domain.
+Genes where the strain difference passes significance and effect size thresholds only in the POST domain (at t=0).
 
 ```{r}
 #| label: domain-specific-POST-only-plot
@@ -1991,7 +2384,8 @@ if (length(genes_strain_POST_only) > 0) {
 if (length(genes_strain_POST_only) > 0) {
   domain_specificity |> 
     filter(gene_id %in% genes_strain_POST_only) |>
-    select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, specificity_pattern) |> 
+    select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
+           specificity_pattern, has_time_int) |> 
     create_dt()
 }
 
@@ -2039,7 +2433,7 @@ if (length(genes_strain_POST_only) > 0) {
 #| warning: false
 
 if (!is.null(genes_strain_POST_only_ora_up) || !is.null(genes_strain_POST_only_ora_down)) {
-  bind_rows(
+  combined <- bind_rows(
     if (!is.null(genes_strain_POST_only_ora_up)) {
       genes_strain_POST_only_ora_up$result |> 
         mutate(direction = paste0("Up in CAST (n=", length(genes_POST_only_up), ")"))
@@ -2048,17 +2442,21 @@ if (!is.null(genes_strain_POST_only_ora_up) || !is.null(genes_strain_POST_only_o
       genes_strain_POST_only_ora_down$result |> 
         mutate(direction = paste0("Down in CAST (n=", length(genes_POST_only_down), ")"))
     }
-  ) |> 
-    filter(p_value < 0.01) |> 
-    select(direction, everything()) |> 
-    create_dt()
+  )
+  
+  if (!is.null(combined) && nrow(combined) > 0) {
+    combined |> 
+      filter(p_value < 0.01) |> 
+      select(direction, everything()) |> 
+      create_dt()
+  }
 }
 
 ```
 
 ## All Domains
 
-Genes where the strain difference passes significance and effect size thresholds in all three domains (PM, MAX, POST). These represent pervasive strain effects across the entire palate.
+Genes where the strain difference passes significance and effect size thresholds in all three domains (PM, MAX, POST) at t=0. These represent pervasive strain effects across the entire palate.
 
 ```{r}
 #| label: domain-specific-all-plot
@@ -2079,7 +2477,8 @@ plot_domain_specificity(genes_strain_all_domains, "All domains", count_data, n =
 
 domain_specificity |> 
   filter(gene_id %in% genes_strain_all_domains) |>
-  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, specificity_pattern) |> 
+  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
+         specificity_pattern, has_time_int) |> 
   create_dt()
 
 ```
@@ -2117,36 +2516,86 @@ genes_strain_all_domains_ora_down <- run_enrichment_hybrid(
 #| message: false
 #| warning: false
 
-bind_rows(
+combined <- bind_rows(
   genes_strain_all_domains_ora_up$result |> 
     mutate(direction = paste0("Up in CAST (n=", length(genes_all_domains_up), ")")),
   genes_strain_all_domains_ora_down$result |> 
     mutate(direction = paste0("Down in CAST (n=", length(genes_all_domains_down), ")"))
-) |> 
-  filter(p_value < 0.01) |> 
-  select(direction, everything()) |> 
+)
+
+if (!is.null(combined) && nrow(combined) > 0) {
+  combined |> 
+    filter(p_value < 0.01) |> 
+    select(direction, everything()) |> 
+    create_dt()
+}
+
+```
+
+## Static Domain Specificity
+
+Domain-specific strain effects that remain stable over time (no time or three-way interactions). These genes show consistent domain-restricted patterns throughout development.
+
+```{r}
+#| label: domain-specific-static-plot
+#| message: false
+#| warning: false
+#| fig-height: 14
+#| fig-width: 9
+
+count_data <- get_normalized_counts(strain_dds_full, genes_strain_domain_specific_static, vsd = vsd_global)
+plot_domain_specificity(genes_strain_domain_specific_static, "Static domain specificity", count_data, n = 2)
+
+```
+
+```{r}
+#| label: domain-specific-static-table
+#| message: false
+#| warning: false
+
+domain_specificity |> 
+  filter(gene_id %in% genes_strain_domain_specific_static) |>
+  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
+         specificity_pattern, has_time_int) |> 
+  create_dt()
+
+```
+
+## Dynamic Domain Specificity
+
+Domain-specific strain effects that change over developmental time (time or three-way interactions present). The domain specificity pattern evolves during development.
+
+```{r}
+#| label: domain-specific-dynamic-plot
+#| message: false
+#| warning: false
+#| fig-height: 14
+#| fig-width: 9
+
+count_data <- get_normalized_counts(strain_dds_full, genes_strain_domain_specific_dynamic, vsd = vsd_global)
+plot_domain_specificity(genes_strain_domain_specific_dynamic, "Dynamic domain specificity", count_data, n = 2)
+
+```
+
+```{r}
+#| label: domain-specific-dynamic-table
+#| message: false
+#| warning: false
+
+domain_specificity |> 
+  filter(gene_id %in% genes_strain_domain_specific_dynamic) |>
+  select(gene_id, symbol, strain_effect_PM, strain_effect_MAX, strain_effect_POST, 
+         specificity_pattern, has_time_int) |> 
   create_dt()
 
 ```
 
 ::::
-
 # Comprehensive Tables
 
 This section provides downloadable tables summarizing all analysis results.
 
 :::: {#comprehensive-tables-tabs .panel-tabset .nav-pills}
-
-## Pattern Summary
-
-```{r}
-#| label: comprehensive-pattern-summary
-#| message: false
-#| warning: false
-
-pattern_summary |>
-  create_dt()
-```
 
 ## Gene-Level Pattern Assignments
 
@@ -2217,7 +2666,7 @@ all_ora_results <- bind_rows(
     genes_B6_high_mod_ora$result |> 
       mutate(category = "Main Effect", pattern = "B6 > CAST (moderate)", direction = "Down in CAST"),
   
- # Domain effects - PM biggest
+  # Domain effects - PM biggest
   if (!is.null(genes_PM_biggest_effect_ora_up$result)) 
     genes_PM_biggest_effect_ora_up$result |> 
       mutate(category = "Domain Effect", pattern = "PM biggest effect", direction = "Up in CAST"),
@@ -2265,29 +2714,38 @@ all_ora_results <- bind_rows(
     genes_diverging_B6_faster_ora_down$result |> 
       mutate(category = "Time Effect", pattern = "Diverging: B6 faster", direction = "Down in CAST"),
   
-  # Three-way effects - PM diverges most
-  if (!is.null(genes_PM_biggest_slope_diff_ora_up$result)) 
-    genes_PM_biggest_slope_diff_ora_up$result |> 
-      mutate(category = "Three-way", pattern = "PM diverges most", direction = "Positive slope"),
-  if (!is.null(genes_PM_biggest_slope_diff_ora_down$result)) 
-    genes_PM_biggest_slope_diff_ora_down$result |> 
-      mutate(category = "Three-way", pattern = "PM diverges most", direction = "Negative slope"),
+  # Three-way effects - Complex pattern
+  if (!is.null(genes_threeway_complex_ora_PM$result)) 
+    genes_threeway_complex_ora_PM$result |> 
+      mutate(category = "Three-way", pattern = "Complex pattern", direction = "PM most distinct"),
+  if (!is.null(genes_threeway_complex_ora_MAX$result)) 
+    genes_threeway_complex_ora_MAX$result |> 
+      mutate(category = "Three-way", pattern = "Complex pattern", direction = "MAX most distinct"),
+  if (!is.null(genes_threeway_complex_ora_POST$result)) 
+    genes_threeway_complex_ora_POST$result |> 
+      mutate(category = "Three-way", pattern = "Complex pattern", direction = "POST most distinct"),
   
-  # Three-way effects - MAX diverges most
-  if (!is.null(genes_MAX_biggest_slope_diff_ora_up$result)) 
-    genes_MAX_biggest_slope_diff_ora_up$result |> 
-      mutate(category = "Three-way", pattern = "MAX diverges most", direction = "Positive slope"),
-  if (!is.null(genes_MAX_biggest_slope_diff_ora_down$result)) 
-    genes_MAX_biggest_slope_diff_ora_down$result |> 
-      mutate(category = "Three-way", pattern = "MAX diverges most", direction = "Negative slope"),
+  # Three-way effects - Primarily initial
+  if (!is.null(genes_threeway_initial_ora_PM$result)) 
+    genes_threeway_initial_ora_PM$result |> 
+      mutate(category = "Three-way", pattern = "Primarily initial differences", direction = "PM most distinct"),
+  if (!is.null(genes_threeway_initial_ora_MAX$result)) 
+    genes_threeway_initial_ora_MAX$result |> 
+      mutate(category = "Three-way", pattern = "Primarily initial differences", direction = "MAX most distinct"),
+  if (!is.null(genes_threeway_initial_ora_POST$result)) 
+    genes_threeway_initial_ora_POST$result |> 
+      mutate(category = "Three-way", pattern = "Primarily initial differences", direction = "POST most distinct"),
   
-  # Three-way effects - POST diverges most
-  if (!is.null(genes_POST_biggest_slope_diff_ora_up$result)) 
-    genes_POST_biggest_slope_diff_ora_up$result |> 
-      mutate(category = "Three-way", pattern = "POST diverges most", direction = "Positive slope"),
-  if (!is.null(genes_POST_biggest_slope_diff_ora_down$result)) 
-    genes_POST_biggest_slope_diff_ora_down$result |> 
-      mutate(category = "Three-way", pattern = "POST diverges most", direction = "Negative slope"),
+  # Three-way effects - Primarily dynamic
+  if (!is.null(genes_threeway_dynamic_ora_PM$result)) 
+    genes_threeway_dynamic_ora_PM$result |> 
+      mutate(category = "Three-way", pattern = "Primarily dynamic differences", direction = "PM most distinct"),
+  if (!is.null(genes_threeway_dynamic_ora_MAX$result)) 
+    genes_threeway_dynamic_ora_MAX$result |> 
+      mutate(category = "Three-way", pattern = "Primarily dynamic differences", direction = "MAX most distinct"),
+  if (!is.null(genes_threeway_dynamic_ora_POST$result)) 
+    genes_threeway_dynamic_ora_POST$result |> 
+      mutate(category = "Three-way", pattern = "Primarily dynamic differences", direction = "POST most distinct"),
   
   # Domain specificity - PM only
   if (!is.null(genes_strain_PM_only_ora_up$result)) 
@@ -2330,7 +2788,7 @@ all_ora_results <- bind_rows(
 #| warning: false
 
 all_ora_results |>
-  filter(p_value < 0.05) |>
+  filter(p_value < 0.01) |>
   select(category, pattern, direction, source, term_name, p_value, 
          intersection_size, term_size, intersection) |>
   arrange(category, pattern, direction, p_value) |>
