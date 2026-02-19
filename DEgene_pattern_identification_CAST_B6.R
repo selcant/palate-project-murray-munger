@@ -37,65 +37,110 @@ genes_main_only <- main_patterns |>
   filter(!has_any_interaction) |> pull(gene_id)
 
 # ===================================================================
-# PART 2: DOMAIN × STRAIN INTERACTION PATTERNS (TIME-AWARE)
-# These genes have strain effects that differ across palate domains.
-# Now accounting for whether these domain differences are static or
-# change over developmental time.
-# Source: strain_effects_classified with significant domain LRT.
+# PART 2: DOMAIN × STRAIN INTERACTION PATTERNS
+# For genes where strain effects differ across domains,
+# characterize the pattern of domain differences.
+# Note: Genes with threeway interactions are flagged but analyzed 
+# in detail in the threeway_patterns section.
 # ===================================================================
 
-domain_patterns <- strain_effects_classified |>
+domain_strain_patterns <- strain_effects_classified |>
   filter(any_strain_sig & domain_int_sig) |>
   filter(domain_int_MAX_pass | domain_int_POST_pass) |>
-  select(gene_id, symbol, 
-         strain_effect_PM, strain_effect_MAX, strain_effect_POST,
-         strain_effect_PM_pass, strain_effect_MAX_pass, strain_effect_POST_pass,
-         strain_effect_PM_pval, strain_effect_MAX_pval, strain_effect_POST_pval,
-         domain_int_MAX_lfc, domain_int_POST_lfc,
-         domain_int_MAX_pass, domain_int_POST_pass,
-         max_domain_effect, max_domain_direction, domain_consistency,
-         time_int_sig, threeway_int_sig) |>
   mutate(
-    # Classify temporal stability of domain pattern
-    temporal_stability = case_when(
-      threeway_int_sig ~ "Dynamic: Domain pattern changes over time (3-way)",
-      time_int_sig ~ "Dynamic: Main time effect present, domain pattern may shift",
-      TRUE ~ "Static: Domain pattern stable over time"
+    # Get absolute magnitudes of strain effects in each domain at t=0
+    abs_PM = abs(strain_effect_PM),
+    abs_MAX = abs(strain_effect_MAX),
+    abs_POST = abs(strain_effect_POST),
+    
+    # Calculate range across domains (how different are they?)
+    domain_strain_range = pmax(abs_PM, abs_MAX, abs_POST) - 
+      pmin(abs_PM, abs_MAX, abs_POST),
+    
+    # Which domain has the strongest strain effect?
+    strongest_domain = case_when(
+      abs_PM >= abs_MAX & abs_PM >= abs_POST ~ "PM",
+      abs_MAX >= abs_POST ~ "MAX",
+      TRUE ~ "POST"
     ),
     
-    # Create detailed pattern combining direction, consistency, and stability
-    detailed_pattern = paste0(
-      max_domain_direction, " | ", 
-      domain_consistency, " | ",
-      case_when(
-        threeway_int_sig ~ "Time-varying",
-        time_int_sig ~ "Time-affected", 
-        TRUE ~ "Static"
-      )
+    # Which domain has the weakest strain effect?
+    weakest_domain = case_when(
+      abs_PM <= abs_MAX & abs_PM <= abs_POST ~ "PM",
+      abs_MAX <= abs_POST ~ "MAX",
+      TRUE ~ "POST"
     ),
     
-    # Magnitude of domain differences at t=0
-    domain_diff_magnitude = abs(domain_int_MAX_lfc) + abs(domain_int_POST_lfc)
+    # Are strain effects in the same direction across domains?
+    same_direction = (sign(strain_effect_PM) == sign(strain_effect_MAX)) & 
+      (sign(strain_effect_MAX) == sign(strain_effect_POST)),
+    
+    direction_pattern = case_when(
+      same_direction ~ "Consistent direction",
+      !same_direction ~ "Opposite directions"
+    ),
+    
+    # Classify specificity strength
+    specificity_strength = case_when(
+      domain_strain_range > 1.0 ~ "High",      # One domain >> others
+      domain_strain_range > 0.5 ~ "Moderate",  # Clear differences
+      TRUE ~ "Low"                              # Similar magnitudes
+    ),
+    
+    # Pattern summary
+    domain_pattern = paste0(
+      strongest_domain, " strongest | ",
+      direction_pattern, " | ",
+      specificity_strength, " specificity"
+    ),
+    
+    # Flag time-dependent genes (detailed in other sections)
+    time_status = case_when(
+      threeway_int_sig ~ "Threeway (see threeway_patterns)",
+      time_int_sig ~ "Main time effect present",
+      TRUE ~ "Static"
+    )
   ) |>
-  arrange(desc(domain_diff_magnitude))
+  select(gene_id, symbol,
+         strain_effect_PM, strain_effect_MAX, strain_effect_POST,
+         abs_PM, abs_MAX, abs_POST,
+         domain_strain_range, specificity_strength,
+         strongest_domain, weakest_domain, 
+         direction_pattern, domain_pattern,
+         time_status) |>
+  arrange(desc(domain_strain_range))
 
-# Split by temporal stability
-genes_domain_static <- domain_patterns |>
-  filter(!time_int_sig & !threeway_int_sig) |> pull(gene_id)
-genes_domain_time_affected <- domain_patterns |>
-  filter(time_int_sig & !threeway_int_sig) |> pull(gene_id)
-genes_domain_time_varying <- domain_patterns |>
-  filter(threeway_int_sig) |> pull(gene_id)
+# Gene lists focused on domain patterns
+genes_PM_strongest_strain <- domain_strain_patterns |>
+  filter(strongest_domain == "PM") |> pull(gene_id)
 
-# Original categories (at t=0)
-genes_PM_biggest_effect <- domain_patterns |>
-  filter(max_domain_effect == "PM") |> pull(gene_id)
-genes_MAX_biggest_effect <- domain_patterns |>
-  filter(max_domain_effect == "MAX") |> pull(gene_id)
-genes_POST_biggest_effect <- domain_patterns |>
-  filter(max_domain_effect == "POST") |> pull(gene_id)
-genes_opposite_directions <- domain_patterns |>
-  filter(domain_consistency == "Variable") |> pull(gene_id)
+genes_MAX_strongest_strain <- domain_strain_patterns |>
+  filter(strongest_domain == "MAX") |> pull(gene_id)
+
+genes_POST_strongest_strain <- domain_strain_patterns |>
+  filter(strongest_domain == "POST") |> pull(gene_id)
+
+genes_opposite_directions <- domain_strain_patterns |>
+  filter(direction_pattern == "Opposite directions") |> pull(gene_id)
+
+genes_high_domain_specificity <- domain_strain_patterns |>
+  filter(specificity_strength == "High") |> pull(gene_id)
+
+# Static vs time-dependent (pointer to other analyses)
+genes_domain_strain_static <- domain_strain_patterns |>
+  filter(time_status == "Static") |> pull(gene_id)
+
+genes_domain_strain_time_affected <- domain_strain_patterns |>
+  filter(time_status == "Main time effect present") |> pull(gene_id)
+
+# Summary
+cat("Domain-specific strain pattern summary:\n")
+table(domain_strain_patterns$strongest_domain, 
+      domain_strain_patterns$specificity_strength)
+cat("\nDirection consistency:\n")
+table(domain_strain_patterns$direction_pattern)
+cat("\nTime-dependence:\n")
+table(domain_strain_patterns$time_status)
 
 # ===================================================================
 # PART 3: TIME × STRAIN INTERACTION PATTERNS (DOMAIN-AWARE)
@@ -108,30 +153,40 @@ genes_opposite_directions <- domain_patterns |>
 time_patterns <- strain_effects_classified |>
   filter(any_strain_sig & time_int_sig & time_int_pass) |>
   select(gene_id, symbol, 
-         time_int_slope, time_int_slope_lfcSE, time_int_slope_pval, time_int_pval,
+         time_int_slope_avg, time_int_slope_PM, time_int_slope_lfcSE, time_int_slope_pval, time_int_pval,
          main_strain_lfc, time_pattern,
          domain_int_sig, threeway_int_sig,
          threeway_MAX_slope, threeway_POST_slope, threeway_MAX_pass, threeway_POST_pass) |>
   mutate(
     # Base trajectory (this is the PM slope when domain is in the model)
-    base_slope = time_int_slope,
+    base_slope = time_int_slope_avg,
     
-    # Classify spatial uniformity of temporal dynamics
+    # For all cases, calculate the range of slopes across domains
+    slope_PM  = if_else(threeway_int_sig, time_int_slope_PM, time_int_slope_avg),
+    slope_MAX = if_else(threeway_int_sig, time_int_slope_PM + threeway_MAX_slope, time_int_slope_avg),
+    slope_POST = if_else(threeway_int_sig, time_int_slope_PM + threeway_POST_slope, time_int_slope_avg),
+    
+    # Calculate range of slopes across domains
+    slope_range = pmax(slope_PM, slope_MAX, slope_POST) - 
+      pmin(slope_PM, slope_MAX, slope_POST),
+    
+    # Classify spatial uniformity using BOTH significance AND magnitude
     spatial_pattern = case_when(
-      threeway_int_sig & (threeway_MAX_pass | threeway_POST_pass) ~ 
+      # Domain-specific: threeway significant AND slopes actually differ
+      threeway_int_sig & (threeway_MAX_pass | threeway_POST_pass) & slope_range > 0.15 ~ 
         "Domain-specific: Different temporal dynamics across domains",
-      domain_int_sig ~ 
+      
+      # Domain-affected: domains differ at t=0 but slopes are parallel (small range)
+      domain_int_sig & slope_range <= 0.15 ~ 
         "Domain-affected: Domains differ at t=0, parallel trajectories",
-      TRUE ~ 
-        "Uniform: Same temporal dynamics across all domains"
+      
+      # Uniform: no domain interaction OR very small slope differences
+      !domain_int_sig & slope_range <= 0.1 ~ 
+        "Uniform: Same temporal dynamics across all domains",
+      
+      # Edge cases: has domain/threeway sig but doesn't meet magnitude thresholds
+      TRUE ~ "Mixed: Borderline pattern"
     ),
-    
-    # For domain-specific cases, calculate the range of slopes
-    slope_PM = time_int_slope,
-    slope_MAX = if_else(threeway_int_sig, time_int_slope + threeway_MAX_slope, time_int_slope),
-    slope_POST = if_else(threeway_int_sig, time_int_slope + threeway_POST_slope, time_int_slope),
-    slope_range = max(abs(c(slope_PM, slope_MAX, slope_POST))) - 
-      min(abs(c(slope_PM, slope_MAX, slope_POST))),
     
     # Trajectory pattern (based on base/PM slope)
     trajectory_pattern = case_when(
@@ -147,19 +202,19 @@ time_patterns <- strain_effects_classified |>
   ) |>
   arrange(desc(abs(base_slope)))
 
-# Split by spatial pattern
+
 genes_time_uniform <- time_patterns |>
   filter(!domain_int_sig & !threeway_int_sig) |> pull(gene_id)
 genes_time_domain_affected <- time_patterns |>
   filter(domain_int_sig & !threeway_int_sig) |> pull(gene_id)
-genes_time_domain_specific <- time_patterns |>
-  filter(threeway_int_sig) |> pull(gene_id)
-
-# Original categories (based on base slope)
 genes_diverging_CAST_faster <- time_patterns |>
   filter(base_slope > 0.1) |> pull(gene_id)
 genes_diverging_B6_faster <- time_patterns |>
   filter(base_slope < -0.1) |> pull(gene_id)
+
+# genes_time_domain_specific is removed — those ARE the threeway genes
+# and are handled entirely in the Three-Way section
+
 
 # ===================================================================
 # PART 4: THREE-WAY INTERACTION PATTERNS
@@ -172,33 +227,33 @@ threeway_patterns <- strain_effects_classified |>
   filter(any_strain_sig & threeway_int_sig) |>
   filter(threeway_MAX_pass | threeway_POST_pass) |>
   select(gene_id, symbol, 
-         time_int_slope, threeway_MAX_slope, threeway_POST_slope,
+         time_int_slope_PM, threeway_MAX_slope, threeway_POST_slope,
          threeway_MAX_pass, threeway_POST_pass,
          strain_effect_PM, strain_effect_MAX, strain_effect_POST) |>
   mutate(
     # Calculate temporal slopes for each domain
-    slope_PM = time_int_slope,
-    slope_MAX = time_int_slope + threeway_MAX_slope,
-    slope_POST = time_int_slope + threeway_POST_slope,
+    slope_PM = time_int_slope_PM,
+    slope_MAX = time_int_slope_PM + threeway_MAX_slope,
+    slope_POST = time_int_slope_PM + threeway_POST_slope,
     
     # Initial effects at t=0
     init_PM = strain_effect_PM,
     init_MAX = strain_effect_MAX,
     init_POST = strain_effect_POST,
     
-    # Magnitude of initial differences across domains
-    init_range = max(abs(c(init_PM, init_MAX, init_POST))) - 
-      min(abs(c(init_PM, init_MAX, init_POST))),
+    # Magnitude of initial differences across domains (row-wise)
+    init_range = pmax(init_PM, init_MAX, init_POST) - 
+      pmin(init_PM, init_MAX, init_POST),
     
-    # Magnitude of slope differences across domains
-    slope_range = max(abs(c(slope_PM, slope_MAX, slope_POST))) - 
-      min(abs(c(slope_PM, slope_MAX, slope_POST))),
+    # Magnitude of slope differences across domains (row-wise)
+    slope_range = pmax(slope_PM, slope_MAX, slope_POST) - 
+      pmin(slope_PM, slope_MAX, slope_POST),
     
     # Classify based on relative importance of initial vs dynamic differences
     pattern_type = case_when(
-      init_range > 0.5 & slope_range > 0.15 ~ "Complex: Differ in both initial state & dynamics",
-      init_range > 0.5 & slope_range <= 0.15 ~ "Primarily initial: Domains differ at t=0, similar trajectories",
-      init_range <= 0.5 & slope_range > 0.15 ~ "Primarily dynamic: Similar at t=0, divergent trajectories",
+      init_range > 1 & slope_range > 0.8 ~ "Complex: Differ in both initial state & dynamics",
+      init_range > 1 & slope_range <= 0.8 ~ "Primarily initial: Domains differ at t=0, similar trajectories",
+      init_range <= 1 & slope_range > 0.8 ~ "Primarily dynamic: Similar at t=0, divergent trajectories",
       TRUE ~ "Subtle: Small differences in both"
     ),
     
@@ -232,116 +287,47 @@ genes_threeway_initial <- threeway_patterns |>
 genes_threeway_dynamic <- threeway_patterns |>
   filter(str_detect(pattern_type, "Primarily dynamic")) |> pull(gene_id)
 
-# ===================================================================
-# PART 5: DOMAIN SPECIFICITY PATTERNS (TIME-AWARE)
-# For genes with domain × strain interactions, classify domain specificity
-# while accounting for temporal dynamics when present.
-# ===================================================================
-
-domain_specificity <- strain_effects_classified |>
-  filter(any_strain_sig & domain_int_sig) |>
-  mutate(
-    # Check if each domain has a significant AND well-estimated effect at t=0
-    effect_PM_t0 = strain_effect_PM_pass,
-    effect_MAX_t0 = strain_effect_MAX_pass,
-    effect_POST_t0 = strain_effect_POST_pass,
-    
-    # For genes with time interactions, also consider if effect persists/grows over time
-    # If time interaction exists, check if domain-specific slopes are significant
-    has_time_int = time_int_sig | threeway_int_sig,
-    
-    # Simplified: Does the domain show a clear strain effect?
-    # Consider both: (1) effect at t=0, or (2) strong temporal dynamics
-    # For now, we'll use the t=0 effects but flag time-dynamic genes
-    
-    specificity_pattern = case_when(
-      effect_PM_t0 & !effect_MAX_t0 & !effect_POST_t0 ~ "PM only",
-      !effect_PM_t0 & effect_MAX_t0 & !effect_POST_t0 ~ "MAX only",
-      !effect_PM_t0 & !effect_MAX_t0 & effect_POST_t0 ~ "POST only",
-      effect_PM_t0 & effect_MAX_t0 & !effect_POST_t0 ~ "PM & MAX",
-      effect_PM_t0 & !effect_MAX_t0 & effect_POST_t0 ~ "PM & POST",
-      !effect_PM_t0 & effect_MAX_t0 & effect_POST_t0 ~ "MAX & POST",
-      effect_PM_t0 & effect_MAX_t0 & effect_POST_t0 ~ "All domains",
-      TRUE ~ "None (filtered)"
-    ),
-    
-    # Add time-awareness qualifier
-    specificity_with_time = if_else(
-      has_time_int,
-      paste0(specificity_pattern, " (time-varying)"),
-      specificity_pattern
-    )
-  ) |>
-  select(gene_id, symbol, 
-         strain_effect_PM, strain_effect_MAX, strain_effect_POST,
-         effect_PM_t0, effect_MAX_t0, effect_POST_t0, 
-         has_time_int, specificity_pattern, specificity_with_time)
-
-# Gene lists based on static domain specificity (at t=0)
-genes_strain_PM_only <- domain_specificity |>
-  filter(specificity_pattern == "PM only") |> pull(gene_id)
-genes_strain_MAX_only <- domain_specificity |>
-  filter(specificity_pattern == "MAX only") |> pull(gene_id)
-genes_strain_POST_only <- domain_specificity |>
-  filter(specificity_pattern == "POST only") |> pull(gene_id)
-genes_strain_all_domains <- domain_specificity |>
-  filter(specificity_pattern == "All domains") |> pull(gene_id)
-
-# Additional: genes where specificity is time-dependent
-genes_strain_domain_specific_static <- domain_specificity |>
-  filter(!has_time_int & specificity_pattern != "All domains" & 
-           specificity_pattern != "None (filtered)") |> pull(gene_id)
-genes_strain_domain_specific_dynamic <- domain_specificity |>
-  filter(has_time_int & specificity_pattern != "All domains" & 
-           specificity_pattern != "None (filtered)") |> pull(gene_id)
 
 # ===================================================================
-# PART 6: SUMMARY TABLE (revised categories)
+# PART 5: SUMMARY TABLE
 # ===================================================================
 
 pattern_summary <- tibble(
   Category = c(
     rep("Main Strain Effect", 5),
-    rep("Domain × Strain", 7),
-    rep("Time × Strain", 5),
-    rep("Three-Way Interaction", 3),
-    rep("Domain Specificity", 6)
+    rep("Domain × Strain", 8),
+    rep("Time × Strain", 4),
+    rep("Three-Way Interaction", 3)
   ),
   Pattern = c(
     "CAST >> B6 (strong)", "CAST > B6 (moderate)",
     "B6 >> CAST (strong)", "B6 > CAST (moderate)",
     "Consistent only (no interactions)",
-    "Biggest effect in PM", "Biggest effect in MAX", 
-    "Biggest effect in POST", "Opposite directions",
-    "Domain pattern: Static", "Domain pattern: Time-affected", 
-    "Domain pattern: Time-varying (3-way)",
+    "PM strongest strain effect", "MAX strongest strain effect", 
+    "POST strongest strain effect", "Opposite directions across domains",
+    "High domain specificity (range > 1.0)",
+    "Static (no time interactions)", "Time-affected (main time effect)", 
+    "Time-varying (threeway interaction)",
     "Diverging (CAST faster)", "Diverging (B6 faster)",
     "Temporal dynamics: Uniform across domains",
     "Temporal dynamics: Domain-affected (parallel slopes)",
-    "Temporal dynamics: Domain-specific (different slopes)",
     "Complex (differ in initial & dynamics)", 
     "Primarily initial differences", 
-    "Primarily dynamic differences",
-    "PM only", "MAX only", "POST only", "All domains",
-    "Domain-specific (static over time)", "Domain-specific (time-varying)"
+    "Primarily dynamic differences"
   ),
   N_Genes = c(
     length(genes_CAST_high_strong), length(genes_CAST_high_mod),
     length(genes_B6_high_strong), length(genes_B6_high_mod),
     length(genes_main_only),
-    length(genes_PM_biggest_effect), length(genes_MAX_biggest_effect),
-    length(genes_POST_biggest_effect), length(genes_opposite_directions),
-    length(genes_domain_static), length(genes_domain_time_affected),
-    length(genes_domain_time_varying),
+    length(genes_PM_strongest_strain), length(genes_MAX_strongest_strain),
+    length(genes_POST_strongest_strain), length(genes_opposite_directions),
+    length(genes_high_domain_specificity),
+    length(genes_domain_strain_static), length(genes_domain_strain_time_affected),
+    nrow(domain_strain_patterns |> filter(time_status == "Threeway (see threeway_patterns)")),
     length(genes_diverging_CAST_faster), length(genes_diverging_B6_faster),
     length(genes_time_uniform), length(genes_time_domain_affected),
-    length(genes_time_domain_specific),
     length(genes_threeway_complex), length(genes_threeway_initial),
-    length(genes_threeway_dynamic),
-    length(genes_strain_PM_only), length(genes_strain_MAX_only),
-    length(genes_strain_POST_only), length(genes_strain_all_domains),
-    length(genes_strain_domain_specific_static), 
-    length(genes_strain_domain_specific_dynamic)
+    length(genes_threeway_dynamic)
   ),
   Description = c(
     "All strain-affected genes, marginal LFC > 1", 
@@ -349,34 +335,28 @@ pattern_summary <- tibble(
     "All strain-affected genes, marginal LFC < -1", 
     "All strain-affected genes, -1 ≤ marginal LFC < -0.5",
     "Subset with no domain, time, or three-way interactions",
-    "Domain int. sig, largest |effect| in PM", 
-    "Domain int. sig, largest |effect| in MAX",
-    "Domain int. sig, largest |effect| in POST", 
-    "Domain int. sig, effect direction varies",
+    "Domain int. sig, PM has strongest |strain effect|", 
+    "Domain int. sig, MAX has strongest |strain effect|",
+    "Domain int. sig, POST has strongest |strain effect|", 
+    "Domain int. sig, strain effect direction varies across domains",
+    "Domain int. sig, strain effect range > 1.0 log2FC across domains",
     "Domain int. sig, no time/3-way interaction",
-    "Domain int. sig, has time interaction (may shift)",
-    "Domain int. sig, has 3-way interaction (changes over time)",
-    "Time int. sig, positive slope", 
-    "Time int. sig, negative slope",
+    "Domain int. sig, has time interaction (may shift pattern)",
+    "Domain int. sig, has 3-way interaction (pattern changes over time)",
+    "Time int. sig, positive slope (CAST increases faster)", 
+    "Time int. sig, negative slope (B6 increases faster)",
     "Time int. sig, no domain/3-way interaction",
     "Time int. sig, has domain interaction (parallel slopes)",
-    "Time int. sig, has 3-way interaction (domain-specific slopes)",
     "3-way: Domains differ in both t=0 state and slope",
     "3-way: Domains differ mainly at t=0, similar slopes",
-    "3-way: Similar at t=0, divergent slopes",
-    "Domain int. sig, strain effect only in PM at t=0", 
-    "Domain int. sig, strain effect only in MAX at t=0",
-    "Domain int. sig, strain effect only in POST at t=0", 
-    "Domain int. sig, strain effect in all domains at t=0",
-    "Domain-specific effect, no time interaction",
-    "Domain-specific effect, changes over time"
+    "3-way: Similar at t=0, divergent slopes"
   )
 )
 
 print(pattern_summary)
 
 # ===================================================================
-# PART 7: GENE ASSIGNMENT TABLE (add new categories)
+# PART 6: GENE ASSIGNMENT TABLE
 # ===================================================================
 
 all_strain_genes <- strain_effects_classified |>
@@ -394,45 +374,35 @@ gene_assignments <- all_strain_genes |>
     B6_high_mod = gene_id %in% genes_B6_high_mod,
     Main_effect_only = gene_id %in% genes_main_only,
     
-    # Domain interaction patterns
-    PM_biggest_effect = gene_id %in% genes_PM_biggest_effect,
-    MAX_biggest_effect = gene_id %in% genes_MAX_biggest_effect,
-    POST_biggest_effect = gene_id %in% genes_POST_biggest_effect,
+    # Domain × strain interaction patterns
+    PM_strongest_strain = gene_id %in% genes_PM_strongest_strain,
+    MAX_strongest_strain = gene_id %in% genes_MAX_strongest_strain,
+    POST_strongest_strain = gene_id %in% genes_POST_strongest_strain,
     Opposite_directions = gene_id %in% genes_opposite_directions,
-    Domain_static = gene_id %in% genes_domain_static,
-    Domain_time_affected = gene_id %in% genes_domain_time_affected,
-    Domain_time_varying = gene_id %in% genes_domain_time_varying,
+    High_domain_specificity = gene_id %in% genes_high_domain_specificity,
+    Domain_strain_static = gene_id %in% genes_domain_strain_static,
+    Domain_strain_time_affected = gene_id %in% genes_domain_strain_time_affected,
     
-    # Time interaction patterns
+    # Time × strain interaction patterns
     Diverging_CAST_faster = gene_id %in% genes_diverging_CAST_faster,
     Diverging_B6_faster = gene_id %in% genes_diverging_B6_faster,
     Time_uniform = gene_id %in% genes_time_uniform,
     Time_domain_affected = gene_id %in% genes_time_domain_affected,
-    Time_domain_specific = gene_id %in% genes_time_domain_specific,
     
-    # Three-way patterns (updated)
+    # Three-way patterns
     ThreeWay_complex = gene_id %in% genes_threeway_complex,
     ThreeWay_initial = gene_id %in% genes_threeway_initial,
-    ThreeWay_dynamic = gene_id %in% genes_threeway_dynamic,
-    
-    # Domain specificity (updated)
-    Strain_PM_only = gene_id %in% genes_strain_PM_only,
-    Strain_MAX_only = gene_id %in% genes_strain_MAX_only,
-    Strain_POST_only = gene_id %in% genes_strain_POST_only,
-    Strain_all_domains = gene_id %in% genes_strain_all_domains,
-    Domain_specific_static = gene_id %in% genes_strain_domain_specific_static,
-    Domain_specific_dynamic = gene_id %in% genes_strain_domain_specific_dynamic
+    ThreeWay_dynamic = gene_id %in% genes_threeway_dynamic
   )
 
 
 # ===================================================================
-# PART 8: SAVE OUTPUTS
+# PART 7: SAVE OUTPUTS
 # ===================================================================
 
 write_csv(pattern_summary, here("strain_pattern_summary.csv"))
 write_csv(main_patterns, here("main_strain_effect_patterns.csv"))
-write_csv(domain_patterns, here("domain_strain_patterns.csv"))
+write_csv(domain_strain_patterns, here("domain_strain_patterns.csv"))
 write_csv(time_patterns, here("time_strain_patterns.csv"))
 write_csv(threeway_patterns, here("threeway_patterns.csv"))
-write_csv(domain_specificity, here("domain_specificity_patterns.csv"))
 write_csv(gene_assignments, here("strain_gene_pattern_assignments.csv"))
