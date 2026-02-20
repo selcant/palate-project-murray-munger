@@ -46,7 +46,6 @@ library(ggpubr)
 library(patchwork)
 library(DESeq2)
 library(DT)
-library(gprofiler2)
 library(enrichR) # for mammalian phenotypes
 library(here)
 
@@ -60,7 +59,7 @@ count <- dplyr::count
 set.seed(123) # for reproducibility
 
 # Read sample details
-sample_details <- read_csv("/projects/munger-lab/projects/palate-project-murray-munger/samplesheet.csv")
+sample_details <- read_csv(here("../samplesheet.csv"))
 
 # Domain colors
 domain_colors <- c(
@@ -102,163 +101,123 @@ create_dt <- function(x) {
   )
 }
 
-# Function to run ora with both gprofiler2 AND Enrichr
-run_ora_hybrid <- function(gene_ids,
-                                  description = "Gene Set",
-                                  gene_reference = all_genes_palate,
-                                  max_term_size = 660,
-                                  min_term_size = 4) {
+safe_result <- function(x) if (!is.null(x)) x$result else NULL
+
+run_enrichment_hybrid_v2 <- function(gene_ids, 
+                                     description = "Gene Set",
+                                 gene_reference = all_genes_palate,
+                                 max_term_size = 1000,
+                                 min_term_size = 4,
+                                 retries = 3,
+                                 retry_wait = 5) {
+  
+  databases <- c(
+     "GO_Biological_Process_2025",
+      "GO_Cellular_Component_2025",
+      "GO_Molecular_Function_2025",
+      "GWAS_Catalog_2025", 
+      "Human_Phenotype_Ontology",
+      "JASPAR_PWM_Mouse_2025",
+      "MGI_Mammalian_Phenotype_Level_4_2021",
+      "CORUM",
+      "KEGG_2019_Mouse",
+      "Tabula_Muris",
+      # "GTEx_Tissues_V8_2023", # results too broad, not useful
+      # "PerturbAtlas_MouseGenePerturbationSigs", # too big, parser can't handle it!
+      "Mouse_Gene_Atlas",
+      # "DSigDB",
+      "Jensen_DISEASES_Curated_2025",
+      "KOMP2_Mouse_Phenotypes_2022",
+      "WikiPathways_2024_Mouse"
+  )
+  
   # Convert gene IDs to symbols
   query_symbols <- gene_reference |>
     filter(gene_id %in% unique(gene_ids)) |>
     pull(symbol) |>
     unique()
-
+  
   # Get background symbols
   background_symbols <- gene_reference$symbol
-
+  
   # Skip if too few genes
-  if (length(query_symbols) < 5) {
+  if(length(query_symbols) < 5) {
     message(paste0("Skipping ", description, ": fewer than 5 genes"))
     return(NULL)
   }
-
-  # Query 1: gprofiler2 for GO, KEGG, Reactome, WikiPathways
-  result_gprofiler <- gost(
-    query = query_symbols,
-    organism = "mmusculus",
-    domain_scope = "custom",
-    custom_bg = background_symbols,
-    # sources = c("GO:BP", "GO:MF", "GO:CC", "KEGG", "REAC", "WP"),
-    evcodes = TRUE
-  )
-
-  # Query 2: Enrichr for Mammalian Phenotype (full database)
-  result_enrichr <- enrichr(
-    genes = query_symbols,
-    databases = c("MGI_Mammalian_Phenotype_Level_4_2021"),
-    # "MGI_Mammalian_Phenotype_Level_4_2019"),
-    background = background_symbols,
-    include_overlap = TRUE
-  )
-
-  # Format gprofiler results
-  gprofiler_df <- NULL
-  if (!is.null(result_gprofiler$result)) {
-    gprofiler_df <- result_gprofiler$result |>
-      filter(term_size < max_term_size) |>
-      filter(term_size > min_term_size) |>
-      mutate(gene_set = description) |>
-      select(
-        gene_set, source, term_id, term_name, p_value,
-        query_size, term_size, intersection_size, intersection
+  
+  # Query each database individually with tryCatch + retry
+  result_enrichr <- list()
+  
+  for (db in databases) {
+    res <- NULL
+    for (attempt in seq_len(retries)) {
+      res <- tryCatch(
+        enrichr(
+          genes      = query_symbols,
+          databases  = db,
+          background = background_symbols,
+          include_overlap = TRUE
+        ),
+        error = function(e) {
+          message(sprintf("  [%s] Attempt %d failed: %s", db, attempt, e$message))
+          NULL
+        }
       )
+      if (!is.null(res)) break
+      if (attempt < retries) {
+        message(sprintf("  [%s] Retrying in %ds...", db, retry_wait))
+        Sys.sleep(retry_wait)
+      }
+    }
+    
+    if (is.null(res)) {
+      message(sprintf("  [%s] Skipped after %d failed attempts.", db, retries))
+    } else {
+      result_enrichr <- c(result_enrichr, res)
+    }
   }
-
-  # Format Enrichr results to match gprofiler format
+  
+  # Format Enrichr results
   enrichr_df <- NULL
-  if (!is.null(result_enrichr) && length(result_enrichr) > 0) {
-    # Process each database separately
+  if (length(result_enrichr) > 0) {
     enrichr_dfs <- lapply(names(result_enrichr), function(db_name) {
       db_result <- result_enrichr[[db_name]]
-
-      # Check if result has data (not empty or all NA)
+      
       if (is.null(db_result) || nrow(db_result) == 0 || all(is.na(db_result$Term))) {
         return(NULL)
       }
-
+      
       db_result |>
         filter(Adjusted.P.value < 0.05) |>
         mutate(
-          gene_set = description,
-          source = "Mammalian Phenotype",
-          term_id = Term,
-          term_name = Term,
-          p_value = Adjusted.P.value,
-          query_size = length(query_symbols),
-          # Parse Overlap "X/Y" safely
-          intersection_size = suppressWarnings(
-            as.numeric(gsub("/.*", "", Overlap))
-          ),
-          # Note: term_size is the FULL annotation size from the GMT,
-          # not restricted to background genes. This is fine for filtering
-          # but is not the effective term size used in the statistical test.
-          term_size = suppressWarnings(
-            as.numeric(gsub(".*/", "", Overlap))
-          ),
-          intersection = Genes
+          gene_set         = description,
+          source           = db_name,
+          term_name        = Term,
+          p_value          = Adjusted.P.value,
+          query_size       = length(query_symbols),
+          intersection_size = as.numeric(gsub("/.*", "", Overlap)),
+          term_size        = as.numeric(gsub(".*/", "", Overlap)),
+          intersection     = Genes
         ) |>
-        # Drop rows where Overlap parsing failed (e.g., Rank column present instead)
-        filter(!is.na(intersection_size), !is.na(term_size)) |>
-        filter(term_size < max_term_size) |>
-        filter(term_size > min_term_size) |>
-        select(
-          gene_set, source, term_id, term_name, p_value,
-          query_size, term_size, intersection_size, intersection
-        )
+        filter(term_size < max_term_size, term_size > min_term_size) |>
+        select(gene_set, source, term_name, p_value,
+               query_size, term_size, intersection_size, intersection)
     })
-
-    # Remove NULL entries and combine
+    
     enrichr_dfs <- enrichr_dfs[!sapply(enrichr_dfs, is.null)]
     if (length(enrichr_dfs) > 0) {
       enrichr_df <- bind_rows(enrichr_dfs)
     }
   }
-
-  # Combine results
-  combined_result <- bind_rows(gprofiler_df, enrichr_df)
-
-  if (nrow(combined_result) > 0) {
+  
+  combined_result <- enrichr_df
+  
+  if (!is.null(combined_result) && nrow(combined_result) > 0) {
     return(list(result = combined_result))
   } else {
     return(NULL)
   }
-}
-
-# Updated format function
-format_ora_result <- function(ora_table) {
-  all_results <- ora_table$result
-
-  if (nrow(all_results) == 0) {
-    message("No significant ora results found")
-    return(NULL)
-  }
-
-  # Format for display
-  all_results |>
-    mutate(
-      # Make source more readable
-      source_type = case_when(
-        source == "GO:BP" ~ "GO: Biological Process",
-        source == "GO:MF" ~ "GO: Molecular Function",
-        source == "GO:CC" ~ "GO: Cellular Component",
-        source == "KEGG" ~ "KEGG Pathways",
-        source == "REAC" ~ "Reactome Pathways",
-        source == "WP" ~ "WikiPathways",
-        source == "Mammalian Phenotype" ~ "Mammalian Phenotype (MGI)",
-        TRUE ~ source
-      )
-    ) |>
-    select(gene_set,
-      source = source_type, term_id, term_name, p_value,
-      query_size, term_size, intersection_size, intersection
-    ) |>
-    mutate(
-      p_value_fmt = formatC(as.numeric(p_value), digits = 2, format = "e"),
-      genes = sapply(strsplit(as.character(intersection), "[,;]"), function(x) {
-        x <- trimws(x)
-        if (length(x) > 5) {
-          paste0(paste(x[1:5], collapse = ", "), ", ...")
-        } else {
-          paste(x, collapse = ", ")
-        }
-      })
-    ) |>
-    select(gene_set, source, term_name,
-      p_value = p_value_fmt,
-      query_size, term_size, intersection_size, genes
-    ) |>
-    arrange(gene_set, source, p_value)
 }
 
 # plotting-functions
@@ -993,36 +952,7 @@ plot_pattern_distribution <- function(trajectory_patterns, pattern_col, title) {
     theme(legend.position = "right")
 }
 
-# ===== FUNCTION: Create trajectory summary table =====
-create_trajectory_summary <- function(trajectory_patterns) {
-  # Summarize by overall pattern
-  overall_summary <- trajectory_patterns |>
-    count(overall_pattern, name = "n_genes") |>
-    mutate(
-      category = case_when(
-        grepl("All↑|All↓", overall_pattern) ~ "All same direction",
-        grepl("only", overall_pattern) ~ "Single domain dynamic",
-        grepl("stable", overall_pattern) & grepl("\\+", overall_pattern) ~ "Two domains dynamic",
-        grepl("↑.*↓|↓.*↑", overall_pattern) ~ "Opposite directions",
-        TRUE ~ "Other"
-      )
-    ) |>
-    arrange(category, desc(n_genes))
 
-  # Summarize by pairwise patterns
-  pairwise_summary <- bind_rows(
-    trajectory_patterns |> count(MAX_PM_pattern) |> mutate(comparison = "MAX vs PM") |> rename(pattern = MAX_PM_pattern),
-    trajectory_patterns |> count(POST_PM_pattern) |> mutate(comparison = "POST vs PM") |> rename(pattern = POST_PM_pattern),
-    trajectory_patterns |> count(POST_MAX_pattern) |> mutate(comparison = "POST vs MAX") |> rename(pattern = POST_MAX_pattern)
-  ) |>
-    filter(!pattern %in% c("Both stable", "Unclassified")) |>
-    arrange(comparison, desc(n))
-
-  list(
-    overall = overall_summary,
-    pairwise = pairwise_summary
-  )
-}
 ```
 
 ```{r}
@@ -1031,7 +961,7 @@ create_trajectory_summary <- function(trajectory_patterns) {
 #| message: false
 
 # Loading the count data
-load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts_v4.RData")
+load(here("../read_mapping/palate_gbrs_emase_counts_v4.RData") )
 
 # Clean up expression matrix
 expr_mat <- expr_mat_nondo
@@ -1140,19 +1070,18 @@ b6_dds <- DESeqDataSetFromMatrix(
   colData = b6_coldata,
   design = ~1
 )
+# Update LB-stage to have 0 as the starting point
+min_LB_stage <- min(colData(b6_dds)$LB_stage)
+colData(b6_dds)$LB_stage_from_start <- colData(b6_dds)$LB_stage - min_LB_stage
 
 # Collapse the sequencing replicates
 b6_dds_coll <- collapseReplicates(b6_dds, b6_dds$unique_sampleid)
 
-# Update LB-stage to have 0 as the starting point
-min_LB_stage <- min(colData(b6_dds_coll)$LB_stage)
-colData(b6_dds_coll)$LB_stage_from_start <- colData(b6_dds_coll)$LB_stage - min_LB_stage
-
 # Define design matrices
-b6_simple_model <- model.matrix(~ sex + ind:AP_domain + LB_stage_from_start + AP_domain,
+b6_simple_model <- model.matrix(~ sex + LB_stage_from_start + AP_domain,
   data = colData(b6_dds_coll)
 )
-b6_comp_model <- model.matrix(~ sex + ind:AP_domain + LB_stage_from_start * AP_domain,
+b6_comp_model <- model.matrix(~ sex + LB_stage_from_start * AP_domain,
   data = colData(b6_dds_coll)
 )
 
@@ -1278,7 +1207,7 @@ slope_PM <- results(b6_dds_interaction, name = "LB_stage_from_start") |>
 slope_MAX <- results(b6_dds_interaction,
   contrast = list(c(
     "LB_stage_from_start",
-    "AP_domainMAX.LB_stage_from_start"
+    "LB_stage_from_start.AP_domainMAX" 
   ))
 ) |>
   as_tibble(rownames = "gene_id") |>
@@ -1289,7 +1218,7 @@ slope_MAX <- results(b6_dds_interaction,
 slope_POST <- results(b6_dds_interaction,
   contrast = list(c(
     "LB_stage_from_start",
-    "AP_domainPOST.LB_stage_from_start"
+    "LB_stage_from_start.AP_domainPOST"
   ))
 ) |>
   as_tibble(rownames = "gene_id") |>
@@ -1309,7 +1238,7 @@ b6_domain_slopes_clean <- filter_genes(
 
 # 3. SLOPE DIFFERENCES (interaction terms - how different are the slopes?)
 slope_diff_MAX_vs_PM <- results(b6_dds_interaction,
-  name = "AP_domainMAX.LB_stage_from_start"
+  name = "LB_stage_from_start.AP_domainMAX"
 ) |>
   as_tibble(rownames = "gene_id") |>
   filter(gene_id %in% genes_with_interaction) |>
@@ -1317,7 +1246,7 @@ slope_diff_MAX_vs_PM <- results(b6_dds_interaction,
   left_join(all_genes_palate, by = "gene_id")
 
 slope_diff_POST_vs_PM <- results(b6_dds_interaction,
-  name = "AP_domainPOST.LB_stage_from_start"
+  name = "LB_stage_from_start.AP_domainPOST"
 ) |>
   as_tibble(rownames = "gene_id") |>
   filter(gene_id %in% genes_with_interaction) |>
@@ -1326,8 +1255,8 @@ slope_diff_POST_vs_PM <- results(b6_dds_interaction,
 
 slope_diff_POST_vs_MAX <- results(b6_dds_interaction,
   contrast = list(c(
-    "AP_domainPOST.LB_stage_from_start",
-    "AP_domainMAX.LB_stage_from_start"
+    "LB_stage_from_start.AP_domainPOST",
+    "LB_stage_from_start.AP_domainMAX"
   ))
 ) |>
   as_tibble(rownames = "gene_id") |>
@@ -1503,11 +1432,11 @@ genes_three_way_divergent <- trajectory_patterns |>
 
 Here, I analyze the B6 data on its own to identify genes differentially expressed across AP domains, over developmental time and change differently over time across domains.
 The data from B6 animals includes males and females, and contain the three AP domains (PM, MAX and POST) obtained at various developmental stages (LB_stage).
-I merge the technical replicates due to re-sequencing of several samples using `collapseReplicates()` function from DESeq2. Next, I calculate the relative or centered limb bud (LB) stage (LB_stage_from_start), where I subtract the minimum observed stage so that 0 represents the earliest developmental time point in the data set.
+I merge the technical replicates due to re-sequencing of several samples using `collapseReplicates()` function from DESeq2. Next, I calculate the relative or centered limb bud (LB) stage (LB_stage_from_start), where I subtract the minimum observed stage so that 0 represents the earliest developmental time point in the data set. 
 
-In order to identify differentially expressed genes between domains and developmental time, I obtain the main effects for domain (`AP_domain`) and centered developmental time (`LB_stage_from_start`) while using a nesting for the domain since they are obtained from the same animal (`~ sex + AP_domain + LB_stage_from_start + AP_domain:ind`).
+In order to identify differentially expressed genes between domains and developmental time, I obtain the main effects for domain (`AP_domain`) and centered developmental time (`LB_stage_from_start`) while omiting a nesting for the domain since they are obtained from the same animal (`~ sex + AP_domain + LB_stage_from_start `).T he domains are collected from the same individual resulting in a repeated measure setup however variance partition analysis showed that individual-level variation accounted for a negligible proportion of transcriptional variance (median < 0.01%, mean 1.5%), therefore I omitted the nesting as an effect in the DeSeq2 model (`ind:AP_domain`). 
 
-For identifying genes with significant interactions between domain and time, meaning they have different spatiotemporal gene expression patterns, I use the likelihood ratio test (LRT) to compare the initial simple model to the more complex linear model that includes the interaction term (`~ sex + AP_domain + LB_stage_from_start + AP_domain:ind + AP_domain:LB_stage_from_start`).
+For identifying genes with significant interactions between domain and time, meaning they have different spatiotemporal gene expression patterns, I use the likelihood ratio test (LRT) to compare the initial simple model to the more complex linear model that includes the interaction term (`~ sex + AP_domain + LB_stage_from_start  + AP_domain:LB_stage_from_start`).
 Once I have this differentially expressed gene list, I then use the complex model to estimate domain-specific developmental slopes.
 
 From this analysis, I have identified **`r length(unique(b6_domain_main_effects_clean$gene_id))`** genes with domain main effects, **`r length(unique(b6_stage_main_effects_clean$gene_id))`** genes with stage main effects, and  **`r length(genes_with_interaction)`** genes with significant domain × stage interactions. I used `DEgene_pattern_identification_B6.R` script to classify these differentially expressed genes into sub-categories based on expression patterns.
@@ -1812,7 +1741,9 @@ b6_domain_main_effects_clean |>
 #| message: false
 
 b6_domain_main_effects_clean |>
-  filter(gene_id %in% genes_PM_highest) |>
+  filter(gene_id %in% genes_PM_highest |
+          gene_id %in% genes_MAX_highest |
+           gene_id %in% genes_POST_highest ) |>
   select(gene_id, symbol, chromosome, Comparison, log2FoldChange, padj) |>
   distinct(gene_id, .keep_all = TRUE) |>
   arrange(desc(log2FoldChange)) |>
@@ -1844,56 +1775,56 @@ b6_domain_main_effects_clean |>
 #| results: hide
 #| cache: true
 
-genes_MAX_higher_than_PM_ora <- run_ora_hybrid(
+genes_MAX_higher_than_PM_ora <- run_enrichment_hybrid_v2(
   gene_ids = genes_MAX_higher_than_PM,
   description = "MAX higher than PM"
 )
 
-genes_MAX_lower_than_PM_ora <- run_ora_hybrid(
+genes_MAX_lower_than_PM_ora <- run_enrichment_hybrid_v2(
   gene_ids = genes_MAX_lower_than_PM,
   description = "MAX lower than PM"
 )
 
-genes_POST_higher_than_PM_ora <- run_ora_hybrid(
+genes_POST_higher_than_PM_ora <- run_enrichment_hybrid_v2(
   gene_ids = genes_POST_higher_than_PM,
   description = "POST higher than PM"
 )
 
-genes_POST_lower_than_PM_ora <- run_ora_hybrid(
+genes_POST_lower_than_PM_ora <- run_enrichment_hybrid_v2(
   gene_ids = genes_POST_lower_than_PM,
   description = "POST lower than PM"
 )
 
-genes_POST_higher_than_MAX_ora <- run_ora_hybrid(
+genes_POST_higher_than_MAX_ora <- run_enrichment_hybrid_v2(
   gene_ids = genes_POST_higher_than_MAX,
   description = "POST higher than MAX"
 )
 
-genes_POST_lower_than_MAX_ora <- run_ora_hybrid(
+genes_POST_lower_than_MAX_ora <- run_enrichment_hybrid_v2(
   gene_ids = genes_POST_lower_than_MAX,
   description = "POST lower than MAX"
 )
 
-genes_PM_highest_ora <- run_ora_hybrid(
+genes_PM_highest_ora <- run_enrichment_hybrid_v2(
   gene_ids = genes_PM_highest,
   description = "PM highest"
 )
 
-genes_MAX_highest_ora <- run_ora_hybrid(
+genes_MAX_highest_ora <- run_enrichment_hybrid_v2(
   gene_ids = genes_MAX_highest,
   description = "MAX highest"
 )
 
-genes_POST_highest_ora <- run_ora_hybrid(
+genes_POST_highest_ora <- run_enrichment_hybrid_v2(
   gene_ids = genes_POST_highest,
   description = "POST highest"
 )
 
-genes_AP_decreasing_ora <- run_ora_hybrid(
+genes_AP_decreasing_ora <- run_enrichment_hybrid_v2(
   gene_ids = genes_AP_decreasing,
   description = "A→P decreasing"
 )
-genes_AP_increasing_ora <- run_ora_hybrid(
+genes_AP_increasing_ora <- run_enrichment_hybrid_v2(
   gene_ids = genes_AP_increasing,
   description = "A→P increasing"
 )
@@ -2046,14 +1977,14 @@ b6_stage_main_effects_clean |>
 #| cache: true
 
 # Run ora on all sets
-dev_decreasing_ora <- run_ora_hybrid(
+dev_decreasing_ora <- run_enrichment_hybrid_v2(
   gene_ids = b6_stage_main_effects_clean |>
     filter(Direction == "Decrease") |>
     pull(gene_id),
   description = "Decrease"
 )
 
-dev_increasing_ora <- run_ora_hybrid(
+dev_increasing_ora <- run_enrichment_hybrid_v2(
   gene_ids = b6_stage_main_effects_clean |>
     filter(Direction == "Increase") |>
     pull(gene_id),
@@ -2476,12 +2407,12 @@ trajectory_patterns |>
 #| results: hide
 #| cache: true
 
-ora_MAX_up_PM_down <- run_ora_hybrid(gene_ids = genes_MAX_up_PM_down, description = "MAX↑ PM↓")
-ora_MAX_down_PM_up <- run_ora_hybrid(gene_ids = genes_MAX_down_PM_up, description = "MAX↓ PM↑")
-ora_POST_up_PM_down <- run_ora_hybrid(gene_ids = genes_POST_up_PM_down, description = "POST↑ PM↓")
-ora_POST_down_PM_up <- run_ora_hybrid(gene_ids = genes_POST_down_PM_up, description = "POST↓ PM↑")
-ora_coinc_MAX_faster <- run_ora_hybrid(gene_ids = genes_coinc_MAX_faster_PM, description = "Co-increasing: MAX faster")
-ora_coinc_POST_faster <- run_ora_hybrid(gene_ids = genes_coinc_POST_faster_PM, description = "Co-increasing: POST faster")
+ora_MAX_up_PM_down <- run_enrichment_hybrid_v2(gene_ids = genes_MAX_up_PM_down, description = "MAX↑ PM↓")
+ora_MAX_down_PM_up <- run_enrichment_hybrid_v2(gene_ids = genes_MAX_down_PM_up, description = "MAX↓ PM↑")
+ora_POST_up_PM_down <- run_enrichment_hybrid_v2(gene_ids = genes_POST_up_PM_down, description = "POST↑ PM↓")
+ora_POST_down_PM_up <- run_enrichment_hybrid_v2(gene_ids = genes_POST_down_PM_up, description = "POST↓ PM↑")
+ora_coinc_MAX_faster <- run_enrichment_hybrid_v2(gene_ids = genes_coinc_MAX_faster_PM, description = "Co-increasing: MAX faster")
+ora_coinc_POST_faster <- run_enrichment_hybrid_v2(gene_ids = genes_coinc_POST_faster_PM, description = "Co-increasing: POST faster")
 ```
 
 ```{r}
@@ -2730,15 +2661,24 @@ if (nrow(gene_list_tbl) > 0) {
 #| results: hide
 #| cache: true
 
-ora_PM_only_up <- run_ora_hybrid(gene_ids = genes_PM_only_up, description = "PM↑ only")
-ora_PM_only_down <- run_ora_hybrid(gene_ids = genes_PM_only_down, description = "PM↓ only")
-ora_MAX_only_up <- run_ora_hybrid(gene_ids = genes_MAX_only_up, description = "MAX↑ only")
-ora_MAX_only_down <- run_ora_hybrid(gene_ids = genes_MAX_only_down, description = "MAX↓ only")
-ora_POST_only_up <- run_ora_hybrid(genes_POST_only_up, "POST↑ only")
-ora_POST_only_down <- run_ora_hybrid(genes_POST_only_down, "POST↓ only")
-ora_PM_MAX_up <- run_ora_hybrid(genes_PM_MAX_up, "PM+MAX↑")
-ora_MAX_POST_up <- run_ora_hybrid(genes_MAX_POST_up, "MAX+POST↑")
-ora_PM_POST_up <- run_ora_hybrid(genes_PM_POST_up, "PM+POST↑")
+ora_PM_only_up <- run_enrichment_hybrid_v2(gene_ids = genes_PM_only_up, 
+                                           description = "PM↑ only")
+ora_PM_only_down <- run_enrichment_hybrid_v2(gene_ids = genes_PM_only_down, 
+                                             description = "PM↓ only")
+ora_MAX_only_up <- run_enrichment_hybrid_v2(gene_ids = genes_MAX_only_up, 
+                                            description = "MAX↑ only")
+ora_MAX_only_down <- run_enrichment_hybrid_v2(gene_ids = genes_MAX_only_down, 
+                                              description = "MAX↓ only")
+ora_POST_only_up <- run_enrichment_hybrid_v2(gene_ids = genes_POST_only_up, 
+                                             description = "POST↑ only")
+ora_POST_only_down <- run_enrichment_hybrid_v2(gene_ids = genes_POST_only_down, 
+                                               description = "POST↓ only")
+ora_PM_MAX_up <- run_enrichment_hybrid_v2(gene_ids = genes_PM_MAX_up, 
+                                          description = "PM+MAX↑")
+ora_MAX_POST_up <- run_enrichment_hybrid_v2(gene_ids = genes_MAX_POST_up, 
+                                            description = "MAX+POST↑")
+ora_PM_POST_up <- run_enrichment_hybrid_v2(gene_ids = genes_PM_POST_up, 
+                                           description = "PM+POST↑")
 
 ```
 
@@ -2749,10 +2689,15 @@ ora_PM_POST_up <- run_ora_hybrid(genes_PM_POST_up, "PM+POST↑")
 #| message: false
 
 domain_specific_ora_results <- bind_rows(
-  ora_PM_only_up$result, ora_PM_only_down$result,
-  ora_MAX_only_up$result, ora_MAX_only_down$result,
-  ora_POST_only_up$result, ora_POST_only_down$result,
-  ora_PM_MAX_up$result, ora_MAX_POST_up$result, ora_PM_POST_up$result
+  safe_result(ora_PM_only_up), 
+  safe_result(ora_PM_only_down),
+  safe_result(ora_MAX_only_up), 
+  safe_result(ora_MAX_only_down),
+  safe_result(ora_POST_only_up), 
+  safe_result(ora_POST_only_down),
+  safe_result(ora_PM_MAX_up), 
+  safe_result(ora_MAX_POST_up), 
+  safe_result(ora_PM_POST_up)
 )
 
 if (!is.null(domain_specific_ora_results) && nrow(domain_specific_ora_results) > 0) {
@@ -2876,10 +2821,11 @@ if (nrow(gene_list_tbl) > 0) {
 #| results: hide
 #| cache: true
 
-ora_all_increasing <- run_ora_hybrid(genes_all_increasing, "All↑")
-ora_all_decreasing <- run_ora_hybrid(genes_all_decreasing, "All↓")
-ora_opposite <- run_ora_hybrid(genes_opposite_slopes, "Opposite slopes")
-ora_three_way <- run_ora_hybrid(genes_three_way_divergent, "Three-way divergent")
+ora_all_increasing <- run_enrichment_hybrid_v2(gene_ids = genes_all_increasing, 
+                                               description = "All↑")
+ora_all_decreasing <- run_enrichment_hybrid_v2(gene_ids = genes_all_decreasing, description = "All↓")
+ora_opposite <- run_enrichment_hybrid_v2(gene_ids = genes_opposite_slopes, description = "Opposite slopes")
+ora_three_way <- run_enrichment_hybrid_v2(gene_ids = genes_three_way_divergent, description = "Three-way divergent")
 ```
 
 ```{r}
@@ -2888,10 +2834,10 @@ ora_three_way <- run_ora_hybrid(genes_three_way_divergent, "Three-way divergent"
 #| message: false
 
 complex_ora <- bind_rows(
-  ora_all_increasing$result,
-  ora_all_decreasing$result,
-  ora_opposite$result,
-  ora_three_way$result
+  safe_result(ora_all_increasing),
+  safe_result(ora_all_decreasing),
+  safe_result(ora_opposite),
+  safe_result(ora_three_way)
 )
 if (!is.null(complex_ora) && nrow(complex_ora) > 0) {
   complex_ora |>
