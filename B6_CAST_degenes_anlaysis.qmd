@@ -69,7 +69,7 @@ create_dt <- function(x){
   format_num <- function(val) {
     case_when(
       is.na(val) ~ "NA",
-      abs(val) < 0.01 ~ formatC(val, digits = 2),
+      abs(val) < 0.01 ~ formatC(val, digits = 2, format = "e"),
       TRUE ~ formatC(round(val, 2))
     )
   }
@@ -120,11 +120,9 @@ filter_deseq_results <- function(res,
 get_passing_genes <- function(res, ...) {
   filter_deseq_results(res, ...) |> pull(gene_id)
 }
-get_normalized_counts <- function(dds, genes, vsd = NULL) {
-  if (is.null(vsd)) {
-    # Fallback: compute if not pre-computed (slower)
-    vsd <- vst(dds, blind = FALSE)
-  }
+
+get_vst_counts <- function(dds, genes, vsd = NULL) {  # renamed for clarity
+  if (is.null(vsd)) vsd <- vst(dds, blind = FALSE)
   assay(vsd)[genes, , drop = FALSE] |>
     as.data.frame() |>
     rownames_to_column("gene_id") |>
@@ -132,6 +130,7 @@ get_normalized_counts <- function(dds, genes, vsd = NULL) {
     left_join(colData(dds) |> as.data.frame() |> rownames_to_column("sample"), by = "sample") |>
     left_join(all_genes_palate |> select(gene_id, symbol), by = "gene_id")
 }
+
 
 run_enrichment_hybrid_v2 <- function(gene_ids, 
                                  gene_reference = all_genes_palate,
@@ -262,14 +261,14 @@ plot_main_strain_effect <- function(gene_ids, direction, count_data, n = 5) {
       geom_point(alpha = 0.4, size = 2) +
       geom_smooth(method = "loess", se = TRUE, alpha = 0.2, linewidth = 1) +
       facet_wrap(~ AP_domain, nrow = 1) +
-      scale_y_log10(labels = scales::comma) + 
+      scale_y_continuous(labels = scales::comma) + 
       scale_color_manual(values = strain_colors) +
       labs(title = gene_name, subtitle = direction, x = "LB stage (centered)", y = "Normalized Counts") +
       theme_pubclean(base_size = 16) +
       theme(legend.position = "none", plot.title = element_text(face = "bold"), strip.text = element_text(face = "bold"))
     p2 <- ggplot(gene_data, aes(x = strain, y = count, fill = strain)) +
       geom_boxplot(alpha = 0.7, outlier.shape = NA) + geom_jitter(width = 0.2, alpha = 0.3, size = 1) +
-      scale_y_log10(labels = scales::comma) + 
+      scale_y_continuous(labels = scales::comma) + 
       scale_fill_manual(values = strain_colors) +
       labs(x = "", y = "") + theme_pubclean(base_size = 16) + theme(legend.position = "none")
     p1 + p2 + plot_layout(widths = c(3, 1))
@@ -310,7 +309,7 @@ plot_domain_strain_base <- function(gene_ids, pattern_desc, count_data,
       geom_point(aes(color = strain),
                  position = position_jitterdodge(jitter.width = 0.15),
                  alpha = 0.4, size = 1.5) +
-      scale_y_log10(labels = scales::comma) +
+      scale_y_continuous(labels = scales::comma) +
       scale_fill_manual(values  = strain_colors) +
       scale_color_manual(values = strain_colors) +
       labs(title = gene_name, subtitle = pattern_desc,
@@ -361,7 +360,7 @@ plot_domain_strain_profile <- function(gene_ids, pattern_desc, count_data,
                                    color = strain, group = strain)) +
       geom_line(linewidth = 1.2) +
       geom_pointrange(aes(ymin = mn - se, ymax = mn + se), size = 0.8) +
-      scale_y_log10(labels = scales::comma) +
+      scale_y_continuous(labels = scales::comma) +
       scale_color_manual(values = strain_colors) +
       labs(title = gene_name, subtitle = pattern_desc,
            x = "Domain", y = "Mean Normalized Counts (±SE)") +
@@ -407,7 +406,7 @@ plot_domain_strain_temporal <- function(gene_ids, pattern_desc, count_data,
       geom_point(aes(color = strain),
                  position = position_jitterdodge(jitter.width = 0.15),
                  alpha = 0.4, size = 1.5) +
-      scale_y_log10(labels = scales::comma) +
+      scale_y_continuous(labels = scales::comma) +
       scale_fill_manual(values  = strain_colors) +
       scale_color_manual(values = strain_colors) +
       labs(title = gene_name, subtitle = pattern_desc,
@@ -421,7 +420,7 @@ plot_domain_strain_temporal <- function(gene_ids, pattern_desc, count_data,
       geom_point(alpha = 0.5, size = 1.5) +
       geom_smooth(method = "loess", se = TRUE, alpha = 0.15, linewidth = 1.2) +
       facet_wrap(~ strain, nrow = 1) +
-      scale_y_log10(labels = scales::comma) +
+      scale_y_continuous(labels = scales::comma) +
       scale_color_manual(values = domain_colors) +
       labs(x = "LB stage (centered)", y = "Normalized Counts", color = "Domain") +
       theme_pubclean(base_size = 16) +
@@ -460,7 +459,7 @@ plot_time_strain_overview <- function(gene_ids, pattern_desc, count_data, n = 5)
                          aes(x = LB_stage_from_start, y = count, color = strain)) +
       geom_point(aes(shape = AP_domain), alpha = 0.5, size = 2.5) +
       geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1.5) +
-      scale_y_log10(labels = scales::comma) +
+      scale_y_continuous(labels = scales::comma) +
       scale_color_manual(values = strain_colors) +
       scale_shape_manual(values = c(PM = 16, MAX = 17, POST = 15)) +
       labs(title = gene_name, subtitle = pattern_desc,
@@ -476,7 +475,7 @@ plot_time_strain_overview <- function(gene_ids, pattern_desc, count_data, n = 5)
       geom_point(alpha = 0.5, size = 1.5) +
       geom_smooth(method = "loess", se = TRUE, alpha = 0.15, linewidth = 1.2) +
       facet_wrap(~ strain, nrow = 1) +
-      scale_y_log10(labels = scales::comma) +
+      scale_y_continuous(labels = scales::comma) +
       scale_color_manual(values = domain_colors) +
       labs(x = "LB stage (centered)", y = "Normalized Counts", color = "Domain") +
       theme_pubclean(base_size = 16) +
@@ -508,14 +507,14 @@ plot_time_strain_interaction <- function(gene_ids, pattern_desc, count_data, n =
     p1 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = strain)) +
       geom_point(aes(shape = AP_domain), alpha = 0.5, size = 2.5) +
       geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1.5) +
-      scale_y_log10(labels = scales::comma) + scale_color_manual(values = strain_colors) +
+      scale_y_continuous(labels = scales::comma) + scale_color_manual(values = strain_colors) +
       labs(title = gene_name, subtitle = pattern_desc, x = "LB stage (centered)", y = "Normalized Counts") +
       theme_pubclean(base_size = 16) + theme(legend.position = "right", plot.title = element_text(face = "bold"))
     
     p2 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = strain)) +
       geom_point(alpha = 0.4, size = 1.5) + geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
       facet_wrap(~ AP_domain, nrow = 1) +
-      scale_y_log10(labels = scales::comma) + scale_color_manual(values = strain_colors) +
+      scale_y_continuous(labels = scales::comma) + scale_color_manual(values = strain_colors) +
       labs(x = "LB stage (centered)", y = "Normalized Counts") +
       theme_pubclean(base_size = 16) + theme(legend.position = "none", strip.text = element_text(face = "bold"))
     
@@ -537,13 +536,13 @@ plot_domain_specificity <- function(gene_ids, domains_affected, count_data, n = 
     p1 <- ggplot(gene_data, aes(x = AP_domain, y = count, fill = strain)) +
       geom_boxplot(alpha = 0.7, outlier.shape = NA) +
       geom_point(aes(color = strain), position = position_jitterdodge(jitter.width = 0.1), alpha = 0.4, size = 1.5) +
-      scale_y_log10(labels = scales::comma) + scale_fill_manual(values = strain_colors) + scale_color_manual(values = strain_colors) +
+      scale_y_continuous(labels = scales::comma) + scale_fill_manual(values = strain_colors) + scale_color_manual(values = strain_colors) +
       labs(title = gene_name, subtitle = paste("Strain effect in", domains_affected), x = "Domain", y = "Normalized Counts") +
       theme_pubclean(base_size = 16) + theme(legend.position = "bottom", plot.title = element_text(face = "bold"))
     p2 <- ggplot(gene_data, aes(x = LB_stage_from_start, y = count, color = strain)) +
       geom_point(alpha = 0.4, size = 1.5) + geom_smooth(method = "loess", se = TRUE, alpha = 0.2) +
       facet_wrap(~ AP_domain, nrow = 1) +
-      scale_y_log10(labels = scales::comma) + scale_color_manual(values = strain_colors) +
+      scale_y_continuous(labels = scales::comma) + scale_color_manual(values = strain_colors) +
       labs(x = "LB stage (centered)", y = "Normalized Counts") +
       theme_pubclean(base_size = 16) + theme(legend.position = "none", strip.text = element_text(face = "bold"))
     p1 / p2 + plot_layout(heights = c(1, 1))
@@ -559,8 +558,8 @@ plot_domain_specificity <- function(gene_ids, domains_affected, count_data, n = 
 #| message: false
 #| warning: false
 
-sample_details <- read_csv("/projects/munger-lab/projects/palate-project-murray-munger/samplesheet.csv") 
-load("/projects/munger-lab/projects/palate-project-murray-munger/read_mapping/palate_gbrs_emase_counts_v4.RData")
+sample_details <- read_csv(here("../samplesheet.csv")) 
+load( here("../read_mapping/palate_gbrs_emase_counts_v4.RData"))
 
 contam_samples <- c("B6_12.5_PM_1","B6_13.5_POST_3", "CAST_14.5_MAX_7", "B6_13.5_MAX_3")
 expr_mat <- expr_mat_nondo[, !colnames(expr_mat_nondo) %in% contam_samples]
@@ -607,13 +606,17 @@ coldata <- b6_cast_samples |>
 cts <- round(raw_expr_mat[all_genes_palate$gene_id, rownames(coldata), drop = FALSE])
 
 strain_dds <- DESeqDataSetFromMatrix(countData = cts, colData = coldata, design = ~1)
+# center LB stage
+min_LB_stage <- min(colData(strain_dds)$LB_stage)
+colData(strain_dds)$LB_stage_from_start <- colData(strain_dds)$LB_stage - min_LB_stage
+# update covariates to factors
+colData(strain_dds)$sex <- factor(colData(strain_dds)$sex)
+colData(strain_dds)$strain <- factor(colData(strain_dds)$strain, levels = c("B6", "CAST"))
+colData(strain_dds)$ind <- factor(colData(strain_dds)$ind)
+
+# collapse replicates
 strain_dds_coll <- collapseReplicates(strain_dds, strain_dds$unique_sampleid)
 
-min_LB_stage <- min(colData(strain_dds_coll)$LB_stage)
-colData(strain_dds_coll)$LB_stage_from_start <- colData(strain_dds_coll)$LB_stage - min_LB_stage
-colData(strain_dds_coll)$sex <- factor(colData(strain_dds_coll)$sex)
-colData(strain_dds_coll)$strain <- factor(colData(strain_dds_coll)$strain, levels = c("B6", "CAST"))
-colData(strain_dds_coll)$ind <- factor(colData(strain_dds_coll)$ind)
 
 
 # ── Fit all the models  ─────────────────────────────────────────────
@@ -629,16 +632,18 @@ design(strain_dds_twoway) <- ~ sex + AP_domain + LB_stage_from_start  +
 strain_dds_twoway <- DESeq(strain_dds_twoway, parallel = TRUE)
 
 # 3. Full model
-design(strain_dds_coll) <- ~ sex + AP_domain + LB_stage_from_start  + 
+strain_dds_full <- strain_dds_coll
+design(strain_dds_full) <- ~ sex + AP_domain + LB_stage_from_start  + 
                              strain + strain:AP_domain + strain:LB_stage_from_start + 
                              strain:AP_domain:LB_stage_from_start
-strain_dds_full <- DESeq(strain_dds_coll, parallel = TRUE)
+strain_dds_full <- DESeq(strain_dds_full, parallel = TRUE)
 coef_names <- resultsNames(strain_dds_full)
 
 # ── LRT tests  ────────────────────────────────────────────
 # 1. Any strain effect at all
 strain_dds_lrt <- DESeq(strain_dds_additive, test = "LRT", 
                         reduced = ~ sex + AP_domain + LB_stage_from_start  ,
+                        full = ~ sex + AP_domain + LB_stage_from_start  + strain,
                         parallel = TRUE)
 res_strain_lrt <- results(strain_dds_lrt)
 genes_w_strain_eff <- res_strain_lrt |> 
@@ -650,6 +655,8 @@ genes_w_strain_eff <- res_strain_lrt |>
 dds_domain_lrt <- DESeq(strain_dds_twoway, test = "LRT",
                         reduced = ~ sex + AP_domain + LB_stage_from_start  + 
                                    strain + strain:LB_stage_from_start,
+                        full = ~ sex + AP_domain + LB_stage_from_start  +
+                                   strain + strain:AP_domain + strain:LB_stage_from_start,
                         parallel = TRUE)
 res_domain_lrt <- results(dds_domain_lrt)
 genes_w_strain_by_domain_eff <- res_domain_lrt |> 
@@ -660,6 +667,8 @@ genes_w_strain_by_domain_eff <- res_domain_lrt |>
 dds_time_lrt <- DESeq(strain_dds_twoway, test = "LRT",
                       reduced = ~ sex + AP_domain + LB_stage_from_start  +
                                  strain + strain:AP_domain,
+                      full = ~ sex + AP_domain + LB_stage_from_start  +
+                                   strain + strain:AP_domain + strain:LB_stage_from_start,
                       parallel = TRUE)
 res_time_lrt <- results(dds_time_lrt)
 genes_w_strain_by_time_eff <- res_time_lrt |> 
@@ -671,11 +680,21 @@ genes_w_strain_by_time_eff <- res_time_lrt |>
 dds_3way_lrt <- DESeq(strain_dds_full, test = "LRT",
                       reduced = ~ sex + AP_domain + LB_stage_from_start  + 
                                  strain + strain:AP_domain + strain:LB_stage_from_start,
+                      full = ~ sex + AP_domain + LB_stage_from_start  + 
+                             strain + strain:AP_domain + strain:LB_stage_from_start + 
+                             strain:AP_domain:LB_stage_from_start,
                       parallel = TRUE)
 res_3way_lrt <- results(dds_3way_lrt)
 genes_w_3way_eff <- res_3way_lrt |> 
   as_tibble( rownames = "gene_id") |> 
   filter( padj < 0.05)
+
+
+genes_with_any_interaction <- unique(c(
+  genes_w_strain_by_time_eff$gene_id,
+  genes_w_strain_by_domain_eff$gene_id,
+  genes_w_3way_eff$gene_id
+))
 
 # ── Effects  ────────────────────────────────────────────
 # 1. Extract main strain effect (additive model) 
@@ -702,222 +721,175 @@ res_3way_MAX <- results(strain_dds_full, name = "AP_domainMAX.LB_stage_from_star
 res_3way_POST <- results(strain_dds_full, name = "AP_domainPOST.LB_stage_from_start.strainCAST") 
 
 # ── Apply quality & LRT filters ──────────────────────────────────────────────────
-# Main strain effect: from additive model, including genes with interactions
-res_strain_main_filtered <- filter_deseq_results(res_strain_main) |> 
+# These identify genes that also pass effect size / uncertainty QC.
+# Each result object is filtered with thresholds appropriate to its scale.
+
+# Main strain effect (additive model)
+res_strain_main_filtered <- filter_deseq_results(res_strain_main) |>
   filter(gene_id %in% genes_w_strain_eff$gene_id)
 genes_main_strain_pass <- res_strain_main_filtered$gene_id
 
-# Strain effect in each domain (from full model)
-res_strain_PM_filtered <- filter_deseq_results(res_strain_PM) |> 
-  filter( gene_id %in% genes_w_strain_by_domain_eff$gene_id)
-res_strain_MAX_filtered <- filter_deseq_results(res_strain_MAX) |> 
-  filter( gene_id %in% genes_w_strain_by_domain_eff$gene_id)
-res_strain_POST_filtered <- filter_deseq_results(res_strain_POST) |> 
-  filter( gene_id %in% genes_w_strain_by_domain_eff$gene_id)
+# Domain-specific strain effects (two-way model)
+res_strain_PM_filtered <- filter_deseq_results(res_strain_PM) |>
+  filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
+res_strain_MAX_filtered <- filter_deseq_results(res_strain_MAX) |>
+  filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
+res_strain_POST_filtered <- filter_deseq_results(res_strain_POST) |>
+  filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
 
-genes_strain_PM_pass <- res_strain_PM_filtered$gene_id
-genes_strain_MAX_pass <- res_strain_MAX_filtered$gene_id
+genes_strain_PM_pass   <- res_strain_PM_filtered$gene_id
+genes_strain_MAX_pass  <- res_strain_MAX_filtered$gene_id
 genes_strain_POST_pass <- res_strain_POST_filtered$gene_id
 
-# Domain × strain interaction coefficients (differences from PM)
-res_domain_int_MAX_filtered <- filter_deseq_results(res_domain_int_MAX, min_abs_lfc = 0.3) |> 
-  filter( gene_id %in% genes_w_strain_by_domain_eff$gene_id)
-res_domain_int_POST_filtered <- filter_deseq_results(res_domain_int_POST, min_abs_lfc = 0.3) |> 
-  filter( gene_id %in% genes_w_strain_by_domain_eff$gene_id)
+# Domain × strain interaction coefficients (two-way model)
+# Lower min_abs_lfc because these are difference-of-differences
+res_domain_int_MAX_filtered <- filter_deseq_results(
+  res_domain_int_MAX, min_abs_lfc = 0.3
+) |> filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
 
-genes_domain_int_MAX_pass <- res_domain_int_MAX_filtered$gene_id
+res_domain_int_POST_filtered <- filter_deseq_results(
+  res_domain_int_POST, min_abs_lfc = 0.3
+) |> filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
+
+genes_domain_int_MAX_pass  <- res_domain_int_MAX_filtered$gene_id
 genes_domain_int_POST_pass <- res_domain_int_POST_filtered$gene_id
 
-# Time × strain interaction (slope — different scale)
-res_time_int_filtered <- filter_deseq_results(res_time_int_twoway, min_abs_lfc = 0.1, max_lfcse = 0.5) |> 
-  filter( gene_id %in% genes_w_strain_by_time_eff$gene_id)
+# Time × strain interaction slope (two-way model)
+# Tighter lfcSE threshold and lower min_abs_lfc — slopes are on a different scale
+res_time_int_filtered <- filter_deseq_results(
+  res_time_int_twoway, min_abs_lfc = 0.1, max_lfcse = 0.5
+) |> filter(gene_id %in% genes_w_strain_by_time_eff$gene_id)
+
 genes_time_int_pass <- res_time_int_filtered$gene_id
 
-# Three-way coefficients
-res_3way_MAX_filtered <- filter_deseq_results(res_3way_MAX, min_abs_lfc = 0.1, max_lfcse = 0.5) |> 
-  filter( gene_id %in% genes_w_3way_eff$gene_id)
-res_3way_POST_filtered <- filter_deseq_results(res_3way_POST, min_abs_lfc = 0.1, max_lfcse = 0.5) |> 
-  filter( gene_id %in% genes_w_3way_eff$gene_id)
+# Three-way interaction coefficients (full model)
+res_3way_MAX_filtered <- filter_deseq_results(
+  res_3way_MAX, min_abs_lfc = 0.1, max_lfcse = 0.5
+) |> filter(gene_id %in% genes_w_3way_eff$gene_id)
 
-genes_3way_MAX_pass <- res_3way_MAX_filtered$gene_id
+res_3way_POST_filtered <- filter_deseq_results(
+  res_3way_POST, min_abs_lfc = 0.1, max_lfcse = 0.5
+) |> filter(gene_id %in% genes_w_3way_eff$gene_id)
+
+genes_3way_MAX_pass  <- res_3way_MAX_filtered$gene_id
 genes_3way_POST_pass <- res_3way_POST_filtered$gene_id
 
+# Helper: convert DESeq2 results to tibble with explicit output column names
+deseq_to_tibble <- function(res, lfc_col, lfcse_col, pval_col, 
+                             keep_basemean = FALSE) {
+  df <- res |>
+    as_tibble(rownames = "gene_id") |>
+    select(gene_id,
+           {{ lfc_col  }} := log2FoldChange,
+           {{ lfcse_col }} := lfcSE,
+           {{ pval_col  }} := padj)
+  if (keep_basemean) {
+    df <- res |>
+      as_tibble(rownames = "gene_id") |>
+      select(gene_id, baseMean,
+             {{ lfc_col  }} := log2FoldChange,
+             {{ lfcse_col }} := lfcSE,
+             {{ pval_col  }} := padj)
+  }
+  df
+}
 
-genes_with_any_interaction <- unique( c(genes_w_strain_by_time_eff$gene_id,
-                                     genes_w_strain_by_domain_eff$gene_id,
-                                     genes_w_3way_eff$gene_id)
-                                     )
-# ── Filter summary ─────────────────────────────────────────────────────────
-filter_summary <- tibble(
-  Result = c("Main strain effect (additive model)",
-             "Strain in PM", "Strain in MAX", "Strain in POST",
-             "Domain int (MAX)", "Domain int (POST)", "Time int", 
-             "3-way (MAX)", "3-way (POST)"),
-  Total_tested = c(nrow(res_strain_main), nrow(res_strain_PM), nrow(res_strain_MAX),
-                   nrow(res_strain_POST), nrow(res_domain_int_MAX), nrow(res_domain_int_POST),
-                   nrow(res_time_int_twoway), nrow(res_3way_MAX), nrow(res_3way_POST)),
-  Passing_filter = c(length(genes_main_strain_pass), length(genes_strain_PM_pass),
-                     length(genes_strain_MAX_pass), length(genes_strain_POST_pass),
-                     length(genes_domain_int_MAX_pass), length(genes_domain_int_POST_pass),
-                     length(genes_time_int_pass), length(genes_3way_MAX_pass),
-                     length(genes_3way_POST_pass)),
- Notes = c(paste0("Includes ", length(genes_with_any_interaction), " genes with domain, time, or three-way interactions"),
-            rep("From two-way model", 3),
-            rep("Interaction coefficient", 2),
-            "Slope coefficient", rep("Three-way coefficient", 2))
-)
-
-# ── Combine results into classified table ──────────────────────────────────
-strain_effects_classified <- tibble::tibble(
-  gene_id = rownames(res_strain_lrt),
-  baseMean = res_strain_lrt$baseMean,
-  
-  # LRT significance T/F
-  any_strain_sig = res_strain_lrt$padj < 0.05, 
-  domain_int_sig = res_domain_lrt$padj < 0.05,
-  time_int_sig = res_time_lrt$padj < 0.05,
-  threeway_int_sig = res_3way_lrt$padj < 0.05,
-  
-  # LRT p-values
-  any_strain_pval = res_strain_lrt$padj,
-  domain_int_pval = res_domain_lrt$padj,
-  time_int_pval = res_time_lrt$padj,
-  threeway_int_pval = res_3way_lrt$padj,
-  
-  # Main strain effect (additive model — marginal, averaged over domain and time)
-  main_strain_lfc = res_strain_main$log2FoldChange,
-  main_strain_lfcSE = res_strain_main$lfcSE,
-  main_strain_pval = res_strain_main$padj,
-  main_strain_pass = gene_id %in% genes_main_strain_pass,
-  has_any_interaction = gene_id %in% genes_with_any_interaction,
-  
-  # Strain effect within each domain (two-way model)
-  strain_effect_PM = res_strain_PM$log2FoldChange,
-  strain_effect_PM_lfcSE = res_strain_PM$lfcSE,
-  strain_effect_PM_pval = res_strain_PM$padj,
-  strain_effect_PM_pass = gene_id %in% genes_strain_PM_pass,
-  
-  strain_effect_MAX = res_strain_MAX$log2FoldChange,
-  strain_effect_MAX_lfcSE = res_strain_MAX$lfcSE,
-  strain_effect_MAX_pval = res_strain_MAX$padj,
-  strain_effect_MAX_pass = gene_id %in% genes_strain_MAX_pass,
-  
-  strain_effect_POST = res_strain_POST$log2FoldChange,
-  strain_effect_POST_lfcSE = res_strain_POST$lfcSE,
-  strain_effect_POST_pval = res_strain_POST$padj,
-  strain_effect_POST_pass = gene_id %in% genes_strain_POST_pass,
-  
-  # Domain × strain interaction coefficients (two-way model)
-  domain_int_MAX_lfc = res_domain_int_MAX$log2FoldChange,
-  domain_int_MAX_lfcSE = res_domain_int_MAX$lfcSE,
-  domain_int_MAX_pval = res_domain_int_MAX$padj,
-  domain_int_MAX_pass = gene_id %in% genes_domain_int_MAX_pass,
-  
-  domain_int_POST_lfc = res_domain_int_POST$log2FoldChange,
-  domain_int_POST_lfcSE = res_domain_int_POST$lfcSE,
-  domain_int_POST_pval = res_domain_int_POST$padj,
-  domain_int_POST_pass = gene_id %in% genes_domain_int_POST_pass,
-  
-  # Time × strain interaction (two-way model)
-  # time_int_slope = res_time_int$log2FoldChange,
-  time_int_slope_avg = res_time_int_twoway$log2FoldChange,    # from two-way model 
-  time_int_slope_lfcSE = res_time_int_twoway$lfcSE,
-  time_int_slope_pval = res_time_int_twoway$padj,
-  time_int_pass = gene_id %in% genes_time_int_pass,
-  time_int_slope_PM  = res_time_int_full$log2FoldChange,      # from full model 
-  
-  # Three-way interaction coefficients (full model)
-  threeway_MAX_slope = res_3way_MAX$log2FoldChange,
-  threeway_MAX_slope_lfcSE = res_3way_MAX$lfcSE,
-  threeway_MAX_slope_pval = res_3way_MAX$padj,
-  threeway_MAX_pass = gene_id %in% genes_3way_MAX_pass,
-  
-  threeway_POST_slope = res_3way_POST$log2FoldChange,
-  threeway_POST_slope_lfcSE = res_3way_POST$lfcSE,
-  threeway_POST_slope_pval = res_3way_POST$padj,
-  threeway_POST_pass = gene_id %in% genes_3way_POST_pass
-) |>
-  tidyr::replace_na(list(
-    any_strain_sig = FALSE, domain_int_sig = FALSE,
-    time_int_sig = FALSE, threeway_int_sig = FALSE,
-    main_strain_pass = FALSE, has_any_interaction = FALSE,
-    strain_effect_PM_pass = FALSE, strain_effect_MAX_pass = FALSE,
-    strain_effect_POST_pass = FALSE,
-    domain_int_MAX_pass = FALSE, domain_int_POST_pass = FALSE,
-    time_int_pass = FALSE, threeway_MAX_pass = FALSE, threeway_POST_pass = FALSE
-  )) |>
-  dplyr::left_join(all_genes_palate |> dplyr::select(gene_id, symbol, gene_biotype)) |>
-  dplyr::mutate(
-    # Overall filter: significant strain LRT, passes QC
-    passes_strain_filter = any_strain_sig & main_strain_pass, #& !has_any_interaction,
-    
-    # Main strain pattern
-    # Note: min_abs_lfc = 0.5 filter ensures no genes fall below 0.5
-    main_strain_pattern = dplyr::case_when(
-      !passes_strain_filter ~ "No effect / filtered",
-      main_strain_lfc > 1 ~ "CAST >> B6 (strong)",
-      main_strain_lfc > 0.5 ~ "CAST > B6 (moderate)",
-      main_strain_lfc < -1 ~ "B6 >> CAST (strong)",
-      main_strain_lfc < -0.5 ~ "B6 > CAST (moderate)"
+strain_effects_classified <-
+  # Use strain LRT as the base — provides gene universe and baseMean
+  as_tibble(res_strain_lrt, rownames = "gene_id") |>
+  select(gene_id, baseMean, any_strain_pval = padj) |>
+  left_join(as_tibble(res_domain_lrt,  rownames = "gene_id") |>
+              select(gene_id, domain_int_pval  = padj), by = "gene_id") |>
+  left_join(as_tibble(res_time_lrt,    rownames = "gene_id") |>
+              select(gene_id, time_int_pval    = padj), by = "gene_id") |>
+  left_join(as_tibble(res_3way_lrt,    rownames = "gene_id") |>
+              select(gene_id, threeway_int_pval = padj), by = "gene_id") |>
+  # Effect size columns — using exact names expected by pattern script
+  left_join(deseq_to_tibble(res_strain_main,
+              "main_strain_lfc", "main_strain_lfcSE", "main_strain_pval"),
+            by = "gene_id") |>
+  left_join(deseq_to_tibble(res_strain_PM,
+              "strain_effect_PM", "strain_effect_PM_lfcSE", "strain_effect_PM_pval"),
+            by = "gene_id") |>
+  left_join(deseq_to_tibble(res_strain_MAX,
+              "strain_effect_MAX", "strain_effect_MAX_lfcSE", "strain_effect_MAX_pval"),
+            by = "gene_id") |>
+  left_join(deseq_to_tibble(res_strain_POST,
+              "strain_effect_POST", "strain_effect_POST_lfcSE", "strain_effect_POST_pval"),
+            by = "gene_id") |>
+  left_join(deseq_to_tibble(res_domain_int_MAX,
+              "domain_int_MAX_lfc", "domain_int_MAX_lfcSE", "domain_int_MAX_pval"),
+            by = "gene_id") |>
+  left_join(deseq_to_tibble(res_domain_int_POST,
+              "domain_int_POST_lfc", "domain_int_POST_lfcSE", "domain_int_POST_pval"),
+            by = "gene_id") |>
+  left_join(deseq_to_tibble(res_time_int_twoway,
+              "time_int_slope_avg", "time_int_slope_lfcSE", "time_int_slope_pval"),
+            by = "gene_id") |>
+  # PM-specific slope from full model (no lfcSE needed downstream)
+  left_join(as_tibble(res_time_int_full, rownames = "gene_id") |>
+              select(gene_id, time_int_slope_PM = log2FoldChange),
+            by = "gene_id") |>
+  left_join(deseq_to_tibble(res_3way_MAX,
+              "threeway_MAX_slope", "threeway_MAX_slope_lfcSE", "threeway_MAX_slope_pval"),
+            by = "gene_id") |>
+  left_join(deseq_to_tibble(res_3way_POST,
+              "threeway_POST_slope", "threeway_POST_slope_lfcSE", "threeway_POST_slope_pval"),
+            by = "gene_id") |>
+  # Significance flags
+  mutate(
+    any_strain_sig   = replace_na(any_strain_pval   < 0.05, FALSE),
+    domain_int_sig   = replace_na(domain_int_pval   < 0.05, FALSE),
+    time_int_sig     = replace_na(time_int_pval     < 0.05, FALSE),
+    threeway_int_sig = replace_na(threeway_int_pval < 0.05, FALSE),
+    # Pass flags
+    main_strain_pass        = gene_id %in% genes_main_strain_pass,
+    has_any_interaction     = gene_id %in% genes_with_any_interaction,
+    strain_effect_PM_pass   = gene_id %in% genes_strain_PM_pass,
+    strain_effect_MAX_pass  = gene_id %in% genes_strain_MAX_pass,
+    strain_effect_POST_pass = gene_id %in% genes_strain_POST_pass,
+    domain_int_MAX_pass     = gene_id %in% genes_domain_int_MAX_pass,
+    domain_int_POST_pass    = gene_id %in% genes_domain_int_POST_pass,
+    time_int_pass           = gene_id %in% genes_time_int_pass,
+    threeway_MAX_pass       = gene_id %in% genes_3way_MAX_pass,
+    threeway_POST_pass      = gene_id %in% genes_3way_POST_pass,
+    passes_strain_filter    = any_strain_sig & main_strain_pass,
+    # Pattern labels (match original case_when logic)
+    main_strain_pattern = case_when(
+      !passes_strain_filter       ~ "No effect / filtered",
+      main_strain_lfc >  1        ~ "CAST >> B6 (strong)",
+      main_strain_lfc >  0.5      ~ "CAST > B6 (moderate)",
+      main_strain_lfc < -1        ~ "B6 >> CAST (strong)",
+      main_strain_lfc < -0.5      ~ "B6 > CAST (moderate)"
     ),
-    
-    # Domain with largest strain effect (only for genes WITH domain interaction)
-    max_domain_effect = dplyr::case_when(
-      !domain_int_sig ~ NA_character_,
-      is.na(strain_effect_PM) | is.na(strain_effect_MAX) | is.na(strain_effect_POST) ~ NA_character_,
-      abs(strain_effect_PM) >= abs(strain_effect_MAX) & 
-        abs(strain_effect_PM) >= abs(strain_effect_POST) ~ "PM",
-      abs(strain_effect_MAX) >= abs(strain_effect_POST) & 
-        abs(strain_effect_MAX) >= abs(strain_effect_PM) ~ "MAX",
-      abs(strain_effect_POST) >= abs(strain_effect_MAX) & 
-        abs(strain_effect_POST) >= abs(strain_effect_PM) ~ "POST"
+    time_pattern = case_when(
+      !time_int_sig               ~ "No time interaction",
+      !time_int_pass              ~ "Filtered",
+      is.na(time_int_slope_avg)   ~ NA_character_,
+      time_int_slope_avg >  0.1   ~ "Diverging (CAST changing faster than B6)",
+      time_int_slope_avg < -0.1   ~ "Diverging (B6 changing faster than CAST)",
+      TRUE                        ~ "Parallel - Both changing similarly over time"
     ),
-    
-    max_domain_direction = dplyr::case_when(
-      is.na(max_domain_effect) ~ NA_character_,
-      max_domain_effect == "PM" & strain_effect_PM > 0 ~ "PM: CAST > B6",
-      max_domain_effect == "PM" & strain_effect_PM < 0 ~ "PM: B6 > CAST",
-      max_domain_effect == "MAX" & strain_effect_MAX > 0 ~ "MAX: CAST > B6",
-      max_domain_effect == "MAX" & strain_effect_MAX < 0 ~ "MAX: B6 > CAST",
-      max_domain_effect == "POST" & strain_effect_POST > 0 ~ "POST: CAST > B6",
-      max_domain_effect == "POST" & strain_effect_POST < 0 ~ "POST: B6 > CAST"
-    ),
-    
-    domain_consistency = dplyr::case_when(
-      is.na(strain_effect_PM) | is.na(strain_effect_MAX) | is.na(strain_effect_POST) ~ NA_character_,
-      sign(strain_effect_PM) == sign(strain_effect_MAX) & 
-        sign(strain_effect_MAX) == sign(strain_effect_POST) ~ "Consistent",
-      TRUE ~ "Variable"
-    ),
-    
-    time_pattern = dplyr::case_when(
-      !time_int_sig ~ "No time interaction",
-      !time_int_pass ~ "Filtered",
-      is.na(time_int_slope_avg) ~ NA_character_,
-      time_int_slope_avg > 0.1 ~ "Diverging (CAST changing faster than B6)",
-      time_int_slope_avg < -0.1 ~ "Diverging (B6 changing faster than CAST)",
-      TRUE ~ "Parallel - Both changing similarly over time"
-    ),
-    
-    # Overall pattern type — now mutually exclusive by construction
-    pattern_type = dplyr::case_when(
-      !any_strain_sig ~ "No strain effect",
-      main_strain_pass ~ "Main strain effect",
-      threeway_int_sig ~ "Three-way interaction",
+    pattern_type = case_when(
+      !any_strain_sig             ~ "No strain effect",
+      main_strain_pass            ~ "Main strain effect",
+      threeway_int_sig            ~ "Three-way interaction",
       domain_int_sig & time_int_sig ~ "Domain + Time interactions",
-      domain_int_sig ~ "Domain × Strain interaction",
-      time_int_sig ~ "Time × Strain interaction",
-      TRUE ~ "Filtered (QC)"
+      domain_int_sig              ~ "Domain × Strain interaction",
+      time_int_sig                ~ "Time × Strain interaction",
+      TRUE                        ~ "Filtered (QC)"
     )
-  )
+  ) |>
+  left_join(all_genes_palate |> select(gene_id, symbol, gene_biotype),
+            by = "gene_id")
 
-# Filtered dataset: genes with consistent strain effect (no interactions)
+# Filtered dataset:
 strain_effects_filtered <- strain_effects_classified |>
   filter(passes_strain_filter)
 
 
 # # source the pattern identification script
-source("DEgene_pattern_identification_CAST_B6.R")
+# source("DEgene_pattern_identification_CAST_B6.R")
 # ── Load pattern classification results ────────────────────────────────────
 pattern_summary <- read_csv(here("strain_pattern_summary.csv"))
 main_patterns <- read_csv(here("main_strain_effect_patterns.csv"))
@@ -989,7 +961,7 @@ vsd_global <- vst(strain_dds_full, blind = FALSE)
 library(variancePartition)
 
 # 1. Transform counts properly
-vsd <- vst(strain_dds_coll, blind = FALSE)
+vsd <- vst(strain_dds_coll, blind = TRUE)
 
 # 2. Run variance partition
 form <- ~ (1|ind) + (1|AP_domain) + (1|strain) + LB_stage_from_start
@@ -1107,7 +1079,7 @@ Genes with strong upregulation in CAST (log2FC > 1). Here are some examples:
 #| fig-height: 6
 
 
-count_data <- get_normalized_counts(strain_dds_full, genes_CAST_high_strong, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_CAST_high_strong, vsd = vsd_global)
 plot_main_strain_effect(genes_CAST_high_strong, "CAST >> B6 (strong)", count_data, n = 2)
 
 
@@ -1167,7 +1139,7 @@ Genes with moderate upregulation in CAST (0.5 < log2FC ≤ 1).
 #| fig-width: 14
 
 
-count_data <- get_normalized_counts(strain_dds_full, 
+count_data <- get_vst_counts(strain_dds_full, 
                                     genes_CAST_high_mod, vsd = vsd_global)
 
 plot_main_strain_effect(genes_CAST_high_mod, "CAST > B6 (moderate)", 
@@ -1229,7 +1201,7 @@ Genes with strong upregulation in B6 (log2FC < -1).
 #| fig-width: 14
 
 
-count_data <- get_normalized_counts(strain_dds_full, 
+count_data <- get_vst_counts(strain_dds_full, 
                                     genes_B6_high_strong, 
                                     vsd = vsd_global)
 plot_main_strain_effect(genes_B6_high_strong, "B6 >> CAST (strong)", count_data, n = 2)
@@ -1291,7 +1263,7 @@ Genes with moderate upregulation in B6 (-1 ≤ log2FC < -0.5).
 #| fig-height: 6
 #| fig-width: 14
 
-count_data <- get_normalized_counts(strain_dds_full, genes_B6_high_mod, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_B6_high_mod, vsd = vsd_global)
 plot_main_strain_effect(genes_B6_high_mod, "B6 > CAST (moderate)", count_data, n = 2)
 
 ```
@@ -1371,7 +1343,7 @@ Genes where the strain effect is strongest in the PM domain.
 #| fig-height: 10
 #| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_PM_strongest_strain, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_PM_strongest_strain, vsd = vsd_global)
 plot_domain_strain_base(genes_PM_strongest_strain, "Strongest strain effect in PM", count_data, n = 2)
 
 ```
@@ -1446,7 +1418,7 @@ Genes where the strain effect is strongest in the MAX domain.
 #| fig-height: 10
 #| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_MAX_strongest_strain, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_MAX_strongest_strain, vsd = vsd_global)
 plot_domain_strain_base(genes_MAX_strongest_strain, "Strongest strain effect in MAX", count_data, n = 2)
 
 ```
@@ -1521,7 +1493,7 @@ Genes where the strain effect is strongest in the POST domain.
 #| fig-height: 10
 #| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_POST_strongest_strain, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_POST_strongest_strain, vsd = vsd_global)
 plot_domain_strain_base(genes_POST_strongest_strain, "Strongest strain effect in POST", count_data, n = 2)
 
 ```
@@ -1596,7 +1568,7 @@ Genes with particularly strong domain-specific strain effects (range > 1.0 log2F
 #| fig-height: 15
 #| fig-width: 14
 
-count_data <- get_normalized_counts(strain_dds_full, genes_high_domain_specificity, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_high_domain_specificity, vsd = vsd_global)
 plot_domain_specificity(genes_high_domain_specificity, "High domain specificity", count_data, n = 2)
 
 ```
@@ -1653,7 +1625,7 @@ Genes where the strain effect reverses direction across domains — for example,
 #| fig-height: 8
 #| fig-width: 10
 
-count_data <- get_normalized_counts(strain_dds_full, genes_opposite_directions, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_opposite_directions, vsd = vsd_global)
 plot_domain_strain_profile(genes_opposite_directions, "Opposite directions across domains", count_data, n = 2)
 
 ```
@@ -1728,7 +1700,7 @@ Domain differences that remain stable over developmental time (no time or three-
 #| fig-height: 10
 #| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_domain_strain_static, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_domain_strain_static, vsd = vsd_global)
 plot_domain_strain_temporal(genes_domain_strain_static, "Static domain pattern", count_data, n = 2)
 ```
 
@@ -1756,7 +1728,7 @@ Domain differences where main time effects are present, so the spatial pattern m
 #| fig-height: 10
 #| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_domain_strain_time_affected, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_domain_strain_time_affected, vsd = vsd_global)
 plot_domain_strain_temporal(genes_domain_strain_time_affected, "Time-affected domain pattern", count_data, n = 2)
 
 ```
@@ -1808,7 +1780,7 @@ Genes where strains diverge over developmental time, with CAST expression increa
 #| fig-height: 10
 #| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_diverging_CAST_faster, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_diverging_CAST_faster, vsd = vsd_global)
 plot_time_strain_interaction(genes_diverging_CAST_faster, "Diverging: CAST changing faster", count_data, n = 2)
 
 ```
@@ -1883,7 +1855,7 @@ Genes where strains diverge over developmental time, with B6 expression increasi
 #| fig-height: 10
 #| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_diverging_B6_faster, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_diverging_B6_faster, vsd = vsd_global)
 plot_time_strain_interaction(genes_diverging_B6_faster, "Diverging: B6 changing faster", count_data, n = 2)
 
 ```
@@ -1958,7 +1930,7 @@ Temporal strain dynamics that are consistent across all palate domains (no domai
 #| fig-height: 10
 #| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_time_uniform, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_time_uniform, vsd = vsd_global)
 plot_time_strain_interaction(genes_time_uniform, "Uniform temporal dynamics", count_data, n = 2)
 
 ```
@@ -1986,7 +1958,7 @@ Temporal dynamics where domains differ at t=0 but show parallel trajectories ove
 #| fig-height: 10
 #| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_time_domain_affected, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_time_domain_affected, vsd = vsd_global)
 plot_domain_strain_temporal(genes_time_domain_affected, "Domain-affected temporal dynamics", count_data, n = 2)
 
 ```
@@ -2037,7 +2009,7 @@ Genes where domains differ in BOTH their initial state (t=0) AND their temporal 
 #| fig-height: 10
 #| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_threeway_complex, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_threeway_complex, vsd = vsd_global)
 plot_time_strain_overview(genes_threeway_complex, "Complex: Differ in initial state & dynamics", count_data, n = 2)
 
 ```
@@ -2132,7 +2104,7 @@ Genes where domains differ mainly at t=0, but show similar temporal trajectories
 #| fig-height: 10
 #| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_threeway_initial, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_threeway_initial, vsd = vsd_global)
 plot_time_strain_overview(genes_threeway_initial, "Primarily initial differences", count_data, n = 2)
 
 ```
@@ -2227,7 +2199,7 @@ Genes where domains start similar at t=0 but diverge over time with different te
 #| fig-height: 10
 #| fig-width: 16
 
-count_data <- get_normalized_counts(strain_dds_full, genes_threeway_dynamic, vsd = vsd_global)
+count_data <- get_vst_counts(strain_dds_full, genes_threeway_dynamic, vsd = vsd_global)
 plot_time_strain_overview(genes_threeway_dynamic, "Primarily dynamic differences", count_data, n = 2)
 
 ```
