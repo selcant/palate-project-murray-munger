@@ -3149,262 +3149,207 @@ if (!is.null(all_ora_results) && nrow(all_ora_results) > 0) {
 # Over-representation Summary
 
 ::: {#B6_ora_summary .panel-tabset .nav-pills}
-## Co-increasing
-
-**MAX faster**
-- ECM / collagen (dominant signal)
-- Bone & skeletal: osteoblast morphology, bone mineral density, ossification, trabecular bone, skeletal physiology
-- Skin & epidermis: hair follicle, keratinocyte, stratum granulosum, skin tensile strength
-- Motile cilia / axoneme
-- Wnt & Hippo signaling; ESC pluripotency
-- Heart development, right ventricle hypertrophy, situs inversus / laterality defects
-- Cancer pathways (breast, basal cell, gastric)
-- Postnatal growth retardation
-
-**POST faster**
-- ECM (dominant signal)
-- Nail dystrophy, blistering, keratoderma, skin barrier
-- Dental abnormalities (hypoplasia, enamel)
-- Alopecia
-- Motile cilia; situs inversus
-- Nociception (thermal, mechanical, chemical thresholds)
-- Apical plasma membrane
-- Hormone level regulation
-
----
-
-## Complex
-
-**All↑**
-- ECM / collagen (dominant signal)
-- Bone & skeletal: osteoclast/osteoblast, trabecular bone, ossification, bone mineral density (both increased and decreased), epiphyseal plate, osteopetrosis
-- Muscle: contraction, myofibril, sarcomere, dystrophy, muscle fiber morphology
-- Immune & inflammation: leukocyte/granulocyte chemotaxis & migration, cytokine activity, chemokine secretion, susceptibility to infection
-- Skin: keratoderma, keratinocyte, cornified envelope, alopecia
-- Calcium / ion homeostasis
-- Joint contracture & stiffness (multiple joint sites)
-- Cardiac: hypertrophy, fibrosis, dilated cardiomyopathy
-- Dental abnormalities
-- T cell / B cell / macrophage numbers
-- Vascular: wound healing, angiogenesis, permeability
-
-**Opposite slopes**
-- Cervical vertebrae morphology (atlas, axis)
-- Small olfactory bulb
-- Neuroactive ligand-receptor interaction
-- Organismal stress response
-
-**Three-way divergent**
-- NFATc4 transcription factor motif only
-
----
 
 ## Domain Main Effects
 
-**A→P decreasing**
-- Wnt signaling (canonical & non-canonical)
-- Reproductive tract development (Wolffian duct, Müllerian duct, uterus)
-- Hair / vibrissa morphology
-- Nephric duct / mesonephric tubule morphogenesis
+### A→P Decreasing
 
-**MAX higher than PM**
-- Synaptic: synaptic membrane, postsynaptic specialization, synapse organization, chemical synaptic transmission
-- Neuronal: neuron projection development, growth cone, axon development, neuron differentiation
-- Cognition, learning, memory
-- Coordination, locomotion, gait
-- Ion channels (cation, potassium)
-- Seizures, tremors
-- NRSF transcription factor motif
+- **Skin/epidermis**: Epidermis (Mouse Gene Atlas), epidermal and keratinocyte cell types
+- **Transcription factor binding**: Sequence-specific and double-stranded DNA binding
 
-**MAX highest**
-- Myelin sheath
-- Muscle hypoplasia (intercostal, tongue)
+### A→P Increasing
 
-**MAX lower than PM**
-- Skeletal system development & morphogenesis
-- Platelet function (aggregation, mean platelet volume)
-- ECM / basement membrane
-- Cartilage & connective tissue development
-- Limb / appendage morphogenesis
-- Heart morphogenesis; EMT
-- TGF-beta signaling; Hippo signaling
-- Kidney / renal development
-- Elastic fibre formation
+- **Neural/brain**: Neurons, olfactory bulb, amygdala, dorsal striatum, nucleus accumbens, hypothalamus, cerebral cortex, dorsal root ganglia; associated phenotypes include hyperactivity, impaired coordination, impaired contextual conditioning, decreased anxiety-related response, seizures
+- **Synaptic transmission**: Chemical synaptic transmission, neurotransmitter/receptor signaling
+- **Neuroendocrine/pancreatic**: Pancreatic D cells, neuro2a cells, pituitary
+- **GWAS traits**: Obesity-related traits, night sleep phenotypes
 
-**PM highest**
-- Xenobiotic response
-- Postnatal lethality
-- Hair shaft / skin barrier function
-- Motor learning
-- Cardiovascular physiology
-- Platelet aggregation
-- Apical plasma membrane
+### MAX Higher Than PM
 
-**POST higher than MAX**
-- Cell-cell adhesion (plasma membrane)
-- Muscle: contraction, myofibril, sarcomere, myopathy, diaphragm, Z line morphology
-- Synapse organization
-- Respiratory distress, cyanosis
-- Bone mineral density
-- ECM / collagen
-- Wound healing
+- **Neural tissue**: Spinal cord, cerebral cortex, olfactory bulb, amygdala, dorsal striatum, hippocampus; neuron projection, axon, dendrite
+- **Synaptic biology**: Chemical synaptic transmission, glutamatergic synapse, AMPA receptor, anterograde trans-synaptic signaling, postsynaptic density; associated phenotypes (circling, ataxia, tremors, seizures, hyperactivity)
+- **Cilia**: 9+2 motile cilium, ciliated lung cells, primary ciliary dyskinesia
+- **Ion channels**: Ligand-gated cation channels, voltage-gated potassium channels, G protein-coupled receptors
 
-**POST higher than PM**
-- Synaptic (dominant signal): postsynaptic density/membrane, synaptic membrane, chemical synaptic transmission
-- Ion channels (broad: cation, gated)
-- Muscle: contraction, myofibril, sarcomere
-- ECM
-- Neuronal behavior: anxiety, locomotion, learning, memory
-- Membrane potential regulation
-- Neuronal system (Reactome)
+### MAX Lower Than PM
 
-**POST highest**
-- Respiratory distress, cyanosis, hypoxia
-- Muscle: actin binding, contraction, sarcomere, Z line
-- Diaphragm morphology
-- Cell-cell adhesion
+- **Skin/epidermis**: Epidermis, keratinocytes, cornified envelope, skin diseases
+- **Bone/ECM**: Collagen-containing ECM, bone (osteoblast gene sets), skeletal system development, connective tissue disease
+- **Hematopoietic**: Hematopoietic system disease, hereditary spherocytosis, hemolytic/normocytic anemia, prolonged bleeding time, decreased hematocrit
+- **Transcription factors**: Sequence-specific and double-stranded DNA binding, receptor ligand activity
 
-**POST lower than MAX**
-- Synapse organization & assembly
-- Epidermis / skin development; cornified envelope
-- Basal cell carcinoma; Wnt signaling
-- Neuron differentiation / cell fate commitment
-- Kidney development (nephron, ureteric bud, mesonephric tubule)
-- Axon guidance
-- Desmosome
+### PM Highest
 
-**POST lower than PM**
-- Odontogenesis / dental development
-- Neonatal lethality
-- Embryonic morphogenesis & organ development
-- ECM; cornified envelope; desmosome
-- Skeletal development / ossification / osteoblast differentiation
-- Kidney development (mesonephros, ureteric bud)
-- Wnt signaling
-- Cell junction assembly; transcription repressor activity
-- Female fertility
-- Skin: keratoderma, epidermal acanthosis
+Very similar to MAX lower than PM:
 
----
+- **Skin/epidermis** and **bone** predominate
+- **Hematopoietic disease**: Spherocytosis, hemolytic anemia, bleeding time
+- **ECM and connective tissue**
+- **GPCR biology**: GPCRs (non-odorant, Class A rhodopsin-like)
 
-## Domain-Specific
+### POST Higher Than MAX
 
-**MAX↑ only**
-- Lung morphology
-- Neuronal system / neurotransmitter receptors
-- Craniofacial: nasal capsule, basisphenoid, palate
-- Hair follicle
+- **Skeletal muscle**: Skeletal muscle, mammary gland, heart, musculoskeletal disease, bone development (OSTEOCHONDRODYSPLASIA, MULTIPLE EPIPHYSEAL DYSPLASIA, STICKLER SYNDROME); muscle contraction, striated muscle contraction, myofibril assembly
+- **Neural**: Amygdala, olfactory bulb, dorsal striatum, neurons, oligodendrocyte precursors; impaired coordination, hyperactivity
+- **Collagen/ECM**: Collagen-containing ECM, extracellular matrix organization, extracellular structure organization
+- **Bone epiphysis phenotypes**: Genu varum, epiphyseal dysplasia, irregular epiphyses, platyspondyly
 
-**PM↑ only**
-- Regulation of system process
-- Response to cocaine; noise-induced hearing loss
-- Blood vessel morphogenesis
-- Synaptic transmission (positive regulation)
-- ECM
-- Glutamate:sodium symporter; integrin binding
-- Intestine morphology; odontogenesis
+### POST Higher Than PM
 
-**PM↓ only**
-- Cation / metal ion transmembrane transport
-- Symporter activity
+- **Neural/brain (very strong)**: Olfactory bulb, amygdala, cerebral cortex, dorsal striatum, nucleus accumbens, spinal cord, hippocampus, cerebellum, hypothalamus, neurons; chemical synaptic transmission, anterograde trans-synaptic signaling, postsynaptic density, glutamatergic synapse, dopaminergic synapse
+- **Cilia**: 9+2 motile cilium, motile cilium, sperm flagellum, primary ciliary dyskinesia; respiratory cilium phenotypes
+- **Muscle/heart**: Skeletal muscle, heart, cardiac muscle cells, striated muscle contraction, myofibril assembly
+- **Synaptic/ion channel phenotypes**: Seizures, tremors, ataxia, reduced LTP, abnormal CNS synaptic transmission, hyperactivity
+- **Sensory disease**: Hearing loss, vestibular phenotypes
 
-**POST↑ only**
-- Ion channels (dominant signal): presynaptic membrane, voltage-gated channels
-- Synaptic transmission / modulation
-- Membrane potential regulation
-- Neurotransmitter transport & secretion; synaptic vesicle
-- Gliogenesis / glial differentiation
-- Heart contraction & circulation
-- Coordination; exploration behavior
+### POST Highest
 
-**POST↓ only**
-- Tissue morphogenesis; embryonic morphogenesis
-- Nervous system development
-- Neural crest / pharyngeal arch derivatives: middle ear ossicles, craniofacial bones, Meckel's cartilage
-- Vertebral / rib abnormalities; neural tube
-- GnRH deficiency
-- Skin pigmentation
+- **Neural/brain**: Amygdala, mammary gland (non-lactating), olfactory bulb, skeletal muscle, dorsal striatum, heart; neurons, cardiac muscle
+- **Muscle contraction/development**: Striated muscle contraction, muscle contraction, myofibril assembly, skeletal muscle contraction
+- **Synaptic transmission**: Chemical synaptic transmission, anterograde trans-synaptic signaling
 
----
+### POST Lower Than MAX
 
-## Opposite Trajectories
+- **GPCRs and receptor biology**: Receptor ligand activity, GPCR activity (non-odorant, Class A), neuroactive ligand-receptor
+- **Transcription factors**: Sequence-specific DNA binding, double-stranded DNA binding
+- **Epidermis/skin**: Epidermis, cornea
+- **Immune/leukocyte**: Neutrophils, granulocytes, T cells, B cells; leukocyte-related cell types
+- **Wnt signaling**: Canonical Wnt signaling, Wnt signaling pathway
 
-**MAX↑ PM↓**
-- EEG multifocal slow activity
+### POST Lower Than PM
 
-**MAX↓ PM↑**
-- Nociception (inflammatory pain)
-- Sympathetic nervous system physiology
-- Sensory neuron innervation
+- **Skin/epidermis (very strong)**: Epidermis, cornea, keratinocytes, bone, cornified envelope; hematopoietic disease (anemia, hemolytic anemia, spherocytosis, hematocrit), sensory system disease
+- **GPCR/receptor biology**: GPCRs, G protein-coupled receptor activity, neuroactive ligand-receptor, ECM-receptor interaction, calcium signaling
+- **Integumentary disease**: Keratosis, palmoplantar keratosis, ichthyosis, pachyonychia congenita
 
----
+## Stage Main Effects (Across All Domains)
 
-## Stage Main Effects
+### Decrease with Stage
 
-**Decrease**
-- Erythrocyte / hemoglobin (dominant signal): gas transport, oxygen carrier, hemoglobin complex, red cell osmotic fragility
-- SRF transcription factor motifs
-- Erythrocyte differentiation; myeloid cell differentiation
-- Platelet (macrothrombocytopenia)
+- **Bone and bone marrow**: Bone marrow, bone (Mouse Gene Atlas), hematopoietic system disease
+- **Hematopoietic disease**: Hereditary spherocytosis, hemolytic anemia, epistaxis, prolonged bleeding time, thrombocytopenia
+- **Transcription factor binding**: Sequence-specific DNA binding, double-stranded DNA binding, transcription cis-regulatory region binding
 
-**Increase**
-- Motile cilia / axoneme / flagellum (dominant signal): cilium movement, sperm motility, ciliary dyskinesia
-- ECM / collagen (dominant signal)
-- Immune & inflammation: leukocyte activation & migration, cytokine production, defense response, macrophage, innate & adaptive immunity
-- Ion channels (broad: cation, gated, ligand-gated, voltage-gated)
-- Skin: cornified envelope, keratoderma, epidermal thickening, acanthosis
-- Bone: ossification, mineralization, trabecular bone, osteoblast
-- GPCR signaling
-- Respiratory: sinusitis, bronchiectasis, airway obstruction
-- Situs / laterality defects
-- Endopeptidase / serine protease activity
-- Bacterial infection susceptibility
-- MHC / antigen processing & presentation
-- Collagen biosynthesis & degradation
+### Increase with Stage
 
----
+A very broad, multi-system increase including:
 
-## Two-Domain
+- **Immune/inflammatory (dominant theme)**: Macrophages, leukocytes, granulocytes, neutrophils, monocytes, B and T cells, dendritic cells, NK cells; inflammatory response, cytokine production, IL-6/IL-1/TNF/IFNγ regulation, defense response to bacteria/parasites/virus, Staphylococcus/tuberculosis/leishmaniasis pathways; NOD-like receptor signaling, C-type lectin receptor signaling
+- **Skin/epidermis**: Epidermis, intermediate filament organization, keratin filament, epidermal/keratinocyte differentiation, skin diseases (keratosis, pachyonychia)
+- **ECM and connective tissue**: Collagen-containing ECM, ECM organization, supramolecular fiber organization; connective tissue disease, Ehlers-Danlos syndrome
+- **Cilia**: 9+2 motile cilium, sperm flagellum, motile cilium, cilium movement, ciliated lung cells
+- **Osteoblast/bone**: Osteoblast day 21, trabecular bone morphology, bone mineralization, short femur/tibia; osteoclast differentiation
+- **Ion transport**: Potassium ion transmembrane transport, monoatomic cation transmembrane transport, calcium ion binding, GPCR activity
+- **Intestine and secretory**: Large and small intestine, stomach, pancreas, salivary/gastric secretion
 
-**MAX+POST↑**
-- Cilia / axoneme (dominant signal)
-- Microtubule-based movement
-- Sperm axoneme assembly
-- Synaptic signaling (modulation)
-- Seizure susceptibility
 
-**PM+MAX↑**
-- Skeletal muscle (dominant signal): sarcomere, myofibril, contraction, myopathy, dystrophy, muscle fiber types, atrophy
-- Cardiac: cardiomyopathy, conduction defects, arrhythmia, heart failure, cardiac muscle development
-- Ion channels: cation, potassium, calcium, ligand-gated
-- Neuromuscular junction; acetylcholine receptor/signaling
-- ECM / collagen
-- Joint contractures
-- Bone: remodeling, osteoblast, osteoclast
-- Respiratory insufficiency (muscle weakness related)
+## Two-Domain Gene Sets
 
-**PM+POST↑**
-- Neuroactive ligand-receptor interaction (GPCRs)
-- Neurotransmitter receptors (serotonin, monoamine)
-- Nociception (mechanical)
-- Membrane potential regulation
+### MAX + POST↑ (elevated in both MAX and POST domains)
 
----
+- **Cilia (strongest)**: 9+2 motile cilium, sperm flagellum, cilium (GO), motile cilium; ciliated lung/tracheal/epithelial cells; primary ciliary dyskinesia; axoneme assembly
+- **Epithelial biology**: Lung epithelial cells (trachea, fat, mammary); epidermis; tight junctions; epidermolysis bullosa/vesiculobullous skin disease
+- **Neural**: Neurons, olfactory bulb, neuro2a, spinal cord; neuron projection
 
-## Cross-Category Patterns
+### PM + MAX↑ (elevated in both PM and MAX domains)
 
-- **ECM / collagen** appears across nearly every co-increasing and complex category, as well as stage-increasing and multiple domain main effect sets — the most pervasive signal overall.
-- **Motile cilia / axoneme** is prominent in stage-increasing and the MAX+POST↑ two-domain set, and also recurs in co-increasing (both MAX and POST faster).
-- **Skeletal muscle / sarcomere / myopathy** dominates the PM+MAX↑ two-domain set and appears in several POST-related domain main effect sets (POST higher than MAX, POST highest, POST higher than PM).
-- **Synaptic / neuronal** terms concentrate in MAX-higher-than-PM and POST-higher-than-PM domain main effects, POST↑-only domain-specific, and the PM+POST↑ two-domain set.
-- **Bone / skeletal development** phenotypes are widespread across co-increasing (MAX faster), complex (All↑), stage-increasing, and multiple domain main effect contrasts.
-- **Skin / epidermis / keratinization** recurs across co-increasing, complex (All↑), stage-increasing, and POST-lower-than-PM domain main effects.
-- **Immune / inflammation** (leukocyte migration, cytokine production, infection susceptibility) is concentrated in complex (All↑) and stage-increasing sets.
-- **Ion channels** (cation, potassium, voltage-gated, ligand-gated) appear broadly in neuronal/synaptic sets (MAX higher, POST higher, POST↑ only) and in PM+MAX↑ muscle-related enrichments.
-- **Erythrocyte / hemoglobin / gas transport** is specific to the stage-decreasing set — the only category with this signature.
-- **Wnt signaling** concentrates in A→P decreasing domain main effects, POST-lower-than-MAX, and co-increasing MAX faster.
-- **Cardiac** phenotypes (cardiomyopathy, conduction, arrhythmia, heart failure) are most prominent in PM+MAX↑ two-domain, with scattered appearances in complex (All↑) and co-increasing (MAX faster).
-- **Laterality / situs** defects appear in co-increasing (both MAX and POST faster), complex (All↑), and stage-increasing.
+- **Skeletal and cardiac muscle (dominant)**: Skeletal muscle, heart, mammary gland; sarcomere organization, myofibril assembly, muscle contraction, striated/cardiac/skeletal muscle contraction; nemaline myopathy, myopathy, myofibrillar myopathy, congenital myopathy, congenital myasthenic syndrome/neuromuscular junction disease, dilated/hypertrophic cardiomyopathy; abnormal sarcomere/Z-line morphology, centrally nucleated fibers
+- **Neuromuscular junction**: Acetylcholine receptor signaling, acetylcholine-gated channels, postsynaptic neurotransmitter receptor activity, neuromuscular junction morphology
+- **Connective tissue/ECM**: Collagen-containing ECM, external encapsulating structure organization, focal adhesion
+- **Cardiovascular**: Heart disease, cardiovascular system disease, musculoskeletal system disease
+- **Muscle phenotypes**: Decreased grip strength, decreased skeletal muscle mass, increased variability in muscle fiber size, muscle weakness, muscle fiber atrophy, dystrophic muscle
+
+### PM + POST↑ (elevated in both PM and POST domains)
+
+- **Neuroactive ligand-receptor interaction** (strongest)
+- **Neuron projection**; GABA receptor activity
+- **Sensory/nociception**: Mechanical nociception, somatosensory phenotypes
+- **Neuromuscular phenotypes**: Skeletal muscle fiber size variation, spinal rigidity, limb-girdle muscle weakness
+
+## Co-increasing Gene Sets (MAX faster and POST faster)
+
+Both sub-groups of co-increasing genes (those increasing faster in MAX and those increasing faster in POST) show highly concordant enrichment, with the strongest signals in:
+
+- **Cilia biology**: Motile cilium components (9+2 motile cilium, sperm flagellum), cilium movement and assembly, axonemal dynein complex assembly, and associated diseases (primary ciliary dyskinesia, ciliopathy, impaired mucociliary clearance)
+- **Lung epithelium**: Ciliated and epithelial lung cell types (Tabula Muris)
+- **Osteoblast/bone**: Osteoblast day 14 and day 21 gene sets, abnormal osteoblast morphology/physiology
+- **Extracellular matrix**: Collagen-containing ECM, ECM organization
+- **Left-right patterning**: Determination of left/right symmetry, situs inversus, heterotaxia, dextrocardia
+- **Signaling**: FGF receptor signaling, ESC pluripotency pathways, focal adhesion/PI3K/Akt/mTOR
+
+## Opposite Trajectory Gene Sets
+
+- **MAX↑ PM↓**: Neurons (hypothalamus, amygdala) — genes upregulated at MAX but downregulated at PM
+- **MAX↓ PM↑**: Sensory neuron biology (dorsal root ganglia, nociception, thermal nociceptive threshold, sensory neuron physiology)
+- **POST↑ PM↓**: Hypothalamus, neurons, ion channels (transmitter-gated, ligand-gated); transcription factor binding
+- **POST↓ PM↑**: Sequence-specific and double-stranded DNA binding transcription factors; minor skeletal phenotypes
+
+## Domain-Specific Gene Sets
+
+### MAX↑ Only
+
+- **Hematological GWAS traits**: Hematocrit, hemoglobin, red blood cell count
+- **Neural/brain**: Amygdala, cerebral cortex, olfactory bulb, dorsal root ganglia; chemical synaptic transmission, neuroactive ligand-receptor, cAMP signaling
+- **Circadian/sleep**: Circadian entrainment, night sleep phenotypes, melanogenesis
+- **Muscle differentiation**: Regulation of muscle cell differentiation, striated/cardiac muscle cell differentiation
+
+### MAX↓ Only
+
+- **Cranial and peripheral ganglia**: Small trigeminal ganglion, small dorsal root ganglion, abnormal cranial ganglia, cochlear ganglion hypoplasia, geniculate ganglion
+- Minor limb/digit phenotypes
+
+### PM↑ Only
+
+- **Skin/epidermis**: Keratinocyte stem cells, abnormal stratum corneum, dry skin, ichthyosis, impaired skin barrier
+- **Neural/brain**: Oligodendrocyte precursors, fibroblast/heart, dorsal root ganglia, hippocampus; long-term synaptic potentiation
+- **Signaling**: MAPK cascade, PI3K/Akt, GPCR signaling, cellular response to lipid/estradiol
+
+### PM↓ Only
+
+- **Striatal/reward circuit**: Dorsal striatum, nucleus accumbens
+
+### POST↑ Only
+
+- **Mammary gland and intestine**: Luminal mammary epithelial cells, large and small intestine, colonic/intestinal disease
+- **Neural**: Amygdala, cerebral cortex, dorsal root ganglia, neurons, smooth muscle; axon guidance, neuron differentiation, chemical synaptic transmission, potassium ion transport
+- **Metabolic/endocrine**: Decreased fasting glucose, pancreatic D cells
+- **Neurodevelopmental phenotypes**: Autism spectrum disorder, vestibular/inner ear phenotypes, cerebellar morphology
+
+### POST↓ Only
+
+- **Transcription factors**: Sequence-specific DNA binding, double-stranded DNA binding (strongest enrichment)
+- **Cancer**: Ewing sarcoma, musculoskeletal/connective tissue cancer
+- **Reproductive/endocrine**: Kallmann syndrome, hypogonadotropic hypogonadism, primary amenorrhea, gynecomastia
+- **Heart/craniofacial development**: Heart development, cleft secondary palate, pharyngeal arch artery, middle ear ossicles, neural tube
+- **Cell signaling**: Cell surface receptor protein tyrosine kinase signaling, ERK cascade regulation, BMP signaling
+
+## Complex Gene Expression Patterns
+
+### All↑ (genes increasing across all three domains)
+
+A very broad enrichment profile including:
+
+- **Cilia and flagella**: 9+2 motile cilium, sperm flagellum, cilium movement
+- **Musculoskeletal and bone**: Collagen-containing ECM, osteoblast/osteoclast biology, bone mineral density, trabecular bone morphology, long bone development, endochondral ossification; musculoskeletal system disease
+- **Cardiac and skeletal muscle**: Cardiac muscle cell, sarcomere organization, myofibril assembly, cardiomyopathy (dilated, hypertrophic, arrhythmogenic), cardiac fibrosis, muscle contraction
+- **Immune/inflammatory**: Leukocytes (neutrophil, granulocyte, macrophage, B cell, T cell), increased susceptibility to bacterial infection, chemokine secretion, spleen morphology
+- **Skin/epidermis**: Epidermis development, keratinocyte differentiation, palmoplantar keratoderma, cornified envelope, keratosis
+- **Calcium signaling**: Calcium ion homeostasis/binding, intracellular calcium homeostasis
+
+### All↓ (genes decreasing across all three domains)
+
+Sparse enrichment, limited to:
+
+- GWAS traits for **waist circumference** and **BMI-adjusted adiposity**
+- **Fatty acid elongation** (elongation of very long chain fatty acids, omega-3/6/9 fatty acid synthesis)
+- Minor molecular function terms (DNA binding, fatty acid elongase activity)
+
+### Opposite Slopes
+
+- **Neuronal biology**: Dorsal root ganglia, neurons (brain), sequence-specific and double-stranded DNA binding, chemical synaptic transmission, neuroactive ligand-receptor interaction, ion channels (extracellular ligand-gated, transmitter-gated)
+- **Cervical vertebrae morphology**
+- **Sensory neuron physiology** and hypoalgesia
+
 
 :::
 
