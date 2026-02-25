@@ -606,287 +606,484 @@ coldata <- b6_cast_samples |>
 cts <- round(raw_expr_mat[all_genes_palate$gene_id, rownames(coldata), drop = FALSE])
 
 strain_dds <- DESeqDataSetFromMatrix(countData = cts, colData = coldata, design = ~1)
-# center LB stage
+# Center LB stage
 min_LB_stage <- min(colData(strain_dds)$LB_stage)
 colData(strain_dds)$LB_stage_from_start <- colData(strain_dds)$LB_stage - min_LB_stage
-# update covariates to factors
-colData(strain_dds)$sex <- factor(colData(strain_dds)$sex)
+# Update covariates to factors
+colData(strain_dds)$sex    <- factor(colData(strain_dds)$sex)
 colData(strain_dds)$strain <- factor(colData(strain_dds)$strain, levels = c("B6", "CAST"))
-colData(strain_dds)$ind <- factor(colData(strain_dds)$ind)
+colData(strain_dds)$ind    <- factor(colData(strain_dds)$ind)
 
-# collapse replicates
+# Collapse replicates
 strain_dds_coll <- collapseReplicates(strain_dds, strain_dds$unique_sampleid)
 
 
-
-# ── Fit all the models  ─────────────────────────────────────────────
-# 1. Additive model -- no interactions
+# ── Fit models ────────────────────────────────────────────────────────────────
+# 1. Additive model — no interactions
 strain_dds_additive <- strain_dds_coll
-design(strain_dds_additive) <- ~ sex + AP_domain + LB_stage_from_start  + strain
+design(strain_dds_additive) <- ~ sex + AP_domain + LB_stage_from_start + strain
 strain_dds_additive <- DESeq(strain_dds_additive, parallel = TRUE)
 
-# 2. Two-way model -- no threeway interactions
+# 2. Two-way model — all pairwise interactions, no three-way
 strain_dds_twoway <- strain_dds_coll
-design(strain_dds_twoway) <- ~ sex + AP_domain + LB_stage_from_start  +
-                                   strain + strain:AP_domain + strain:LB_stage_from_start
+design(strain_dds_twoway) <- ~ sex + AP_domain + LB_stage_from_start + strain +
+  strain:AP_domain + strain:LB_stage_from_start + AP_domain:LB_stage_from_start
 strain_dds_twoway <- DESeq(strain_dds_twoway, parallel = TRUE)
 
-# 3. Full model
+# 3. Full model — including three-way interaction
 strain_dds_full <- strain_dds_coll
-design(strain_dds_full) <- ~ sex + AP_domain + LB_stage_from_start  + 
-                             strain + strain:AP_domain + strain:LB_stage_from_start + 
-                             strain:AP_domain:LB_stage_from_start
+design(strain_dds_full) <- ~ sex + AP_domain + LB_stage_from_start +
+  strain + strain:AP_domain + strain:LB_stage_from_start + AP_domain:LB_stage_from_start +
+  strain:AP_domain:LB_stage_from_start
 strain_dds_full <- DESeq(strain_dds_full, parallel = TRUE)
 coef_names <- resultsNames(strain_dds_full)
 
-# ── LRT tests  ────────────────────────────────────────────
-# 1. Any strain effect at all
-strain_dds_lrt <- DESeq(strain_dds_additive, test = "LRT", 
-                        reduced = ~ sex + AP_domain + LB_stage_from_start  ,
-                        full = ~ sex + AP_domain + LB_stage_from_start  + strain,
-                        parallel = TRUE)
-res_strain_lrt <- results(strain_dds_lrt)
-genes_w_strain_eff <- res_strain_lrt |> 
-  as_tibble( rownames = "gene_id") |> 
-  filter( padj < 0.05 )
 
+# ── LRT tests ─────────────────────────────────────────────────────────────────
+# 1a. Any strain effect
+strain_lrt <- DESeq(strain_dds_additive, test = "LRT",
+                    reduced = ~ sex + AP_domain + LB_stage_from_start,
+                    full    = ~ sex + AP_domain + LB_stage_from_start + strain,
+                    parallel = TRUE)
+res_strain_lrt <- results(strain_lrt)
+genes_w_strain_eff <- res_strain_lrt |>
+  as_tibble(rownames = "gene_id") |>
+  filter(padj < 0.05)
 
-# 2. Domain × Strain interaction
-dds_domain_lrt <- DESeq(strain_dds_twoway, test = "LRT",
-                        reduced = ~ sex + AP_domain + LB_stage_from_start  + 
-                                   strain + strain:LB_stage_from_start,
-                        full = ~ sex + AP_domain + LB_stage_from_start  +
-                                   strain + strain:AP_domain + strain:LB_stage_from_start,
-                        parallel = TRUE)
-res_domain_lrt <- results(dds_domain_lrt)
-genes_w_strain_by_domain_eff <- res_domain_lrt |> 
-  as_tibble( rownames = "gene_id") |> 
-  filter( padj < 0.05)
+# 1b. Any domain effect
+domain_lrt <- DESeq(strain_dds_additive, test = "LRT",
+                    reduced = ~ sex + LB_stage_from_start + strain,
+                    full    = ~ sex + AP_domain + LB_stage_from_start + strain,
+                    parallel = TRUE)
+res_domain_lrt <- results(domain_lrt)
+genes_w_domain_eff <- res_domain_lrt |>
+  as_tibble(rownames = "gene_id") |>
+  filter(padj < 0.05)
 
-# 3. Time × Strain interaction
-dds_time_lrt <- DESeq(strain_dds_twoway, test = "LRT",
-                      reduced = ~ sex + AP_domain + LB_stage_from_start  +
-                                 strain + strain:AP_domain,
-                      full = ~ sex + AP_domain + LB_stage_from_start  +
-                                   strain + strain:AP_domain + strain:LB_stage_from_start,
-                      parallel = TRUE)
-res_time_lrt <- results(dds_time_lrt)
-genes_w_strain_by_time_eff <- res_time_lrt |> 
-  as_tibble( rownames = "gene_id") |> 
-  filter( padj < 0.05)
+# 1c. Any time effect
+time_lrt <- DESeq(strain_dds_additive, test = "LRT",
+                  reduced = ~ sex + AP_domain + strain,
+                  full    = ~ sex + AP_domain + LB_stage_from_start + strain,
+                  parallel = TRUE)
+res_time_lrt <- results(time_lrt)
+genes_w_time_eff <- res_time_lrt |>
+  as_tibble(rownames = "gene_id") |>
+  filter(padj < 0.05)
 
+# 2a. Domain × Strain interaction
+strain_domain_int_lrt <- DESeq(strain_dds_twoway, test = "LRT",
+                               reduced = ~ sex + AP_domain + LB_stage_from_start +
+                                           strain + strain:LB_stage_from_start + AP_domain:LB_stage_from_start,
+                               full    = ~ sex + AP_domain + LB_stage_from_start +
+                                           strain + strain:AP_domain + strain:LB_stage_from_start + AP_domain:LB_stage_from_start,
+                               parallel = TRUE)
+res_strain_domain_int_lrt <- results(strain_domain_int_lrt)
+genes_w_strain_by_domain_eff <- res_strain_domain_int_lrt |>
+  as_tibble(rownames = "gene_id") |>
+  filter(padj < 0.05)
 
-# 4. Three-way interaction (domain × time × strain)
+# 2b. Time × Strain interaction
+strain_time_int_lrt <- DESeq(strain_dds_twoway, test = "LRT",
+                             reduced = ~ sex + AP_domain + LB_stage_from_start +
+                                         strain + strain:AP_domain + AP_domain:LB_stage_from_start,
+                             full    = ~ sex + AP_domain + LB_stage_from_start +
+                                         strain + strain:AP_domain + strain:LB_stage_from_start + AP_domain:LB_stage_from_start,
+                             parallel = TRUE)
+res_strain_time_int_lrt <- results(strain_time_int_lrt)
+genes_w_strain_by_time_eff <- res_strain_time_int_lrt |>
+  as_tibble(rownames = "gene_id") |>
+  filter(padj < 0.05)
+
+# 2c. Domain × Time interaction
+domain_time_int_lrt <- DESeq(strain_dds_twoway, test = "LRT",
+                             reduced = ~ sex + AP_domain + LB_stage_from_start +
+                                         strain + strain:AP_domain + strain:LB_stage_from_start,
+                             full    = ~ sex + AP_domain + LB_stage_from_start +
+                                         strain + strain:AP_domain + strain:LB_stage_from_start + AP_domain:LB_stage_from_start,
+                             parallel = TRUE)
+res_domain_time_int_lrt <- results(domain_time_int_lrt)
+genes_w_domain_by_time_eff <- res_domain_time_int_lrt |>
+  as_tibble(rownames = "gene_id") |>
+  filter(padj < 0.05)
+
+# 3. Three-way interaction (domain × time × strain)
 dds_3way_lrt <- DESeq(strain_dds_full, test = "LRT",
-                      reduced = ~ sex + AP_domain + LB_stage_from_start  + 
-                                 strain + strain:AP_domain + strain:LB_stage_from_start,
-                      full = ~ sex + AP_domain + LB_stage_from_start  + 
-                             strain + strain:AP_domain + strain:LB_stage_from_start + 
-                             strain:AP_domain:LB_stage_from_start,
+                      reduced = ~ sex + AP_domain + LB_stage_from_start +
+                                  strain + strain:AP_domain + strain:LB_stage_from_start + AP_domain:LB_stage_from_start,
+                      full    = ~ sex + AP_domain + LB_stage_from_start +
+                                  strain + strain:AP_domain + strain:LB_stage_from_start + AP_domain:LB_stage_from_start +
+                                  strain:AP_domain:LB_stage_from_start,
                       parallel = TRUE)
 res_3way_lrt <- results(dds_3way_lrt)
-genes_w_3way_eff <- res_3way_lrt |> 
-  as_tibble( rownames = "gene_id") |> 
-  filter( padj < 0.05)
+genes_w_3way_eff <- res_3way_lrt |>
+  as_tibble(rownames = "gene_id") |>
+  filter(padj < 0.05)
 
 
-genes_with_any_interaction <- unique(c(
+# ── Gene sets: any interaction involving each variable ────────────────────────
+genes_with_any_strain_interaction <- unique(c(
   genes_w_strain_by_time_eff$gene_id,
   genes_w_strain_by_domain_eff$gene_id,
   genes_w_3way_eff$gene_id
 ))
 
-# ── Effects  ────────────────────────────────────────────
-# 1. Extract main strain effect (additive model) 
-res_strain_main <- results(strain_dds_additive, name = "strain_CAST_vs_B6") 
+genes_with_any_domain_interaction <- unique(c(
+  genes_w_domain_by_time_eff$gene_id,
+  genes_w_strain_by_domain_eff$gene_id,
+  genes_w_3way_eff$gene_id
+))
 
-# 2. Extract domain specific strain effects (two way model)
-res_strain_PM  <- results(strain_dds_twoway, name = "strain_CAST_vs_B6")
-res_strain_MAX <- results(strain_dds_twoway, 
-                          contrast = list(c("strain_CAST_vs_B6", "AP_domainMAX.strainCAST")))
-res_strain_POST <- results(strain_dds_twoway, 
+genes_with_any_time_interaction <- unique(c(
+  genes_w_strain_by_time_eff$gene_id,
+  genes_w_domain_by_time_eff$gene_id,
+  genes_w_3way_eff$gene_id
+))
+
+
+# ── Extract effect estimates ───────────────────────────────────────────────────
+# 1a. Main strain effect (additive model)
+res_strain_main <- results(strain_dds_additive, name = "strain_CAST_vs_B6")
+
+# 1b. Main domain effect (additive model) — three pairwise contrasts
+res_domain_main_MAX          <- results(strain_dds_additive, name = "AP_domain_MAX_vs_PM")
+res_domain_main_POST         <- results(strain_dds_additive, name = "AP_domain_POST_vs_PM")
+res_domain_main_MAX_vs_POST  <- results(strain_dds_additive,
+                                        contrast = list(c("AP_domain_MAX_vs_PM", "AP_domain_POST_vs_PM")))
+
+# 1c. Main time slope (additive model)
+res_time_main <- results(strain_dds_additive, name = "LB_stage_from_start")
+
+# 2a. Domain × Strain — domain-specific strain effects (absolute) and interaction deltas
+res_strain_PM   <- results(strain_dds_twoway, name = "strain_CAST_vs_B6")
+res_strain_MAX  <- results(strain_dds_twoway,
+                           contrast = list(c("strain_CAST_vs_B6", "AP_domainMAX.strainCAST")))
+res_strain_POST <- results(strain_dds_twoway,
                            contrast = list(c("strain_CAST_vs_B6", "AP_domainPOST.strainCAST")))
-
-# 3a. Extract overall time slope
-res_time_int_twoway <- results(strain_dds_twoway, name = "LB_stage_from_start.strainCAST")
-# 3b. Extract the time slope for PM domain at time = 0
-res_time_int_full <- results(strain_dds_full, name = "LB_stage_from_start.strainCAST")
-
-# 4. Domain × strain interaction coefficients (how CAST effect in MAX/POST differs from PM)
-res_domain_int_MAX <- results(strain_dds_twoway, name = "AP_domainMAX.strainCAST") 
+# Interaction coefficients: how CAST strain effect in MAX/POST differs from PM
+res_domain_int_MAX  <- results(strain_dds_twoway, name = "AP_domainMAX.strainCAST")
 res_domain_int_POST <- results(strain_dds_twoway, name = "AP_domainPOST.strainCAST")
 
-# 5. Three-way interaction coefficients (how temporal slope differs by domain)
-res_3way_MAX <- results(strain_dds_full, name = "AP_domainMAX.LB_stage_from_start.strainCAST") 
-res_3way_POST <- results(strain_dds_full, name = "AP_domainPOST.LB_stage_from_start.strainCAST") 
+# 2b. Time × Strain — average CAST-vs-B6 temporal slope difference (two-way model)
+res_time_int_twoway <- results(strain_dds_twoway, name = "LB_stage_from_start.strainCAST")
 
-# ── Apply quality & LRT filters ──────────────────────────────────────────────────
-# These identify genes that also pass effect size / uncertainty QC.
-# Each result object is filtered with thresholds appropriate to its scale.
+# 2c. Domain × Time — domain-specific time slopes (absolute) and interaction deltas
+# PM slope = LB_stage_from_start alone; MAX/POST = LB_stage_from_start + interaction term
+res_time_slope_PM   <- results(strain_dds_twoway, name = "LB_stage_from_start")
+res_time_slope_MAX  <- results(strain_dds_twoway,
+                               contrast = list(c("LB_stage_from_start", "AP_domainMAX.LB_stage_from_start")))
+res_time_slope_POST <- results(strain_dds_twoway,
+                               contrast = list(c("LB_stage_from_start", "AP_domainPOST.LB_stage_from_start")))
+# Interaction coefficients: how time slope in MAX/POST differs from PM
+res_domain_time_int_MAX  <- results(strain_dds_twoway, name = "AP_domainMAX.LB_stage_from_start")
+res_domain_time_int_POST <- results(strain_dds_twoway, name = "AP_domainPOST.LB_stage_from_start")
 
-# Main strain effect (additive model)
+# 3. Three-way — interaction deltas and domain-specific absolute CAST-vs-B6 time slopes
+res_3way_MAX  <- results(strain_dds_full, name = "AP_domainMAX.LB_stage_from_start.strainCAST")
+res_3way_POST <- results(strain_dds_full, name = "AP_domainPOST.LB_stage_from_start.strainCAST")
+# PM slope = LB_stage_from_start.strainCAST alone; MAX/POST = + three-way term
+res_time_strain_slope_PM   <- results(strain_dds_full, name = "LB_stage_from_start.strainCAST")
+res_time_strain_slope_MAX  <- results(strain_dds_full,
+                                      contrast = list(c("LB_stage_from_start.strainCAST",
+                                                        "AP_domainMAX.LB_stage_from_start.strainCAST")))
+res_time_strain_slope_POST <- results(strain_dds_full,
+                                      contrast = list(c("LB_stage_from_start.strainCAST",
+                                                        "AP_domainPOST.LB_stage_from_start.strainCAST")))
+
+
+# ── QC filters ────────────────────────────────────────────────────────────────
+# Each result is filtered by effect size / uncertainty thresholds appropriate
+# to its scale, then restricted to genes passing the relevant LRT.
+# Main effects additionally exclude genes with any interaction involving that variable.
+
+# 1a. Main strain effect
 res_strain_main_filtered <- filter_deseq_results(res_strain_main) |>
   filter(gene_id %in% genes_w_strain_eff$gene_id)
 genes_main_strain_pass <- res_strain_main_filtered$gene_id
 
-# Domain-specific strain effects (two-way model)
-res_strain_PM_filtered <- filter_deseq_results(res_strain_PM) |>
-  filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
-res_strain_MAX_filtered <- filter_deseq_results(res_strain_MAX) |>
-  filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
-res_strain_POST_filtered <- filter_deseq_results(res_strain_POST) |>
-  filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
+# 1b. Main domain effect
+res_domain_main_MAX_filtered <- filter_deseq_results(res_domain_main_MAX) |>
+  filter( gene_id %in% genes_w_domain_eff$gene_id) |>
+  filter(!gene_id %in% genes_with_any_domain_interaction)
+res_domain_main_POST_filtered <- filter_deseq_results(res_domain_main_POST) |>
+  filter( gene_id %in% genes_w_domain_eff$gene_id) |>
+  filter(!gene_id %in% genes_with_any_domain_interaction)
+res_domain_main_MAX_vs_POST_filtered <- filter_deseq_results(res_domain_main_MAX_vs_POST) |>
+  filter( gene_id %in% genes_w_domain_eff$gene_id) |>
+  filter(!gene_id %in% genes_with_any_domain_interaction)
+
+genes_domain_main_MAX_pass         <- res_domain_main_MAX_filtered$gene_id
+genes_domain_main_POST_pass        <- res_domain_main_POST_filtered$gene_id
+genes_domain_main_MAX_vs_POST_pass <- res_domain_main_MAX_vs_POST_filtered$gene_id
+
+# 1c. Main time effect (slope scale → tighter thresholds)
+res_time_main_filtered <- filter_deseq_results(res_time_main, min_abs_lfc = 0.1, max_lfcse = 0.5) |>
+  filter( gene_id %in% genes_w_time_eff$gene_id) |>
+  filter(!gene_id %in% genes_with_any_time_interaction)
+genes_time_main_pass <- res_time_main_filtered$gene_id
+
+# 2a. Domain × Strain — domain-specific strain effects
+res_strain_PM_filtered   <- filter_deseq_results(res_strain_PM)   |> filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
+res_strain_MAX_filtered  <- filter_deseq_results(res_strain_MAX)  |> filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
+res_strain_POST_filtered <- filter_deseq_results(res_strain_POST) |> filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
 
 genes_strain_PM_pass   <- res_strain_PM_filtered$gene_id
 genes_strain_MAX_pass  <- res_strain_MAX_filtered$gene_id
 genes_strain_POST_pass <- res_strain_POST_filtered$gene_id
 
-# Domain × strain interaction coefficients (two-way model)
-# Lower min_abs_lfc because these are difference-of-differences
-res_domain_int_MAX_filtered <- filter_deseq_results(
-  res_domain_int_MAX, min_abs_lfc = 0.3
-) |> filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
-
-res_domain_int_POST_filtered <- filter_deseq_results(
-  res_domain_int_POST, min_abs_lfc = 0.3
-) |> filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
+# 2a. Domain × Strain — interaction deltas (difference-of-differences → lower min_abs_lfc)
+res_domain_int_MAX_filtered  <- filter_deseq_results(res_domain_int_MAX,  min_abs_lfc = 0.3) |> filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
+res_domain_int_POST_filtered <- filter_deseq_results(res_domain_int_POST, min_abs_lfc = 0.3) |> filter(gene_id %in% genes_w_strain_by_domain_eff$gene_id)
 
 genes_domain_int_MAX_pass  <- res_domain_int_MAX_filtered$gene_id
 genes_domain_int_POST_pass <- res_domain_int_POST_filtered$gene_id
 
-# Time × strain interaction slope (two-way model)
-# Tighter lfcSE threshold and lower min_abs_lfc — slopes are on a different scale
-res_time_int_filtered <- filter_deseq_results(
-  res_time_int_twoway, min_abs_lfc = 0.1, max_lfcse = 0.5
-) |> filter(gene_id %in% genes_w_strain_by_time_eff$gene_id)
-
+# 2b. Time × Strain — average temporal slope difference
+res_time_int_filtered <- filter_deseq_results(res_time_int_twoway, min_abs_lfc = 0.1, max_lfcse = 0.5) |>
+  filter(gene_id %in% genes_w_strain_by_time_eff$gene_id)
 genes_time_int_pass <- res_time_int_filtered$gene_id
 
-# Three-way interaction coefficients (full model)
-res_3way_MAX_filtered <- filter_deseq_results(
-  res_3way_MAX, min_abs_lfc = 0.1, max_lfcse = 0.5
-) |> filter(gene_id %in% genes_w_3way_eff$gene_id)
+# 2c. Domain × Time — interaction deltas and domain-specific slopes
+res_domain_time_int_MAX_filtered  <- filter_deseq_results(res_domain_time_int_MAX,  min_abs_lfc = 0.1, max_lfcse = 0.5) |> filter(gene_id %in% genes_w_domain_by_time_eff$gene_id)
+res_domain_time_int_POST_filtered <- filter_deseq_results(res_domain_time_int_POST, min_abs_lfc = 0.1, max_lfcse = 0.5) |> filter(gene_id %in% genes_w_domain_by_time_eff$gene_id)
+res_time_slope_PM_filtered        <- filter_deseq_results(res_time_slope_PM,        min_abs_lfc = 0.1, max_lfcse = 0.5) |> filter(gene_id %in% genes_w_domain_by_time_eff$gene_id)
+res_time_slope_MAX_filtered       <- filter_deseq_results(res_time_slope_MAX,       min_abs_lfc = 0.1, max_lfcse = 0.5) |> filter(gene_id %in% genes_w_domain_by_time_eff$gene_id)
+res_time_slope_POST_filtered      <- filter_deseq_results(res_time_slope_POST,      min_abs_lfc = 0.1, max_lfcse = 0.5) |> filter(gene_id %in% genes_w_domain_by_time_eff$gene_id)
 
-res_3way_POST_filtered <- filter_deseq_results(
-  res_3way_POST, min_abs_lfc = 0.1, max_lfcse = 0.5
-) |> filter(gene_id %in% genes_w_3way_eff$gene_id)
+genes_domain_time_int_MAX_pass  <- res_domain_time_int_MAX_filtered$gene_id
+genes_domain_time_int_POST_pass <- res_domain_time_int_POST_filtered$gene_id
+genes_time_slope_PM_pass        <- res_time_slope_PM_filtered$gene_id
+genes_time_slope_MAX_pass       <- res_time_slope_MAX_filtered$gene_id
+genes_time_slope_POST_pass      <- res_time_slope_POST_filtered$gene_id
+
+# 3. Three-way — interaction deltas and domain-specific CAST-vs-B6 time slopes
+res_3way_MAX_filtered  <- filter_deseq_results(res_3way_MAX,  min_abs_lfc = 0.1, max_lfcse = 0.5) |> filter(gene_id %in% genes_w_3way_eff$gene_id)
+res_3way_POST_filtered <- filter_deseq_results(res_3way_POST, min_abs_lfc = 0.1, max_lfcse = 0.5) |> filter(gene_id %in% genes_w_3way_eff$gene_id)
+res_time_strain_slope_PM_filtered   <- filter_deseq_results(res_time_strain_slope_PM,   min_abs_lfc = 0.1, max_lfcse = 0.5) |> filter(gene_id %in% genes_w_3way_eff$gene_id)
+res_time_strain_slope_MAX_filtered  <- filter_deseq_results(res_time_strain_slope_MAX,  min_abs_lfc = 0.1, max_lfcse = 0.5) |> filter(gene_id %in% genes_w_3way_eff$gene_id)
+res_time_strain_slope_POST_filtered <- filter_deseq_results(res_time_strain_slope_POST, min_abs_lfc = 0.1, max_lfcse = 0.5) |> filter(gene_id %in% genes_w_3way_eff$gene_id)
 
 genes_3way_MAX_pass  <- res_3way_MAX_filtered$gene_id
 genes_3way_POST_pass <- res_3way_POST_filtered$gene_id
+genes_time_strain_slope_PM_pass   <- res_time_strain_slope_PM_filtered$gene_id
+genes_time_strain_slope_MAX_pass  <- res_time_strain_slope_MAX_filtered$gene_id
+genes_time_strain_slope_POST_pass <- res_time_strain_slope_POST_filtered$gene_id
 
-# Helper: convert DESeq2 results to tibble with explicit output column names
-deseq_to_tibble <- function(res, lfc_col, lfcse_col, pval_col, 
-                             keep_basemean = FALSE) {
+
+# ── Helper ────────────────────────────────────────────────────────────────────
+deseq_to_tibble <- function(res, lfc_col, lfcse_col, pval_col, keep_basemean = FALSE) {
   df <- res |>
     as_tibble(rownames = "gene_id") |>
     select(gene_id,
-           {{ lfc_col  }} := log2FoldChange,
+           {{ lfc_col   }} := log2FoldChange,
            {{ lfcse_col }} := lfcSE,
            {{ pval_col  }} := padj)
   if (keep_basemean) {
     df <- res |>
       as_tibble(rownames = "gene_id") |>
       select(gene_id, baseMean,
-             {{ lfc_col  }} := log2FoldChange,
+             {{ lfc_col   }} := log2FoldChange,
              {{ lfcse_col }} := lfcSE,
              {{ pval_col  }} := padj)
   }
   df
 }
 
+
+# ── Assemble classified tibble ────────────────────────────────────────────────
 strain_effects_classified <-
-  # Use strain LRT as the base — provides gene universe and baseMean
+  # Base: gene universe + baseMean from strain LRT
   as_tibble(res_strain_lrt, rownames = "gene_id") |>
   select(gene_id, baseMean, any_strain_pval = padj) |>
-  left_join(as_tibble(res_domain_lrt,  rownames = "gene_id") |>
-              select(gene_id, domain_int_pval  = padj), by = "gene_id") |>
-  left_join(as_tibble(res_time_lrt,    rownames = "gene_id") |>
-              select(gene_id, time_int_pval    = padj), by = "gene_id") |>
-  left_join(as_tibble(res_3way_lrt,    rownames = "gene_id") |>
-              select(gene_id, threeway_int_pval = padj), by = "gene_id") |>
-  # Effect size columns — using exact names expected by pattern script
+
+  # ── LRT p-values ────────────────────────────────────────────────────────────
+  left_join(as_tibble(res_domain_lrt,            rownames = "gene_id") |> select(gene_id, domain_pval            = padj), by = "gene_id") |>
+  left_join(as_tibble(res_time_lrt,              rownames = "gene_id") |> select(gene_id, time_pval              = padj), by = "gene_id") |>
+  left_join(as_tibble(res_strain_domain_int_lrt, rownames = "gene_id") |> select(gene_id, strain_domain_int_pval = padj), by = "gene_id") |>
+  left_join(as_tibble(res_strain_time_int_lrt,   rownames = "gene_id") |> select(gene_id, strain_time_int_pval   = padj), by = "gene_id") |>
+  left_join(as_tibble(res_domain_time_int_lrt,   rownames = "gene_id") |> select(gene_id, domain_time_int_pval   = padj), by = "gene_id") |>
+  left_join(as_tibble(res_3way_lrt,              rownames = "gene_id") |> select(gene_id, threeway_int_pval      = padj), by = "gene_id") |>
+
+  # ── Main effects (additive model) ───────────────────────────────────────────
   left_join(deseq_to_tibble(res_strain_main,
-              "main_strain_lfc", "main_strain_lfcSE", "main_strain_pval"),
-            by = "gene_id") |>
+              "main_strain_lfc",           "main_strain_lfcSE",           "main_strain_pval"),           by = "gene_id") |>
+  left_join(deseq_to_tibble(res_domain_main_MAX,
+              "domain_main_MAX_vs_PM_lfc", "domain_main_MAX_vs_PM_lfcSE", "domain_main_MAX_vs_PM_pval"), by = "gene_id") |>
+  left_join(deseq_to_tibble(res_domain_main_POST,
+              "domain_main_POST_vs_PM_lfc",  "domain_main_POST_vs_PM_lfcSE",  "domain_main_POST_vs_PM_pval"),  by = "gene_id") |>
+  left_join(deseq_to_tibble(res_domain_main_MAX_vs_POST,
+              "domain_main_MAX_vs_POST_lfc", "domain_main_MAX_vs_POST_lfcSE", "domain_main_MAX_vs_POST_pval"), by = "gene_id") |>
+  left_join(deseq_to_tibble(res_time_main,
+              "time_main_slope",           "time_main_slope_lfcSE",       "time_main_slope_pval"),       by = "gene_id") |>
+
+  # ── Domain × Time interaction (two-way model) ────────────────────────────────
+  # Interaction deltas (MAX/POST slope − PM slope)
+  left_join(deseq_to_tibble(res_domain_time_int_MAX,
+              "domain_time_int_MAX_slope",  "domain_time_int_MAX_slope_lfcSE",  "domain_time_int_MAX_slope_pval"),  by = "gene_id") |>
+  left_join(deseq_to_tibble(res_domain_time_int_POST,
+              "domain_time_int_POST_slope", "domain_time_int_POST_slope_lfcSE", "domain_time_int_POST_slope_pval"), by = "gene_id") |>
+  # Domain-specific absolute time slopes
+  left_join(deseq_to_tibble(res_time_slope_PM,
+              "time_slope_PM",   "time_slope_PM_lfcSE",   "time_slope_PM_pval"),   by = "gene_id") |>
+  left_join(deseq_to_tibble(res_time_slope_MAX,
+              "time_slope_MAX",  "time_slope_MAX_lfcSE",  "time_slope_MAX_pval"),  by = "gene_id") |>
+  left_join(deseq_to_tibble(res_time_slope_POST,
+              "time_slope_POST", "time_slope_POST_lfcSE", "time_slope_POST_pval"), by = "gene_id") |>
+
+  # ── Domain × Strain interaction (two-way model) ──────────────────────────────
+  # Domain-specific absolute strain effects
   left_join(deseq_to_tibble(res_strain_PM,
-              "strain_effect_PM", "strain_effect_PM_lfcSE", "strain_effect_PM_pval"),
-            by = "gene_id") |>
+              "strain_effect_PM",   "strain_effect_PM_lfcSE",   "strain_effect_PM_pval"),   by = "gene_id") |>
   left_join(deseq_to_tibble(res_strain_MAX,
-              "strain_effect_MAX", "strain_effect_MAX_lfcSE", "strain_effect_MAX_pval"),
-            by = "gene_id") |>
+              "strain_effect_MAX",  "strain_effect_MAX_lfcSE",  "strain_effect_MAX_pval"),  by = "gene_id") |>
   left_join(deseq_to_tibble(res_strain_POST,
-              "strain_effect_POST", "strain_effect_POST_lfcSE", "strain_effect_POST_pval"),
-            by = "gene_id") |>
+              "strain_effect_POST", "strain_effect_POST_lfcSE", "strain_effect_POST_pval"), by = "gene_id") |>
+  # Interaction deltas (CAST strain effect in MAX/POST − PM)
   left_join(deseq_to_tibble(res_domain_int_MAX,
-              "domain_int_MAX_lfc", "domain_int_MAX_lfcSE", "domain_int_MAX_pval"),
-            by = "gene_id") |>
+              "domain_int_MAX_lfc",  "domain_int_MAX_lfcSE",  "domain_int_MAX_pval"),  by = "gene_id") |>
   left_join(deseq_to_tibble(res_domain_int_POST,
-              "domain_int_POST_lfc", "domain_int_POST_lfcSE", "domain_int_POST_pval"),
-            by = "gene_id") |>
+              "domain_int_POST_lfc", "domain_int_POST_lfcSE", "domain_int_POST_pval"), by = "gene_id") |>
+
+  # ── Time × Strain interaction (two-way model) ────────────────────────────────
+  # Average CAST-vs-B6 temporal slope difference across domains
   left_join(deseq_to_tibble(res_time_int_twoway,
-              "time_int_slope_avg", "time_int_slope_lfcSE", "time_int_slope_pval"),
-            by = "gene_id") |>
-  # PM-specific slope from full model (no lfcSE needed downstream)
-  left_join(as_tibble(res_time_int_full, rownames = "gene_id") |>
-              select(gene_id, time_int_slope_PM = log2FoldChange),
-            by = "gene_id") |>
+              "time_int_slope_avg", "time_int_slope_lfcSE", "time_int_slope_pval"), by = "gene_id") |>
+
+  # ── Three-way interaction (full model) ───────────────────────────────────────
+  # Interaction deltas (how CAST-vs-B6 time slope in MAX/POST differs from PM)
   left_join(deseq_to_tibble(res_3way_MAX,
-              "threeway_MAX_slope", "threeway_MAX_slope_lfcSE", "threeway_MAX_slope_pval"),
-            by = "gene_id") |>
+              "threeway_MAX_slope",  "threeway_MAX_slope_lfcSE",  "threeway_MAX_slope_pval"),  by = "gene_id") |>
   left_join(deseq_to_tibble(res_3way_POST,
-              "threeway_POST_slope", "threeway_POST_slope_lfcSE", "threeway_POST_slope_pval"),
-            by = "gene_id") |>
-  # Significance flags
+              "threeway_POST_slope", "threeway_POST_slope_lfcSE", "threeway_POST_slope_pval"), by = "gene_id") |>
+  # Domain-specific absolute CAST-vs-B6 time slopes
+  left_join(deseq_to_tibble(res_time_strain_slope_PM,
+              "time_strain_slope_PM",   "time_strain_slope_PM_lfcSE",   "time_strain_slope_PM_pval"),   by = "gene_id") |>
+  left_join(deseq_to_tibble(res_time_strain_slope_MAX,
+              "time_strain_slope_MAX",  "time_strain_slope_MAX_lfcSE",  "time_strain_slope_MAX_pval"),  by = "gene_id") |>
+  left_join(deseq_to_tibble(res_time_strain_slope_POST,
+              "time_strain_slope_POST", "time_strain_slope_POST_lfcSE", "time_strain_slope_POST_pval"), by = "gene_id") |>
+
+  # ── Significance flags, pass flags, pattern labels ───────────────────────────
   mutate(
-    any_strain_sig   = replace_na(any_strain_pval   < 0.05, FALSE),
-    domain_int_sig   = replace_na(domain_int_pval   < 0.05, FALSE),
-    time_int_sig     = replace_na(time_int_pval     < 0.05, FALSE),
-    threeway_int_sig = replace_na(threeway_int_pval < 0.05, FALSE),
-    # Pass flags
-    main_strain_pass        = gene_id %in% genes_main_strain_pass,
-    has_any_interaction     = gene_id %in% genes_with_any_interaction,
+    # LRT significance flags
+    any_strain_sig        = replace_na(any_strain_pval        < 0.05, FALSE),
+    domain_sig            = replace_na(domain_pval            < 0.05, FALSE),
+    time_sig              = replace_na(time_pval              < 0.05, FALSE),
+    strain_domain_int_sig = replace_na(strain_domain_int_pval < 0.05, FALSE),
+    strain_time_int_sig   = replace_na(strain_time_int_pval   < 0.05, FALSE),
+    domain_time_int_sig   = replace_na(domain_time_int_pval   < 0.05, FALSE),
+    threeway_int_sig      = replace_na(threeway_int_pval      < 0.05, FALSE),
+
+    # QC pass flags — main effects
+    main_strain_pass             = gene_id %in% genes_main_strain_pass,
+    domain_main_MAX_pass         = gene_id %in% genes_domain_main_MAX_pass,
+    domain_main_POST_pass        = gene_id %in% genes_domain_main_POST_pass,
+    domain_main_MAX_vs_POST_pass = gene_id %in% genes_domain_main_MAX_vs_POST_pass,
+    time_main_pass               = gene_id %in% genes_time_main_pass,
+
+    # QC pass flags — domain × strain interaction
+    has_any_strain_interact = gene_id %in% genes_with_any_strain_interaction,
     strain_effect_PM_pass   = gene_id %in% genes_strain_PM_pass,
     strain_effect_MAX_pass  = gene_id %in% genes_strain_MAX_pass,
     strain_effect_POST_pass = gene_id %in% genes_strain_POST_pass,
     domain_int_MAX_pass     = gene_id %in% genes_domain_int_MAX_pass,
     domain_int_POST_pass    = gene_id %in% genes_domain_int_POST_pass,
-    time_int_pass           = gene_id %in% genes_time_int_pass,
-    threeway_MAX_pass       = gene_id %in% genes_3way_MAX_pass,
-    threeway_POST_pass      = gene_id %in% genes_3way_POST_pass,
-    passes_strain_filter    = any_strain_sig & main_strain_pass,
-    # Pattern labels (match original case_when logic)
+
+    # QC pass flags — time × strain interaction
+    time_int_pass = gene_id %in% genes_time_int_pass,
+
+    # QC pass flags — domain × time interaction
+    domain_time_int_MAX_pass  = gene_id %in% genes_domain_time_int_MAX_pass,
+    domain_time_int_POST_pass = gene_id %in% genes_domain_time_int_POST_pass,
+    time_slope_PM_pass        = gene_id %in% genes_time_slope_PM_pass,
+    time_slope_MAX_pass       = gene_id %in% genes_time_slope_MAX_pass,
+    time_slope_POST_pass      = gene_id %in% genes_time_slope_POST_pass,
+
+    # QC pass flags — three-way interaction
+    threeway_MAX_pass             = gene_id %in% genes_3way_MAX_pass,
+    threeway_POST_pass            = gene_id %in% genes_3way_POST_pass,
+    time_strain_slope_PM_pass     = gene_id %in% genes_time_strain_slope_PM_pass,
+    time_strain_slope_MAX_pass    = gene_id %in% genes_time_strain_slope_MAX_pass,
+    time_strain_slope_POST_pass   = gene_id %in% genes_time_strain_slope_POST_pass,
+
+    # ── Top-level filter gates ──────────────────────────────────────────────
+    passes_strain_filter = any_strain_sig & main_strain_pass,
+
+    passes_domain_filter = domain_sig &
+      (domain_main_MAX_pass | domain_main_POST_pass | domain_main_MAX_vs_POST_pass) &
+      !gene_id %in% genes_with_any_domain_interaction,
+
+    passes_time_filter = time_sig &
+      time_main_pass &
+      !gene_id %in% genes_with_any_time_interaction,
+
+    passes_domain_time_filter = domain_time_int_sig &
+      (domain_time_int_MAX_pass | domain_time_int_POST_pass),
+
+    # ── Pattern labels ───────────────────────────────────────────────────────
     main_strain_pattern = case_when(
-      !passes_strain_filter       ~ "No effect / filtered",
-      main_strain_lfc >  1        ~ "CAST >> B6 (strong)",
-      main_strain_lfc >  0.5      ~ "CAST > B6 (moderate)",
-      main_strain_lfc < -1        ~ "B6 >> CAST (strong)",
-      main_strain_lfc < -0.5      ~ "B6 > CAST (moderate)"
+      !passes_strain_filter  ~ "No effect / filtered",
+      main_strain_lfc >  1   ~ "CAST >> B6 (strong)",
+      main_strain_lfc >  0.5 ~ "CAST > B6 (moderate)",
+      main_strain_lfc < -1   ~ "B6 >> CAST (strong)",
+      main_strain_lfc < -0.5 ~ "B6 > CAST (moderate)",
+      TRUE                   ~ "Weak effect"
     ),
-    time_pattern = case_when(
-      !time_int_sig               ~ "No time interaction",
-      !time_int_pass              ~ "Filtered",
-      is.na(time_int_slope_avg)   ~ NA_character_,
-      time_int_slope_avg >  0.1   ~ "Diverging (CAST changing faster than B6)",
-      time_int_slope_avg < -0.1   ~ "Diverging (B6 changing faster than CAST)",
-      TRUE                        ~ "Parallel - Both changing similarly over time"
+
+    domain_main_pattern = case_when(
+      !passes_domain_filter                                ~ "No effect / filtered",
+      domain_main_MAX_pass & domain_main_POST_pass         ~ "MAX & POST differ from PM",
+      domain_main_MAX_pass & domain_main_MAX_vs_POST_pass  ~ "MAX differs from PM & POST",
+      domain_main_POST_pass & domain_main_MAX_vs_POST_pass ~ "POST differs from PM & MAX",
+      domain_main_MAX_pass                                 ~ "MAX differs from PM",
+      domain_main_POST_pass                                ~ "POST differs from PM",
+      domain_main_MAX_vs_POST_pass                         ~ "MAX differs from POST",
+      TRUE                                                 ~ "Filtered (QC)"
     ),
+
+    time_main_pattern = case_when(
+      !passes_time_filter      ~ "No time effect / filtered",
+      time_main_slope >  0.1   ~ "Expression increases over time",
+      time_main_slope < -0.1   ~ "Expression decreases over time",
+      TRUE                     ~ "Flat / near-zero slope"
+    ),
+
+    time_strain_pattern = case_when(
+      !strain_time_int_sig      ~ "No time × strain interaction",
+      !time_int_pass            ~ "Filtered",
+      is.na(time_int_slope_avg) ~ NA_character_,
+      time_int_slope_avg >  0.1 ~ "Diverging (CAST changing faster than B6)",
+      time_int_slope_avg < -0.1 ~ "Diverging (B6 changing faster than CAST)",
+      TRUE                      ~ "Parallel - both changing similarly"
+    ),
+
+    domain_time_pattern = case_when(
+      !passes_domain_time_filter                           ~ "No domain×time interaction / filtered",
+      domain_time_int_MAX_pass & domain_time_int_POST_pass ~ "MAX & POST slopes differ from PM",
+      domain_time_int_MAX_pass                             ~ "MAX slope differs from PM",
+      domain_time_int_POST_pass                            ~ "POST slope differs from PM",
+      TRUE                                                 ~ "Filtered (QC)"
+    ),
+
+    # ── Summary pattern type (priority order) ───────────────────────────────
     pattern_type = case_when(
-      !any_strain_sig             ~ "No strain effect",
-      main_strain_pass            ~ "Main strain effect",
-      threeway_int_sig            ~ "Three-way interaction",
-      domain_int_sig & time_int_sig ~ "Domain + Time interactions",
-      domain_int_sig              ~ "Domain × Strain interaction",
-      time_int_sig                ~ "Time × Strain interaction",
-      TRUE                        ~ "Filtered (QC)"
+      threeway_int_sig                                ~ "Three-way interaction",
+      strain_domain_int_sig & strain_time_int_sig     ~ "Domain + Time × Strain interactions",
+      strain_domain_int_sig                           ~ "Domain × Strain interaction",
+      strain_time_int_sig                             ~ "Time × Strain interaction",
+      passes_domain_time_filter                       ~ "Domain × Time interaction",
+      passes_strain_filter                            ~ "Main strain effect",
+      passes_domain_filter                            ~ "Main domain effect",
+      passes_time_filter                              ~ "Main time effect",
+      any_strain_sig | domain_sig | time_sig          ~ "Filtered (QC)",
+      TRUE                                            ~ "No effect"
     )
   ) |>
-  left_join(all_genes_palate |> select(gene_id, symbol, gene_biotype),
-            by = "gene_id")
+  left_join(all_genes_palate |> select(gene_id, symbol, gene_biotype), by = "gene_id")
 
-# Filtered dataset:
+
+# ── Filtered dataset ──────────────────────────────────────────────────────────
 strain_effects_filtered <- strain_effects_classified |>
   filter(passes_strain_filter)
-
 
 # # source the pattern identification script
 # source("DEgene_pattern_identification_CAST_B6.R")
@@ -1061,7 +1258,7 @@ pattern_summary |>
   create_dt()
 ```
 
-# Main Strain Effects
+# Strain Main Effects
 
 These genes show expression differences between CAST and B6. The log2FC values represent the CAST vs B6 effect estimated from the model. 
 
@@ -1310,6 +1507,11 @@ if (!is.null(genes_B6_high_mod_ora) && !is.null(genes_B6_high_mod_ora$result)) {
 ```
 
 ::::
+
+# Domain Main Effects
+
+# Stage Main Effects
+
 
 # Domain × Strain Interactions
 
@@ -2462,6 +2664,74 @@ all_ora_results |>
   create_dt()
 
 ```
+
+::::
+
+# Over-representation Summary
+
+:::: {#B6_CAST_ora_summary .panel-tabset .nav-pills}
+
+## Strain Main Effects
+
+### B6 > CAST (moderate)
+
+Dominated by immune/myeloid cell types across multiple tissues (myeloid cells, leukocytes, macrophages, neutrophils, monocytes, Kupffer cells, dendritic cells; p down to ~10⁻¹¹), skeletal and cardiac muscle gene expression, liver metabolism, retinal disease/night blindness, smooth muscle cell types, negative regulation of viral processes, and TWIST2/LHX1/SMAD4 transcription factor motifs.
+
+### B6 >> CAST (strong)
+
+Ciliated and epithelial lung cell types (ciliary assembly genes), T cell/lymphocyte signatures, and platelet volume phenotypes.
+
+### CAST > B6 (moderate)
+
+Enriched for cerebral cortex, prefrontal cortex, olfactory bulb, amygdala, and dorsal root ganglia expression profiles, chemical synaptic transmission, neurotransmitter transport, enteroendocrine cells, and brain pericytes.
+
+### CAST >> B6 (strong)
+
+Retinol metabolism (CYP450 enzymes, aldehyde oxidases), and complement/coagulation cascades.
+
+## Domain Effects (strain differences that vary across domains)
+
+### High domain specificity
+
+Genes with region-dependent strain effects are enriched for neuroactive ligand-receptor interaction, voltage-gated potassium channel complexes, potassium ion transport, chemical synaptic transmission, neuropeptide signaling, and cell-cell adhesion. Tissue expression profiles point to multiple brain regions (amygdala, olfactory bulb, hippocampus, dorsal striatum, cerebral cortex) and oligodendrocytes/pericytes. Disease associations include substance-related disorders and mental health.
+
+### Opposite directions (strain effect reverses between domains)
+
+Genes down in CAST in PM are enriched for synapse organization, cell-cell/adherens junctions, inflammatory response, neuron projection morphogenesis, axonogenesis, and spinal cord injury. Genes up in CAST in PM are enriched for potassium channels (delayed rectifier activity, voltage-gated), collagen-containing ECM, brain disease/epilepsy/cardiomyopathy, and negative regulation of SMAD signaling.
+
+### PM strongest effect
+
+Genes lower in CAST show enrichment for dorsal striatum/amygdala/cerebellum expression, cell-cell adhesion mediator and cadherin binding activity, GABA-A receptor subunits and ligand-gated anion channels, synaptic vesicle membranes, platelet alpha granules, focal adhesions, prostaglandin/eicosanoid metabolism, Rap1 signaling, and behavioral phenotypes (anxiety, hyperactivity, addiction response, spatial learning). Genes higher in CAST in PM show abnormal behavior, decreased thigmotaxis, and decreased anxiety phenotypes.
+
+### POST strongest effect
+
+Genes higher in CAST postnatally are strongly enriched for axonogenesis, axon guidance, semaphorin-plexin signaling (SEMA4A, SEMA4D, SEMA6D, SEMA4F), neural crest cell development and migration, chemorepellent/neuropilin binding activity, cell junctions (tight junctions, desmosomes), neuron projections, cell migration regulation, and epithelial/keratinocyte cell types. Genes lower in CAST postnatally show Bergmann glial cell, smooth muscle cell, and neuron signatures.
+
+
+## Time Effects (strain differences that vary over developmental time)
+
+### Diverging: B6 faster (B6 increases expression faster than CAST)
+
+Genes down in CAST are enriched for ciliated/epithelial lung cells, cilium assembly and organization, primary ciliary dyskinesia, sperm flagellum, male infertility, endothelial cells, goblet cells, arylesterase activity (PON1/2/3), and increased atherosclerosis susceptibility. Genes up in CAST are enriched for collagen-containing ECM (p ~10⁻⁹), calcium ion binding, stromal/mesenchymal/pericyte cell types across multiple tissues, lysosomal lumen, inflammatory response, NMDA receptor complex, osteoclasts, and liver/uterus/intestinal expression.
+
+### Diverging: CAST faster (CAST increases expression faster than B6)
+
+Genes down in CAST (B6-biased genes where B6 pulls further ahead) are heavily enriched for platelet biology — increased bleeding time (p ~10⁻⁹), platelet activation, thrombocytopenia, decreased platelet aggregation, epistaxis, prolonged bleeding time, blood coagulation disease, bruising susceptibility, hemorrhage — along with bone marrow, megakaryocyte differentiation, cardiac phenotypes (increased heart rate, left ventricular hypertrophy), cytoskeleton, oligodendrocytes, and spinal cord expression. Genes up in CAST show weight loss phenotype association.
+
+
+## Three-way Interactions (strain × domain × time)
+
+### Complex patterns
+
+Motile cilia and primary ciliary dyskinesia genes (DNAH11, NME5, ZMYND10, RSPH1, DNAH9) appear across multiple categories (MAX and PM most distinct). Neuromuscular junction/neuromuscular disease genes (CHRND, COL13A1) show MAX-distinct patterns. Sarcomere organization and dopaminergic transmission are POST-most-distinct.
+
+### Primarily dynamic differences
+
+POST-most-distinct genes are enriched for neuronal cell types, synaptic vesicle membranes, neuron projections/axons, amygdala/olfactory bulb/dorsal root ganglia expression, and dystroglycan complex. PM-most-distinct dynamic differences involve night sleep phenotypes and ciliated/epithelial lung cells. MAX-most-distinct dynamic differences involve neuronal markers and SNARE complex.
+
+### Primarily initial differences
+
+MAX-most-distinct initial differences center on tight junction biology (CLDN11, CLDN1), platelet alpha granule components (VEGFD, A2M), cell adhesion molecules, and smooth muscle/cardiac differentiation (MYOCD). PM-most-distinct initial differences include decreased vasoconstriction. POST-most-distinct initial differences involve pericytes and Irx transcription factors.
 
 ::::
 
